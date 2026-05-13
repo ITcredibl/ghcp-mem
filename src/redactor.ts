@@ -32,7 +32,10 @@ const RULES: RedactionRule[] = [
   { name: 'bearer-token', pattern: /\bBearer\s+([A-Za-z0-9\-._~+/]+=*){20,}/gi, replacement: 'Bearer [REDACTED:bearer-token]' },
   // Database connection URLs with embedded credentials (postgres://, mysql://, mongodb://, etc.)
   { name: 'db-url-password', pattern: /\b(?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis|amqp|amqps):\/\/[^:@\s]{1,64}:[^@\s]{4,}@/gi, replacement: (m: string) => m.replace(/:([^@\s]{4,})@/, ':[REDACTED:db-password]@') },
-  { name: 'private-key-block', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, replacement: '[REDACTED:private-key-block]' },
+  // PEM private key blocks. The body is constrained to base64 + whitespace
+  // characters only (no arbitrary [\s\S]) to prevent catastrophic backtracking
+  // on large inputs that contain a BEGIN line but no matching END line.
+  { name: 'private-key-block', pattern: /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----[A-Za-z0-9+/=\s]{0,8192}-----END [A-Z ]{0,30}PRIVATE KEY-----/g, replacement: '[REDACTED:private-key-block]' },
 
   // ── Azure-specific rules ───────────────────────────────────
   // Azure Storage connection string: whole value stripped

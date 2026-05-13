@@ -31,12 +31,21 @@ export class SessionCapture implements vscode.Disposable {
   private totalRedactions = 0;
   private azureSubsystems = new Set<AzureSubsystem>();
   private azureTags = new Set<string>();
+  /**
+   * Timestamp after which file_open events are allowed. Set to 3 s in the
+   * future at start() to suppress the flood of re-open events that VS Code
+   * fires when it restores all previously open editors on startup — those
+   * events add noise to the session log without representing real user intent.
+   */
+  private fileOpenAllowedAt = 0;
 
   constructor() {
     this.sessionStartTime = Date.now();
   }
 
   start(): void {
+    // Suppress file_open noise from VS Code restoring previously open editors.
+    this.fileOpenAllowedAt = Date.now() + 3000;
     const config = getConfig();
     if (config.captureFileEdits) this.registerEditCapture();
     this.registerFileLifecycleCapture();
@@ -153,6 +162,8 @@ export class SessionCapture implements vscode.Disposable {
     this.disposables.push(
       vscode.workspace.onDidOpenTextDocument((doc) => {
         if (doc.uri.scheme !== 'file' || shouldSkip(doc.uri)) return;
+        // Ignore the startup re-open flood (VS Code restores all prior editors).
+        if (Date.now() < this.fileOpenAllowedAt) return;
         this.pushEvent('file_open', {
           filePath: vscode.workspace.asRelativePath(doc.uri),
           languageId: doc.languageId,
@@ -355,13 +366,21 @@ export class SessionCapture implements vscode.Disposable {
 
   // ── Helpers ────────────────────────────────────────────────
 
+  /** Cap event buffer at MAX_EVENTS, discarding the oldest (HEAD) entries. */
+  private static readonly MAX_EVENTS = 5000;
+  private static readonly TRIM_TARGET = 3000;
+
+  private trimEvents(): void {
+    // splice(0, n) removes in-place — avoids allocating a second array copy
+    // that this.events.slice(-TRIM_TARGET) would create on every overflow.
+    if (this.events.length > SessionCapture.MAX_EVENTS) {
+      this.events.splice(0, this.events.length - SessionCapture.TRIM_TARGET);
+    }
+  }
+
   private pushEvent(type: SessionEvent['type'], data: SessionEvent['data']): void {
     this.events.push({ timestamp: Date.now(), type, data });
-    // splice(0, n) removes in-place — avoids allocating a second array copy
-    // that this.events.slice(-3000) would create on every overflow.
-    if (this.events.length > 5000) {
-      this.events.splice(0, this.events.length - 3000);
-    }
+    this.trimEvents();
   }
 
   /**
@@ -371,9 +390,7 @@ export class SessionCapture implements vscode.Disposable {
    */
   pushExistingEvent(e: SessionEvent): void {
     this.events.push(e);
-    if (this.events.length > 5000) {
-      this.events.splice(0, this.events.length - 3000);
-    }
+    this.trimEvents();
   }
 
   dispose(): void {

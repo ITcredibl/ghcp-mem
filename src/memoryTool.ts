@@ -107,7 +107,13 @@ export class MemoryStoreTool implements vscode.LanguageModelTool<StoreToolInput>
     }
 
     // Redact secrets from all user-provided text before persisting.
-    const redactStr = (s: string) => redact(s, { redactSecrets: true, honorPrivateTags: true }).text;
+    // Accumulate redaction count so the health score sees accurate coverage.
+    let totalRedactions = 0;
+    const redactStr = (s: string) => {
+      const r = redact(s, { redactSecrets: true, honorPrivateTags: true });
+      totalRedactions += r.redactionCount;
+      return r.text;
+    };
 
     const ws = vscode.workspace.workspaceFolders?.[0];
     const now = Date.now();
@@ -131,7 +137,7 @@ export class MemoryStoreTool implements vscode.LanguageModelTool<StoreToolInput>
       problemsSolved,
       rawEventCount: 0,
       userTags: (input.tags ?? []).map(t => t.trim()).filter(Boolean),
-      redactionCount: 0,
+      redactionCount: totalRedactions,
       contentHash: computeContentHash({ summary, keyFiles, keyTopics, decisions, problemsSolved }),
     };
 

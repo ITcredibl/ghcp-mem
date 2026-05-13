@@ -11,6 +11,7 @@ import { SessionsTreeProvider, TreeNode } from './sessionsView';
 import { MemorySearchTool, MemoryStoreTool } from './memoryTool';
 import { getEmbedder } from './embeddings';
 import { captureAzureContext } from './azureContext';
+import { AzureSubsystem } from './azureDetect';
 import { getConfig, CompressedSession, AzureContextMeta, SessionEvent } from './types';
 import { computeHealth, formatHealthMarkdown, fillGlyph } from './health';
 import { buildPack, parsePack, importPack, uninstallPack, listInstalledPacks, PACK_TAG_PREFIX } from './packs';
@@ -24,6 +25,8 @@ let tree: SessionsTreeProvider;
 let compressionTimer: NodeJS.Timeout | undefined;
 let statusBarItem: vscode.StatusBarItem;
 let autosave: AutosaveTrigger | undefined;
+/** Last content hash written to session-memory.instructions.md — skip write if unchanged. */
+let lastStartupContextHash: string | undefined;
 /** File where we stash drained events on shutdown so the next activation can recover. */
 let recoveryFile: vscode.Uri | undefined;
 /** Promise that the (best-effort) shutdown compress is tracked through, so deactivate() can await it. */
@@ -155,7 +158,8 @@ export function activate(context: vscode.ExtensionContext) {
       const bytes = await vscode.workspace.fs.readFile(picks[0]);
       try {
         const result = await store.importFromJson(Buffer.from(bytes).toString('utf-8'), true);
-        vscode.window.showInformationMessage(`GHCP-MEM: Imported ${result.imported} session(s).`);
+        const skippedMsg = result.skippedInvalid > 0 ? ` (${result.skippedInvalid} skipped — invalid IDs)` : '';
+        vscode.window.showInformationMessage(`GHCP-MEM: Imported ${result.imported} session(s)${skippedMsg}.`);
         updateStatusBar();
       } catch (err) {
         vscode.window.showErrorMessage(`GHCP-MEM: Import failed — ${err instanceof Error ? err.message : String(err)}`);
@@ -403,7 +407,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('ghcpMem.showMcpInfo', async () => {
       const storePath = path.join(os.homedir(), '.ghcp-mem', 'sessions.json');
       // Locate the installed mcpServer.js (relative to this extension's out/).
-      const extUri = vscode.extensions.getExtension('ghcp-plugin.ghcp-mem')?.extensionUri;
+      const extUri = vscode.extensions.getExtension('itcredibl.ghcp-mem')?.extensionUri;
       const mcpJs = extUri ? vscode.Uri.joinPath(extUri, 'out', 'mcpServer.js').fsPath : '<extension-install>/out/mcpServer.js';
       const snippet = [
         '# Connect External MCP Clients to GHCP-MEM',
@@ -548,10 +552,18 @@ function writeRecoveryFileSync(
   redactionCount: number,
 ): void {
   if (!recoveryFile) return;
+  // Cap the events we persist to keep the synchronous write fast and bounded.
+  // 500 most-recent events is well within the compressor's useful window;
+  // anything older in a 3000-event buffer is context the LM would have
+  // truncated anyway. At ~500 bytes/event this keeps the file under ~250 KB.
+  const MAX_RECOVERY_EVENTS = 500;
+  const eventsToSave = events.length > MAX_RECOVERY_EVENTS
+    ? events.slice(-MAX_RECOVERY_EVENTS)
+    : events;
   const payload: RecoveryPayload = {
     version: 1,
     capturedAt: Date.now(),
-    events,
+    events: eventsToSave,
     azureSubsystems,
     azureTags,
     redactionCount,
@@ -672,9 +684,14 @@ description: "Auto-generated session context from GHCP-MEM. Summaries of recent 
 
 ${contextText}
 `;
+  // Skip the write if content hasn't changed — avoids unnecessary file churn
+  // and git-dirty noise on every compression pass.
+  const contentHash = crypto.createHash('sha256').update(content).digest('hex');
+  if (contentHash === lastStartupContextHash) return;
   try {
     await vscode.workspace.fs.createDirectory(dir);
     await vscode.workspace.fs.writeFile(file, Buffer.from(content, 'utf-8'));
+    lastStartupContextHash = contentHash;
     // Ensure the auto-generated file is git-ignored so it is never committed.
     await ensureGitIgnored(ws.uri, '.github/instructions/session-memory.instructions.md');
   } catch (err) {
@@ -846,11 +863,8 @@ function buildAzureDemoSessions(): CompressedSession[] {
       ['azure-storage', 'sas', 'rbac', 'managed-identity'],
       ['Shared-key disabled everywhere', 'All SAS tokens must be user-delegation, never account-key'],
       ['Inventoried and replaced 1 hardcoded SAS token'],
-      ['iac-bicep', 'storage' as AzureSubsystemLiteral],
+      ['iac-bicep', 'storage' as AzureSubsystem],
       ['storage', 'security']
     ),
   ];
 }
-
-// Avoid a circular import by typing the string-literal values locally.
-type AzureSubsystemLiteral = 'iac-bicep' | 'iac-terraform' | 'iac-arm' | 'azd' | 'functions' | 'appservice' | 'aks' | 'containerapps' | 'storage' | 'keyvault' | 'openai' | 'cli';

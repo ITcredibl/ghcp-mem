@@ -161,6 +161,18 @@ export class ContextStore implements vscode.Disposable {
     return true;
   }
 
+  /** Batch-delete multiple sessions with a single persist() call. */
+  async deleteSessions(ids: string[]): Promise<number> {
+    const idSet = new Set(ids);
+    const before = this.db.sessions.length;
+    const toRemove = this.db.sessions.filter(s => idSet.has(s.id));
+    for (const s of toRemove) this.removeFromIndex(s);
+    this.db.sessions = this.db.sessions.filter(s => !idSet.has(s.id));
+    const removed = before - this.db.sessions.length;
+    if (removed > 0) await this.persist();
+    return removed;
+  }
+
   async addTag(id: string, tag: string): Promise<boolean> {
     const s = this.getById(id);
     if (!s) return false;
@@ -362,7 +374,7 @@ export class ContextStore implements vscode.Disposable {
     return JSON.stringify(this.db, null, 2);
   }
 
-  async importFromJson(json: string, merge = true): Promise<{ imported: number }> {
+  async importFromJson(json: string, merge = true): Promise<{ imported: number; skippedInvalid: number }> {
     const parsed = JSON.parse(json) as ContextDatabase;
     if (!parsed || !Array.isArray(parsed.sessions)) {
       throw new Error('Invalid memory JSON format');
@@ -374,10 +386,11 @@ export class ContextStore implements vscode.Disposable {
     const existingIds = new Set(this.db.sessions.map(s => s.id));
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let imported = 0;
+    let skippedInvalid = 0;
     const r = (txt: string) => redact(txt, { redactSecrets: true, honorPrivateTags: true }).text;
     for (const s of parsed.sessions) {
       // Skip sessions with missing or malformed IDs to prevent injection.
-      if (typeof s.id !== 'string' || !uuidRe.test(s.id)) continue;
+      if (typeof s.id !== 'string' || !uuidRe.test(s.id)) { skippedInvalid++; continue; }
       if (existingIds.has(s.id)) continue;
       // Re-run redaction on import to protect against unredacted third-party data.
       const sanitized: CompressedSession = {
@@ -393,7 +406,7 @@ export class ContextStore implements vscode.Disposable {
     }
     this.db.sessions.sort((a, b) => a.startTime - b.startTime);
     await this.persist();
-    return { imported };
+    return { imported, skippedInvalid };
   }
 
   getStats() {
@@ -471,17 +484,21 @@ export class ContextStore implements vscode.Disposable {
     const sessions = [...this.db.sessions];
     const CHUNK = 50;
     let i = 0;
+    // Yield using a macrotask (setTimeout 0) so the index rebuild doesn't
+    // starve the extension host UI thread on large stores. We use setTimeout
+    // rather than setImmediate because setImmediate is not available in the
+    // VS Code web extension host (browser context).
     return new Promise<void>(resolve => {
       const step = () => {
         const end = Math.min(i + CHUNK, sessions.length);
         for (; i < end; i++) this.indexSession(sessions[i]);
         if (i < sessions.length) {
-          setImmediate(step);
+          setTimeout(step, 0);
         } else {
           resolve();
         }
       };
-      setImmediate(step);
+      setTimeout(step, 0);
     });
   }
 

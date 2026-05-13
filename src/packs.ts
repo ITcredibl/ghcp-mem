@@ -123,8 +123,8 @@ export async function importPack(store: ContextStore, pack: MemoryPack): Promise
 export async function uninstallPack(store: ContextStore, name: string): Promise<number> {
   const packTag = `${PACK_TAG_PREFIX}${name}`;
   const toDelete = store.getAllSessions().filter(s => s.userTags.includes(packTag));
-  for (const s of toDelete) await store.deleteSession(s.id);
-  return toDelete.length;
+  if (toDelete.length === 0) return 0;
+  return store.deleteSessions(toDelete.map(s => s.id));
 }
 
 /**

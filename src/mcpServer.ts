@@ -97,7 +97,7 @@ async function loadDatabase(): Promise<StoredDatabase> {
 function searchSessions(
   db: StoredDatabase,
   query: string,
-  filters: { type?: string; tag?: string; sinceDays?: number; workspaceId?: string } = {},
+  filters: { type?: string; tag?: string; sinceDays?: number; workspaceId?: string; workspaceName?: string } = {},
   limit = 5,
 ): StoredSession[] {
   let candidates = [...db.sessions];
@@ -108,6 +108,11 @@ function searchSessions(
     candidates = candidates.filter(s => s.endTime >= cutoff);
   }
   if (filters.workspaceId) candidates = candidates.filter(s => s.workspaceId === filters.workspaceId);
+  // workspaceName filter: case-insensitive substring match on workspaceName field.
+  if (filters.workspaceName) {
+    const needle = filters.workspaceName.toLowerCase();
+    candidates = candidates.filter(s => s.workspaceName?.toLowerCase().includes(needle));
+  }
 
   const terms = extractTerms(query ?? '');
   const kScored = candidates.map(s => ({ s, k: keywordScore(s, terms) }));
@@ -178,6 +183,7 @@ const TOOLS = [
         sinceDays: { type: 'number', description: 'Only return sessions from the last N days.' },
         tag: { type: 'string', description: 'Filter by user-applied tag.' },
         workspaceId: { type: 'string', description: 'Scope results to a specific workspace URI. Omit for all workspaces.' },
+        workspaceName: { type: 'string', description: 'Scope results by workspace name (case-insensitive substring). Easier to use than workspaceId.' },
         limit: { type: 'number', description: 'Max results (default 5, max 25).' },
       },
       required: ['query'],
@@ -191,6 +197,7 @@ const TOOLS = [
       properties: {
         limit: { type: 'number', description: 'Max results (default 5, max 25).' },
         workspaceId: { type: 'string', description: 'Scope results to a specific workspace URI. Omit for all workspaces.' },
+        workspaceName: { type: 'string', description: 'Scope results by workspace name (case-insensitive substring). Easier to use than workspaceId.' },
       },
     },
   },
@@ -235,7 +242,7 @@ async function handleCall(name: string, args: any): Promise<any> {
       const hits = searchSessions(
         db,
         String(args?.query ?? ''),
-        { type: args?.type, tag: args?.tag, sinceDays: args?.sinceDays, workspaceId: args?.workspaceId },
+        { type: args?.type, tag: args?.tag, sinceDays: args?.sinceDays, workspaceId: args?.workspaceId, workspaceName: args?.workspaceName },
         limit,
       );
       return textContent({ count: hits.length, results: hits.map(summarizeForMcp) });
@@ -244,6 +251,10 @@ async function handleCall(name: string, args: any): Promise<any> {
       const limit = clamp(args?.limit, 5, 25);
       let recent = [...db.sessions].sort((a, b) => b.endTime - a.endTime);
       if (args?.workspaceId) recent = recent.filter(s => s.workspaceId === args.workspaceId);
+      if (args?.workspaceName) {
+        const needle = String(args.workspaceName).toLowerCase();
+        recent = recent.filter(s => s.workspaceName?.toLowerCase().includes(needle));
+      }
       return textContent({ count: recent.slice(0, limit).length, results: recent.slice(0, limit).map(summarizeForMcp) });
     }
     case 'ghcpMem_timeline': {

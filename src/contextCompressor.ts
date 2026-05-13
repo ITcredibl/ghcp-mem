@@ -68,11 +68,20 @@ SESSION LOG:
 ${safeEventLog}`;
 
     try {
-      // Prefer a cheap model first \u2014 compression is a summarization task and
-      // there is no quality reason to pay gpt-4o rates for it. Fall back to
-      // gpt-4o, then to anything available.
+      // Prefer cheap/fast models first — compression is a summarization task
+      // and does not need the most capable (or expensive) model available.
+      // List covers the main families across OpenAI, Anthropic, Google, and
+      // Mistral so users on any provider get a preferred lightweight model.
       let model: vscode.LanguageModelChat | undefined;
-      const tryFamilies = ['gpt-4o-mini', 'gpt-4o'];
+      const tryFamilies = [
+        'gpt-4o-mini',
+        'claude-3-5-haiku',
+        'gemini-1.5-flash',
+        'mistral-small',
+        'gpt-4o',
+        'claude-3-5-sonnet',
+        'gemini-1.5-pro',
+      ];
       for (const family of tryFamilies) {
         try {
           const found = await vscode.lm.selectChatModels({ family });
@@ -320,7 +329,15 @@ ${safeEventLog}`;
       const head = lines.slice(0, cut).join('\n');
       const tail = lines.slice(-Math.floor(lines.length * 0.7)).join('\n');
       result = head + '\n\n... [middle truncated] ...\n\n' + tail;
-      if (result.length > MAX) result = result.substring(0, MAX) + '\n... [truncated]';
+      // Second pass: if still too long, drop oldest head lines one by one until within budget.
+      if (result.length > MAX) {
+        const tailLines = lines.slice(-Math.floor(lines.length * 0.7));
+        while (tailLines.length > 1 && tailLines.join('\n').length + 30 > MAX) {
+          tailLines.shift(); // remove oldest remaining line from the tail block
+        }
+        result = '... [truncated] ...\n\n' + tailLines.join('\n');
+        if (result.length > MAX) result = result.substring(0, MAX) + '\n... [truncated]';
+      }
     }
     return result;
   }

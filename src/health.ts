@@ -4,6 +4,10 @@ export interface HealthScore {
   /** 0-100 composite score. */
   score: number;
   redactionCoveragePct: number;
+  /**
+   * Fraction of sessions that are exact-content duplicates (0 = no dups = healthy).
+   * Stored as a ratio 0–1 so callers can multiply by 100 for display.
+   */
   dedupRatio: number;
   taggedPct: number;
   retentionHeadroomPct: number;
@@ -59,8 +63,9 @@ export function computeHealth(sessions: CompressedSession[]): HealthScore {
   // Dedup health: proportion of DISTINCT content hashes. Missing hash counts as unique (worst case).
   const hashes = new Set<string>();
   for (const s of sessions) hashes.add(s.contentHash ?? s.id);
-  const uniqueRatio = hashes.size / total;
-  const dedupRatio = Math.round((1 - uniqueRatio) * 100) / 100; // proportion that is a dup (lower = healthier)
+  // dedupRatio: proportion of sessions that are exact-content duplicates.
+  // 0 = no duplicates = healthiest. 1 = everything is a duplicate.
+  const dedupRatio = Math.round((1 - hashes.size / total) * 100) / 100;
 
   const retentionHeadroomPct = Math.max(
     0,

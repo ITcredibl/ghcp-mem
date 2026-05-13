@@ -13,7 +13,7 @@
 [![Azure-aware](https://img.shields.io/badge/Azure-aware-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](#%EF%B8%8F-azure--enterprise)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.5-22c55e?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.6-22c55e?style=flat-square)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-93%20passing-22c55e?style=flat-square)](src/test)
 [![Native deps](https://img.shields.io/badge/native_deps-0-22c55e?style=flat-square)](#-why-it-matters)
 [![Network ports](https://img.shields.io/badge/network_ports-0-22c55e?style=flat-square)](#-privacy--security)
@@ -115,7 +115,7 @@ flowchart TB
 ```powershell
 git clone https://github.com/ITcredibl/ghcp-mem.git
 cd ghcp-mem
-code --install-extension ghcp-mem-1.1.5.vsix
+code --install-extension ghcp-mem-1.1.6.vsix
 ```
 
 Reload VS Code. You should see `$(history) MEM ●●○○○ 0` in the status bar.
@@ -131,7 +131,7 @@ npm install          # install dev deps (no runtime native modules)
 npm run compile      # tsc → out/
 npm test             # 94 cases, ~3 s
 npx @vscode/vsce package
-code --install-extension ghcp-mem-1.1.5.vsix
+code --install-extension ghcp-mem-1.1.6.vsix
 ```
 
 `npm run watch` keeps the TypeScript compiler running for the F5 dev loop.
@@ -507,6 +507,6 @@ MIT — see [LICENSE](LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](docs/DEMO.md) · [Compare against other memory tools](docs/COMPARISON.md)
 
-<sub>**v1.1.5** · 94 passing tests · zero native deps · zero ports · 24-rule redaction</sub>
+<sub>**v1.1.6** · 94 passing tests · zero native deps · zero ports · 24-rule redaction</sub>
 
 </div>

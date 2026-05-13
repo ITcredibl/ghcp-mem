@@ -6,6 +6,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.1.4] — 2026-05-13
+
+### Fixed
+- Removed all remaining `Oluseyi-Kofoworola` references from `README.md` and `docs/COMPARISON.md`; all links now point to `github.com/ITcredibl/ghcp-mem`.
+- Version badge in `README.md` updated to reflect current release.
+
+---
+
+## [1.1.3] — 2026-05-13
+
+### Fixed
+- `package.json` `repository`, `bugs`, and `homepage` URLs updated from `Oluseyi-Kofoworola` to `ITcredibl`.
+- Git remote `origin` updated to `https://github.com/ITcredibl/ghcp-mem.git`.
+
+---
+
+## [1.1.2] — 2026-05-13
+
+### Fixed
+- Marketplace thumbnail now displays correctly: icon converted from 1024×1024 RGBA PNG to **128×128 RGB PNG** (no alpha channel) as required by the VS Code Marketplace.
+
+---
+
+## [1.1.1] — 2026-05-13
+
+### Changed
+- Publisher changed from `OluseyiKofoworola` to `itcredibl`.
+- Extension first published to Marketplace under `itcredibl.ghcp-mem`.
+- ITcredibl AI cloud logo added as `images/icon.png`.
+
+---
+
 ## [1.1.0] — 2026-05-13
 
 ### Added

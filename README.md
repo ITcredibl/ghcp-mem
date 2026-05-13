@@ -13,7 +13,7 @@
 [![Azure-aware](https://img.shields.io/badge/Azure-aware-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](#%EF%B8%8F-azure--enterprise)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.3-22c55e?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.4-22c55e?style=flat-square)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-93%20passing-22c55e?style=flat-square)](src/test)
 [![Native deps](https://img.shields.io/badge/native_deps-0-22c55e?style=flat-square)](#-why-it-matters)
 [![Network ports](https://img.shields.io/badge/network_ports-0-22c55e?style=flat-square)](#-privacy--security)

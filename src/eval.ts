@@ -182,7 +182,11 @@ export function formatEvalReport(r: EvalReport): string {
     lines.push('| Query | Rank | Hits |');
     lines.push('| --- | ---:| ---:|');
     for (const p of run.perQuery) {
-      lines.push(`| ${p.q.replace(/\|/g, '\\|')} | ${p.rank ?? '—'} | ${p.hits} |`);
+      // Escape backslashes first, then pipes, so a query containing literal
+      // `\` doesn't break GFM table rendering (and the CodeQL
+      // incomplete-string-escaping check stays clean).
+      const q = p.q.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+      lines.push(`| ${q} | ${p.rank ?? '—'} | ${p.hits} |`);
     }
     lines.push('');
   }

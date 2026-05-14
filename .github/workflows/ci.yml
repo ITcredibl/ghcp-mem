@@ -8,10 +8,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Default to least privilege; the release job overrides with `contents: write`.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build & test
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:

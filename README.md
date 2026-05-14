@@ -15,7 +15,7 @@
 [![Marketplace Rating](https://img.shields.io/visual-studio-marketplace/r/ITcredibl.ghcp-mem?label=rating&color=007ACC&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem&ssr=false#review-details)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE)
-[![Tests](https://img.shields.io/badge/tests-94%20passing-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/tree/main/src/test)
+[![Tests](https://img.shields.io/badge/tests-130%20passing-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/tree/main/src/test)
 [![Native deps](https://img.shields.io/badge/native_deps-0-22c55e?style=flat-square)](#-why-it-matters)
 [![Network ports](https://img.shields.io/badge/network_ports-0-22c55e?style=flat-square)](#-privacy--security)
 [![Redaction rules](https://img.shields.io/badge/redaction_rules-24-22c55e?style=flat-square)](#-privacy--security)

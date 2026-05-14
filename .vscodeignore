@@ -9,6 +9,7 @@ scripts/**
 out-test/**
 out/test/**
 out/**/*.test.*
+out/**/*.d.ts
 docs/**
 **/*.map
 node_modules/**
@@ -18,3 +19,25 @@ node_modules/**
 demo/**
 images/diagrams/**
 README.md.bak
+# Only the two esbuild bundles are loaded at runtime;
+# every other compiled .js in out/ is stale tsc emit and is dead weight.
+out/autosave.js
+out/azureContext.js
+out/azureDetect.js
+out/contextCompressor.js
+out/contextProvider.js
+out/contextStore.js
+out/embeddings.js
+out/health.js
+out/memoryTool.js
+out/packs.js
+out/redactor.js
+out/ruleClassifier.js
+out/searchCore.js
+out/sessionCapture.js
+out/sessionsView.js
+out/types.js
+out/eval.js
+out/markdownExport.js
+out/repoScope.js
+out/validator.js

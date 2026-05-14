@@ -60,7 +60,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [1.2.0] — 2026-05-13
+## [1.2.0-pre] — 2026-05-13
+
+> Internal pre-release that became the base for [1.2.0] above. Kept here for reference; the published 1.2.0 supersedes everything in this entry.
 
 ### Added
 - **`src/searchCore.ts`** — New shared module exporting `extractTerms()` and `keywordScore()`. `mcpServer.ts` and `contextStore.ts` now consume the same scorer, eliminating the duplicated ranking code that caused the v1.1.5 search-intersection drift.

@@ -4,7 +4,7 @@
 
 ### How GHCP-MEM compares to other persistent-memory tools for AI coding assistants
 
-[![v1.1.7](https://img.shields.io/badge/version-1.1.7-7c3aed?style=for-the-badge)](../package.json)
+[![v1.1.8](https://img.shields.io/badge/version-1.1.8-7c3aed?style=for-the-badge)](../package.json)
 [![Scope](https://img.shields.io/badge/scope-VS_Code_+_Copilot-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](../README.md)
 
 </div>
@@ -50,7 +50,7 @@ GHCP-MEM is intentionally narrow: **VS Code + Copilot, zero deps, zero ports, se
 <details open>
 <summary><b>🔬 Full feature comparison</b></summary>
 
-| Dimension | **GHCP-MEM v1.1.7** | PluresLM | Remember-MCP | Cortex-Memory | Cortex (Claude) | claude-mem v13.x |
+| Dimension | **GHCP-MEM v1.1.8** | PluresLM | Remember-MCP | Cortex-Memory | Cortex (Claude) | claude-mem v13.x |
 |---|---|---|---|---|---|---|
 | No external service / port | ✅ | ❌ (service by default) | ❌ (needs pipx + Python server) | ✅ | ✅ | ❌ (`:37777` worker) |
 | No native deps | ✅ | 🟡 (better-sqlite3 in legacy) | ❌ | ✅ | ❌ (sql-wasm, Nomic) | ❌ (SQLite, Chroma, Bun) |
@@ -133,7 +133,7 @@ Every gap from the original v0.x analysis was closed before v1.0. Remaining item
 
 [← Back to README](../README.md) · [Live demo](DEMO.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Comparison for GHCP-MEM v1.1.7** · last refreshed May 2026</sub>
+<sub>**Comparison for GHCP-MEM v1.1.8** · last refreshed May 2026</sub>
 
 </div>
 

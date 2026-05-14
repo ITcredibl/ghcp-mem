@@ -9,13 +9,42 @@
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-7e3aed?style=for-the-badge)](https://modelcontextprotocol.io/)
 [![Azure-aware](https://img.shields.io/badge/Azure-aware-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](#%EF%B8%8F-azure--enterprise)
 
+[![Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/ITcredibl.ghcp-mem?label=marketplace&color=007ACC&style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem)
+[![Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/ITcredibl.ghcp-mem?label=installs&color=007ACC&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem)
+[![Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/ITcredibl.ghcp-mem?label=downloads&color=007ACC&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem)
+[![Marketplace Rating](https://img.shields.io/visual-studio-marketplace/r/ITcredibl.ghcp-mem?label=rating&color=007ACC&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem&ssr=false#review-details)
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.8-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-94%20passing-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/tree/main/src/test)
 [![Native deps](https://img.shields.io/badge/native_deps-0-22c55e?style=flat-square)](#-why-it-matters)
 [![Network ports](https://img.shields.io/badge/network_ports-0-22c55e?style=flat-square)](#-privacy--security)
 [![Redaction rules](https://img.shields.io/badge/redaction_rules-24-22c55e?style=flat-square)](#-privacy--security)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+
+---
+
+## 🚀 Install
+
+> **Live on the VS Code Marketplace** — one-click install, auto-updates included.
+
+<p>
+  <a href="https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem">
+    <img src="https://img.shields.io/badge/Install_from_Marketplace-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Install from VS Code Marketplace" height="36">
+  </a>
+  &nbsp;
+  <a href="vscode:extension/ITcredibl.ghcp-mem">
+    <img src="https://img.shields.io/badge/Open_in_VS_Code-22c55e?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Open in VS Code" height="36">
+  </a>
+</p>
+
+| Method | Steps |
+|---|---|
+| **🟢 Marketplace (recommended)** | Click [**Install on the Marketplace listing**](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem) — VS Code opens, click `Install`. Auto-updates are on by default. |
+| **🟢 Inside VS Code** | Open the Extensions sidebar (`⇧⌘X` / `Ctrl+Shift+X`), search **GHCP-MEM**, click **Install**. |
+| **🟢 Command line** | `code --install-extension ITcredibl.ghcp-mem` |
+| **🔵 Offline / air-gapped** | Download the latest [`.vsix` from GitHub Releases](https://github.com/ITcredibl/ghcp-mem/releases) → `code --install-extension ghcp-mem-<version>.vsix` |
+
+After install, open any workspace and run **`GHCP-MEM: Capture Session Snapshot Now`** from the command palette to verify it's working.
 
 ---
 
@@ -235,12 +264,6 @@ Use `GHCP-MEM: Show External MCP Client Config` to get the exact resolved path.
 - `ghcpMem_recent(limit?, workspaceName?)` — most recent sessions
 - `ghcpMem_timeline(days?, limit?)` — chronological within a window
 - `ghcpMem_get(id)` — full detail by ID or prefix
-
-**Install VSIX:**
-
-```bash
-code --install-extension ghcp-mem-1.1.8.vsix
-```
 
 ---
 

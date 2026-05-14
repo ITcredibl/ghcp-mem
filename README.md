@@ -10,7 +10,7 @@
 [![Azure-aware](https://img.shields.io/badge/Azure-aware-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](#%EF%B8%8F-azure--enterprise)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.7-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.8-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-94%20passing-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/tree/main/src/test)
 [![Native deps](https://img.shields.io/badge/native_deps-0-22c55e?style=flat-square)](#-why-it-matters)
 [![Network ports](https://img.shields.io/badge/network_ports-0-22c55e?style=flat-square)](#-privacy--security)
@@ -239,7 +239,7 @@ Use `GHCP-MEM: Show External MCP Client Config` to get the exact resolved path.
 **Install VSIX:**
 
 ```bash
-code --install-extension ghcp-mem-1.1.7.vsix
+code --install-extension ghcp-mem-1.1.8.vsix
 ```
 
 ---
@@ -320,4 +320,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare against other memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md)
 
-<sub>**v1.1.7** · 94 passing tests · zero native deps · zero ports · 24-rule redaction</sub>
+<sub>**v1.1.8** · 94 passing tests · zero native deps · zero ports · 24-rule redaction</sub>

@@ -6,6 +6,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.1.8] — 2026-05-14
+
+### Changed
+- **`images/icon.png`** — New neon-styled marketplace thumbnail (cyan/green outline on dark slate, "GHCP-MEM" wordmark). Matches the dark `galleryBanner` palette already set in `package.json`. 128×128 RGB, no alpha.
+- **`docs/diagrams/*.mmd`** — Pipeline diagram redesigned: flat `flowchart LR` with explicit fan-in edges instead of a `direction LR` subgraph (Mermaid was ignoring the hint, producing a 2126×2904 portrait that scrolled forever in the README). New aspect is 3168×902 landscape. Per-event redundant edge labels removed; the `debounced · glob-filtered` annotation moved into the Session Capture node.
+- **`docs/diagrams/*.mmd`** — Retrieval and architecture diagrams restyled with a unified dark-slate theme + colour-grouped `classDef`s. Architecture cluster backgrounds set to `#f1f5f9` explicitly so labels stay readable (the default theme rendered them in dark brown).
+
+---
+
 ## [1.1.7] — 2026-05-13
 
 ### Fixed

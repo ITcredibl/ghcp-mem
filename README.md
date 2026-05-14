@@ -46,6 +46,66 @@
 
 After install, open any workspace and run **`GHCP-MEM: Capture Session Snapshot Now`** from the command palette to verify it's working.
 
+<details>
+<summary><b>📺 Watch the install in 5 seconds</b></summary>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/demo/install-animation.svg" alt="Animated terminal: code --install-extension ITcredibl.ghcp-mem then 'Installed successfully · READY TO USE'" width="720">
+</p>
+
+</details>
+
+---
+
+## 🎬 See it in action
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/demo/pipeline-animation.svg" alt="Animated GHCP-MEM pipeline: code edits flow through redactor, AI summariser, store, then return as recalled memory in @mem chat" width="900">
+</p>
+
+**What you're watching:** every edit, diagnostic, git op, and terminal command you make in VS Code is **debounced**, **scrubbed of secrets** (24 rules + `<private>` tags), **summarised by your existing Copilot LM**, and **stored locally**. Next session, when you ask `@mem` anything, the relevant prior context is recalled in milliseconds — no sidecar, no port, no cloud round-trip.
+
+### 💡 Why this is a category-of-one tool
+
+| | What it gives you | Why no other tool does this |
+|---|---|---|
+| 🏢 **Works on locked-down enterprise machines** | A `.vsix` you double-click. No admin. No Bun, uv, Python, SQLite, WASM, or Chroma. No ports for vuln scanners to flag. | Every "memory" alternative needs a sidecar binary, a localhost HTTP worker, or a cloud sync token. |
+| ☁️ **Azure-shop native** | Auto-tags every edit by Azure subsystem (`bicep`, `azd`, `aks`, `keyvault`, …). Live `az` snapshot. 8 Azure-specific redaction rules (storage / SAS / SP secrets / sub GUIDs). | No other Copilot memory plugin understands Azure DSL. |
+| 🤖 **Speaks Copilot's protocol natively** | `@mem` chat participant + `#ghcpMemSearch` / `#ghcpMemStore` agent tools, plus a stdio MCP server for Cursor / Cline / Windsurf / Claude Desktop. | Most "memory" tools target one chat client. This one ships four entry points in the same `.vsix`. |
+| 🔒 **Privacy-first by default** | All data on your disk. No telemetry. Dual-pass redaction. `.gitignore` auto-guarded so the auto-injected brief never gets committed. | Cloud-memory tools require trusting their backend with every line of code you wrote. |
+| 🌳 **Token-efficient by design** | Three-layer progressive disclosure: `/search` returns ~100-token summaries; `/detail` only after you filter. Doesn't burn 8k tokens per question. | Naïve RAG dumps 5–10 full sessions into context. This one stays under 500 tokens for the average query. |
+
+### 🎥 Real screen recording
+
+<details>
+<summary><b>Watch a 30-second walkthrough (coming soon — placeholder)</b></summary>
+
+<!--
+  Drop in any of:
+  • A YouTube embed:    [![Watch the demo](https://img.youtube.com/vi/<id>/maxresdefault.jpg)](https://youtu.be/<id>)
+  • A Loom share link:  [![Demo](https://cdn.loom.com/sessions/thumbnails/<id>-thumbnail.gif)](https://loom.com/share/<id>)
+  • A locally hosted GIF: <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/demo/walkthrough.gif" width="800">
+-->
+
+> _Recording yourself? Open a workspace, then capture **30 seconds** showing:_
+>
+> 1. Type `@mem /status` in Copilot Chat → 0 sessions
+> 2. Edit 2–3 files, make a git commit, run a build (let GHCP-MEM observe)
+> 3. Run **`GHCP-MEM: Capture Session Snapshot Now`** from the palette
+> 4. Reload window
+> 5. `@mem /recent` → your session is back
+> 6. Ask Copilot "what did I work on last?" → context-aware answer
+>
+> **Recording recipe (macOS, no extra tools):**
+> ```
+> ⌘⇧5 → "Record Selected Portion" → drag over VS Code window
+> Click Record · perform demo · click Stop in menu bar
+> Movie saves to ~/Desktop/Screen Recording … .mov
+> ```
+> Convert to GIF for the README via [ezgif.com](https://ezgif.com/video-to-gif) or `ffmpeg -i recording.mov -vf "fps=10,scale=800:-1:flags=lanczos" -loop 0 walkthrough.gif`. Drop it at `images/demo/walkthrough.gif` and uncomment the line above.
+
+</details>
+
 ---
 
 ## 🎯 What it is

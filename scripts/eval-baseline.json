@@ -1,0 +1,10 @@
+{
+  "comment": "Recall@5 / MRR floor for the synthetic eval corpus seeded by scripts/eval-check.js. Update only after deliberate ranker improvements.",
+  "tolerancePct": 5,
+  "floors": {
+    "keyword-only": {
+      "recall": 0.7,
+      "mrr": 0.6
+    }
+  }
+}

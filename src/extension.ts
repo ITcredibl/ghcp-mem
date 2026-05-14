@@ -190,6 +190,20 @@ export function activate(context: vscode.ExtensionContext) {
       await store.addTag(id, tag.trim());
     }),
 
+    vscode.commands.registerCommand('ghcpMem.togglePin', async (node?: TreeNode) => {
+      const id = await pickSessionId(node);
+      if (!id) return;
+      const s = store.getById(id);
+      if (!s) return;
+      if (s.userTags.includes('pinned')) {
+        await store.removeTag(id, 'pinned');
+        vscode.window.setStatusBarMessage('GHCP-MEM: session unpinned', 2000);
+      } else {
+        await store.addTag(id, 'pinned');
+        vscode.window.setStatusBarMessage('GHCP-MEM: session pinned', 2000);
+      }
+    }),
+
     vscode.commands.registerCommand('ghcpMem.openSession', async (id?: string) => {
       if (!id) return;
       const s = store.getById(id);
@@ -202,6 +216,90 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('ghcpMem.refreshView', () => tree.refresh()),
+
+    vscode.commands.registerCommand('ghcpMem.filterSessions', async () => {
+      const current = tree.getFilter();
+      const scopePick = await vscode.window.showQuickPick(
+        [
+          { label: '$(workspace-trusted) Workspace', value: 'workspace' as const },
+          { label: '$(repo) Repo (this git origin)', value: 'repo' as const },
+          { label: '$(globe) All', value: 'all' as const },
+        ],
+        { placeHolder: `Scope (current: ${current.scope ?? 'workspace'})`, ignoreFocusOut: true },
+      );
+      if (!scopePick) return;
+      const typePick = await vscode.window.showQuickPick(
+        [
+          { label: '(any type)', value: undefined },
+          { label: 'feature', value: 'feature' as const },
+          { label: 'bugfix', value: 'bugfix' as const },
+          { label: 'refactor', value: 'refactor' as const },
+          { label: 'docs', value: 'docs' as const },
+          { label: 'test', value: 'test' as const },
+          { label: 'chore', value: 'chore' as const },
+          { label: 'research', value: 'research' as const },
+          { label: 'config', value: 'config' as const },
+          { label: 'security', value: 'security' as const },
+          { label: 'deployment', value: 'deployment' as const },
+          { label: 'infra', value: 'infra' as const },
+          { label: 'unknown', value: 'unknown' as const },
+        ],
+        { placeHolder: 'Filter by observation type', ignoreFocusOut: true },
+      );
+      if (!typePick) return;
+      const tag = await vscode.window.showInputBox({
+        prompt: 'Filter by user tag (leave blank for none)',
+        value: current.tag ?? '',
+        ignoreFocusOut: true,
+      });
+      if (tag === undefined) return;
+      const sinceStr = await vscode.window.showInputBox({
+        prompt: 'Show sessions newer than N days (blank = no limit)',
+        value: current.sinceDays ? String(current.sinceDays) : '',
+        ignoreFocusOut: true,
+        validateInput: v => (v && !/^\d+$/.test(v) ? 'Must be a positive integer' : null),
+      });
+      if (sinceStr === undefined) return;
+      const text = await vscode.window.showInputBox({
+        prompt: 'Free-text filter (blank to skip)',
+        value: current.text ?? '',
+        ignoreFocusOut: true,
+      });
+      if (text === undefined) return;
+      tree.setFilter({
+        scope: scopePick.value,
+        type: typePick.value,
+        tag: tag.trim() || undefined,
+        sinceDays: sinceStr ? parseInt(sinceStr, 10) : undefined,
+        text: text.trim() || undefined,
+      });
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.clearFilter', () => {
+      tree.clearFilter();
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.exportSessionMarkdown', async (node?: TreeNode) => {
+      const { exportSessionMarkdown, exportSessionsMarkdown } = await import('./markdownExport');
+      const sessions = node?.session ? [node.session] : store.getWorkspaceSessions();
+      if (sessions.length === 0) {
+        vscode.window.showInformationMessage('GHCP-MEM: No sessions to export.');
+        return;
+      }
+      const body = sessions.length === 1
+        ? exportSessionMarkdown(sessions[0])
+        : exportSessionsMarkdown(sessions);
+      const doc = await vscode.workspace.openTextDocument({ content: body, language: 'markdown' });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.runEval', async () => {
+      const { runEvalSuite, formatEvalReport } = await import('./eval');
+      const report = await runEvalSuite(store);
+      const md = formatEvalReport(report);
+      const doc = await vscode.workspace.openTextDocument({ content: md, language: 'markdown' });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }),
 
     vscode.commands.registerCommand('ghcpMem.restoreBackup', async () => {
       const backups = await store.listBackups();

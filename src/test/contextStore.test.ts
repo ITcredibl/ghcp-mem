@@ -158,3 +158,59 @@ test('ContextStore — getStartupCandidates returns [] when no sessions', () => 
   const store = new ContextStore(mem);
   assert.deepEqual(store.getStartupCandidates(3), []);
 });
+
+test('ContextStore — enforceSizeCap evicts oldest until under cap', async () => {
+  const mem = new InMemoryMemento() as any;
+  // Force a tiny cap via getConfiguration mock.
+  const vscode = require('./__mocks__/vscode');
+  const origGet = vscode.workspace.getConfiguration;
+  vscode.workspace.getConfiguration = (section?: string) => {
+    const real = origGet.call(vscode.workspace, section);
+    return {
+      get: (k: string, d?: unknown) => k === 'maxStoreSizeMB' ? 0.001 : (real.get ? real.get(k, d) : d),
+    };
+  };
+  try {
+    const store = new ContextStore(mem);
+    // Stuff a fat summary into each session to grow the JSON over 1 KB quickly.
+    // Distinct content per session so the content-hash dedup path doesn't collapse them.
+    for (let i = 0; i < 10; i++) {
+      await store.addSession(makeSession({
+        id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa${i.toString().padStart(4, '0')}`,
+        summary: `size-cap-fixture-${i}-${'x'.repeat(400)}`,
+        startTime: Date.now() - (10 - i) * 1000,
+        endTime: Date.now() - (10 - i) * 1000 + 50,
+      }));
+    }
+    // Should have been culled to far fewer than 10.
+    assert.ok(store.getAllSessions().length < 10, 'size cap evicted some sessions');
+    assert.ok(store.getAllSessions().length >= 1, 'always keeps at least one session');
+  } finally {
+    vscode.workspace.getConfiguration = origGet;
+  }
+});
+
+test('ContextStore — enforceSizeCap is a no-op when cap is 0', async () => {
+  const mem = new InMemoryMemento() as any;
+  const vscode = require('./__mocks__/vscode');
+  const origGet = vscode.workspace.getConfiguration;
+  vscode.workspace.getConfiguration = (section?: string) => {
+    const real = origGet.call(vscode.workspace, section);
+    return {
+      get: (k: string, d?: unknown) => k === 'maxStoreSizeMB' ? 0 : (real.get ? real.get(k, d) : d),
+    };
+  };
+  try {
+    const store = new ContextStore(mem);
+    for (let i = 0; i < 5; i++) {
+      await store.addSession(makeSession({
+        id: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbb${i.toString().padStart(4, '0')}`,
+        summary: `no-op-fixture-${i}`,
+      }));
+    }
+    assert.equal(store.enforceSizeCap(), 0);
+    assert.equal(store.getAllSessions().length, 5);
+  } finally {
+    vscode.workspace.getConfiguration = origGet;
+  }
+});

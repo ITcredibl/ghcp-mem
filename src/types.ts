@@ -125,6 +125,14 @@ export interface CompressedSession {
   embedding?: number[];
   /** Optional Azure context snapshot — set when the session touched Azure-related files/commands. */
   azureContext?: AzureContextMeta;
+  /**
+   * Stable repo-scope identifier (see {@link './repoScope'.getRepoScope}).
+   * When present, retrieval can be partitioned per-repo — mirrors GitHub
+   * agentic memory's repository-scoped guarantee, but resolved locally.
+   */
+  repoScope?: string;
+  /** Human-readable label for the repo scope (e.g. "github.com/foo/bar"). */
+  repoScopeLabel?: string;
 }
 
 export interface ContextDatabase {
@@ -154,10 +162,15 @@ export function computeContentHash(input: {
   return createHash('sha256').update(material).digest('hex');
 }
 
+/** Retrieval / storage scope — mirrors GitHub agentic memory's repo-scoping. */
+export type MemoryScope = 'user' | 'workspace' | 'repo';
+
 export interface PluginConfig {
   enabled: boolean;
   compressionIntervalMinutes: number;
   maxStoredSessions: number;
+  /** Soft cap on the on-disk size of ~/.ghcp-mem/sessions.json (MB). */
+  maxStoreSizeMB: number;
   retentionDays: number;
   captureFileEdits: boolean;
   captureTerminalCommands: boolean;
@@ -168,15 +181,27 @@ export interface PluginConfig {
   honorPrivateTags: boolean;
   excludeGlobs: string[];
   autoInjectStartupContext: boolean;
+  /** Retrieval scope. 'user' = cross-workspace, 'workspace' = current folder, 'repo' = current git repo. */
+  scope: MemoryScope;
+  /** Filter out sessions whose key files no longer exist in the current workspace. */
+  validateAgainstCodebase: boolean;
+  /** Sessions with freshness below this value are dropped from retrieval (0–1). */
+  freshnessFloor: number;
+  /** GitHub agentic-memory-compatible mode: force retentionDays=28 + repo scope. */
+  githubCompatibleMode: boolean;
 }
 
 export function getConfig(): PluginConfig {
   const cfg = vscode.workspace.getConfiguration('ghcpMem');
+  const githubCompatibleMode = cfg.get('githubCompatibleMode', false);
+  const scope = (cfg.get<MemoryScope>('scope', 'user'));
   return {
     enabled: cfg.get('enabled', true),
     compressionIntervalMinutes: cfg.get('compressionIntervalMinutes', 15),
     maxStoredSessions: cfg.get('maxStoredSessions', 50),
-    retentionDays: cfg.get('retentionDays', 90),
+    maxStoreSizeMB: cfg.get('maxStoreSizeMB', 25),
+    // GitHub-compatible mode pins retention to 28 days like Copilot agentic memory.
+    retentionDays: githubCompatibleMode ? 28 : cfg.get('retentionDays', 90),
     captureFileEdits: cfg.get('captureFileEdits', true),
     captureTerminalCommands: cfg.get('captureTerminalCommands', true),
     captureDiagnostics: cfg.get('captureDiagnostics', true),
@@ -186,6 +211,10 @@ export function getConfig(): PluginConfig {
     honorPrivateTags: cfg.get('honorPrivateTags', true),
     excludeGlobs: cfg.get('excludeGlobs', []),
     autoInjectStartupContext: cfg.get('autoInjectStartupContext', true),
+    scope: githubCompatibleMode ? 'repo' : scope,
+    validateAgainstCodebase: cfg.get('validateAgainstCodebase', true),
+    freshnessFloor: cfg.get('freshnessFloor', 0.25),
+    githubCompatibleMode,
   };
 }
 

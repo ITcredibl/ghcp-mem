@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Eval regression gate
+        run: npm run eval:check
+
+      - name: Search-latency benchmark (smoke)
+        run: npm run bench
+        env:
+          # Lower the bench sizes in CI to keep wall-time bounded.
+          BENCH_SESSIONS: 500
+          BENCH_QUERIES: 100
+
+      - name: Bundle (production esbuild)
+        run: npm run bundle:prod
+
+      - name: Package vsix
+        run: npx --yes @vscode/vsce package --out ghcp-mem.vsix --no-dependencies
+
+      - name: Upload vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghcp-mem-${{ matrix.os }}.vsix
+          path: ghcp-mem.vsix
+          retention-days: 14
+
+  release:
+    name: Attach vsix to GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ghcp-mem-ubuntu-latest.vsix
+          path: ./dist
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./dist/ghcp-mem.vsix
+          generate_release_notes: true

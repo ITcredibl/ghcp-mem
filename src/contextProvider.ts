@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ContextStore } from './contextStore';
 import { CompressedSession, ObservationType } from './types';
 import { computeHealth } from './health';
+import { exportSessionMarkdown } from './markdownExport';
 
 /**
  * Chat participant implementing progressive disclosure (claude-mem style
@@ -35,6 +36,7 @@ export class ContextProvider implements vscode.Disposable {
       case 'detail':   return this.detail(query, stream);
       case 'azure':    return this.azure(query, stream);
       case 'health':   return this.health(stream);
+      case 'export':   return this.export(query, stream);
       default:
         if (!query || query.toLowerCase() === 'status') return this.status(stream);
         if (query.toLowerCase() === 'recent') return this.recent(stream);
@@ -50,7 +52,7 @@ export class ContextProvider implements vscode.Disposable {
     stream.markdown(`- **Redactions applied:** ${stats.totalRedactions}\n`);
     if (stats.oldestSession) stream.markdown(`- **Oldest:** ${new Date(stats.oldestSession).toLocaleDateString()}\n`);
     if (stats.newestSession) stream.markdown(`- **Newest:** ${new Date(stats.newestSession).toLocaleDateString()}\n`);
-    stream.markdown(`\n**Commands:** \`/search\`, \`/timeline\`, \`/detail <id>\`, \`/recent\`, \`/azure\`, \`/health\`, \`/status\`\n`);
+    stream.markdown(`\n**Commands:** \`/search\`, \`/timeline\`, \`/detail <id>\`, \`/recent\`, \`/azure\`, \`/health\`, \`/export <id>\`, \`/status\`\n`);
   }
 
   private async health(stream: vscode.ChatResponseStream): Promise<void> {
@@ -219,6 +221,27 @@ export class ContextProvider implements vscode.Disposable {
       lines.push('');
     }
     return lines.join('\n');
+  }
+
+  /**
+   * `/export <id|prefix>` — emit a session as a diff-friendly markdown block
+   * inline in the chat. Handy for pasting into a PR description, a design
+   * doc, or commit message. Falls back to "most recent" when no id is given.
+   */
+  private async export(idPrefix: string, stream: vscode.ChatResponseStream): Promise<void> {
+    let s: CompressedSession | undefined;
+    if (idPrefix) {
+      s = this.store.getById(idPrefix);
+    } else {
+      const recent = this.store.getRecentSessions(1);
+      s = recent[0];
+    }
+    if (!s) {
+      stream.markdown(`No session found${idPrefix ? ` for ID "${idPrefix}"` : ''}.\n`);
+      return;
+    }
+    const md = exportSessionMarkdown(s);
+    stream.markdown('```markdown\n' + md + '\n```\n');
   }
 
   // ── Rendering ──

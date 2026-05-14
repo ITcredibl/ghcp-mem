@@ -5,6 +5,7 @@ import { redact } from './redactor';
 import { AzureSubsystem, inferAzureObservationType } from './azureDetect';
 import { captureAzureContext } from './azureContext';
 import { classifyByRules } from './ruleClassifier';
+import { getRepoScope } from './repoScope';
 
 export interface CompressorInput {
   events: SessionEvent[];
@@ -32,11 +33,6 @@ export class ContextCompressor {
     const workspaceName = workspaceFolder?.name ?? 'unknown';
     const workspaceId = workspaceFolder?.uri.toString() ?? 'unknown';
     const eventLog = this.buildEventLog(events);
-    // Final redaction pass on the event log before it reaches the LM.
-    // buildEventLog already redacts individual snippets/commands at capture
-    // time, but this catches anything assembled during log formatting
-    // (e.g. file paths containing tokens, diagnostic messages with URLs, etc.)
-    const safeEventLog = redact(eventLog, { redactSecrets: true, honorPrivateTags: true }).text;
 
     // Rule-based pre-classification — stable, cheap, runs before the LM.
     const ruleType = classifyByRules(events, azureSubsystems);
@@ -65,29 +61,12 @@ Rules:
 - summary must be concrete and reference actual file names or topics${azureHint}
 
 SESSION LOG:
-${safeEventLog}`;
+${eventLog}`;
 
     try {
-      // Prefer cheap/fast models first — compression is a summarization task
-      // and does not need the most capable (or expensive) model available.
-      // List covers the main families across OpenAI, Anthropic, Google, and
-      // Mistral so users on any provider get a preferred lightweight model.
       let model: vscode.LanguageModelChat | undefined;
-      const tryFamilies = [
-        'gpt-4o-mini',
-        'claude-3-5-haiku',
-        'gemini-1.5-flash',
-        'mistral-small',
-        'gpt-4o',
-        'claude-3-5-sonnet',
-        'gemini-1.5-pro',
-      ];
-      for (const family of tryFamilies) {
-        try {
-          const found = await vscode.lm.selectChatModels({ family });
-          if (found[0]) { model = found[0]; break; }
-        } catch { /* ignore and try next */ }
-      }
+      const copilotModels = await vscode.lm.selectChatModels({ family: 'gpt-4o' });
+      model = copilotModels[0];
       if (!model) {
         const any = await vscode.lm.selectChatModels();
         model = any[0];
@@ -107,6 +86,13 @@ ${safeEventLog}`;
             session.azureContext = meta;
           } catch { /* ignore */ }
         }
+        // Best-effort repo-scope tagging. Mirrors GitHub agentic memory's
+        // repository-specific scoping so retrieval can be partitioned later.
+        try {
+          const scope = await getRepoScope();
+          session.repoScope = scope.id;
+          session.repoScopeLabel = scope.label;
+        } catch { /* ignore */ }
       }
       return session;
     } catch (err) {
@@ -126,18 +112,10 @@ ${safeEventLog}`;
     azureSubsystems: AzureSubsystem[]
   ): Promise<CompressedSession | null> {
     const messages = [vscode.LanguageModelChatMessage.User(prompt)];
-    // 30s timeout: if the LM hangs, autosave must not stay wedged
-    // (AutosaveTrigger refuses to start a new flush while `firing` is true).
-    const cts = new vscode.CancellationTokenSource();
-    const timeout = setTimeout(() => cts.cancel(), 30_000);
+    const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
+
     let responseText = '';
-    try {
-      const response = await model.sendRequest(messages, {}, cts.token);
-      for await (const chunk of response.text) responseText += chunk;
-    } finally {
-      clearTimeout(timeout);
-      cts.dispose();
-    }
+    for await (const chunk of response.text) responseText += chunk;
 
     const parsed = this.parseResponse(responseText);
     if (!parsed) {
@@ -329,15 +307,7 @@ ${safeEventLog}`;
       const head = lines.slice(0, cut).join('\n');
       const tail = lines.slice(-Math.floor(lines.length * 0.7)).join('\n');
       result = head + '\n\n... [middle truncated] ...\n\n' + tail;
-      // Second pass: if still too long, drop oldest head lines one by one until within budget.
-      if (result.length > MAX) {
-        const tailLines = lines.slice(-Math.floor(lines.length * 0.7));
-        while (tailLines.length > 1 && tailLines.join('\n').length + 30 > MAX) {
-          tailLines.shift(); // remove oldest remaining line from the tail block
-        }
-        result = '... [truncated] ...\n\n' + tailLines.join('\n');
-        if (result.length > MAX) result = result.substring(0, MAX) + '\n... [truncated]';
-      }
+      if (result.length > MAX) result = result.substring(0, MAX) + '\n... [truncated]';
     }
     return result;
   }

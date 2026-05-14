@@ -3,6 +3,8 @@ import { CompressedSession, ContextDatabase, ObservationType, getConfig } from '
 import { cosineSim, EmbeddingFn } from './embeddings';
 import { redact } from './redactor';
 import { extractTerms as sharedExtractTerms, keywordScore as sharedKeywordScore } from './searchCore';
+import { validateSessions } from './validator';
+import { getRepoScopeSync } from './repoScope';
 
 const DB_KEY = 'ghcpMem.contextDatabase';
 const DB_VERSION = 2;
@@ -26,6 +28,8 @@ export interface SearchFilters {
   untilTs?: number;
   workspaceOnly?: boolean;
   tag?: string;
+  /** Restrict to sessions tagged with this repoScope id (see {@link './repoScope'}). */
+  repoScope?: string;
 }
 
 /**
@@ -120,6 +124,8 @@ export class ContextStore implements vscode.Disposable {
       const dropped = this.db.sessions.splice(0, this.db.sessions.length - config.maxStoredSessions);
       for (const d of dropped) this.removeFromIndex(d);
     }
+    // Size cap is the last line of defence after count/age limits.
+    this.enforceSizeCap();
     await this.persist();
   }
 
@@ -138,6 +144,38 @@ export class ContextStore implements vscode.Disposable {
     }
   }
 
+  /**
+   * Byte-size cap on the serialised store. After count + age retention, if
+   * JSON.stringify(db) is still over the configured MB threshold, evict the
+   * oldest sessions until we're under cap. Returns the number evicted.
+   *
+   * Cheap to compute (single stringify) and runs only on persist, so it
+   * never blocks the UI thread for long. Skipped when cap is 0 or negative.
+   */
+  enforceSizeCap(): number {
+    const config = getConfig();
+    if (!config.maxStoreSizeMB || config.maxStoreSizeMB <= 0) return 0;
+    const capBytes = config.maxStoreSizeMB * 1024 * 1024;
+    // Fast-path: estimate via sessions count first to avoid stringifying every persist.
+    if (this.db.sessions.length === 0) return 0;
+    let serialised = JSON.stringify(this.db);
+    if (serialised.length <= capBytes) return 0;
+
+    // Evict oldest endTime first until under cap or down to one session.
+    const sorted = [...this.db.sessions].sort((a, b) => a.endTime - b.endTime);
+    let evicted = 0;
+    for (const s of sorted) {
+      if (this.db.sessions.length <= 1) break;
+      this.removeFromIndex(s);
+      const idx = this.db.sessions.indexOf(s);
+      if (idx !== -1) this.db.sessions.splice(idx, 1);
+      evicted++;
+      serialised = JSON.stringify(this.db);
+      if (serialised.length <= capBytes) break;
+    }
+    return evicted;
+  }
+
   getAllSessions(): CompressedSession[] {
     return [...this.db.sessions];
   }
@@ -146,6 +184,13 @@ export class ContextStore implements vscode.Disposable {
     const wsId = vscode.workspace.workspaceFolders?.[0]?.uri.toString();
     if (!wsId) return [...this.db.sessions];
     return this.db.sessions.filter(s => s.workspaceId === wsId);
+  }
+
+  /** Sessions tagged with the same repo scope as the currently open workspace. */
+  getRepoSessions(repoScopeId?: string): CompressedSession[] {
+    const id = repoScopeId ?? getRepoScopeSync().id;
+    if (!id) return [...this.db.sessions];
+    return this.db.sessions.filter(s => s.repoScope === id);
   }
 
   getById(idOrPrefix: string): CompressedSession | undefined {
@@ -178,6 +223,19 @@ export class ContextStore implements vscode.Disposable {
     if (!s) return false;
     if (!s.userTags.includes(tag)) {
       s.userTags.push(tag);
+      this.indexSession(s);
+      await this.persist();
+    }
+    return true;
+  }
+
+  /** Remove a tag; returns true when the session existed (regardless of whether the tag was present). */
+  async removeTag(id: string, tag: string): Promise<boolean> {
+    const s = this.getById(id);
+    if (!s) return false;
+    const idx = s.userTags.indexOf(tag);
+    if (idx !== -1) {
+      s.userTags.splice(idx, 1);
       this.indexSession(s);
       await this.persist();
     }
@@ -230,6 +288,7 @@ export class ContextStore implements vscode.Disposable {
     if (filters.untilTs) candidates = candidates.filter(s => s.startTime <= filters.untilTs!);
     if (filters.workspaceOnly && wsId) candidates = candidates.filter(s => s.workspaceId === wsId);
     if (filters.tag) candidates = candidates.filter(s => s.userTags.includes(filters.tag!));
+    if (filters.repoScope) candidates = candidates.filter(s => s.repoScope === filters.repoScope);
 
     // --- Rank 1: keyword score (term-frequency × field weight) ---
     const keywordScores = candidates.map(s => ({ s, score: this.keywordScore(s, terms, wsId) }));
@@ -288,15 +347,46 @@ export class ContextStore implements vscode.Disposable {
   }
 
   /**
-   * Async variant that also uses embeddings when available.
-   * Safe to call even if the embedder is not configured.
+   * Async variant that also uses embeddings when available and, when enabled,
+   * filters out sessions whose key files no longer exist in the workspace
+   * (mirrors GitHub agentic memory's codebase-validation pass).
    */
   async searchWithEmbedding(query: string, filters: SearchFilters = {}, limit = 10): Promise<CompressedSession[]> {
     let vec: number[] | undefined;
     if (this.embedder && query && query.trim()) {
       try { vec = await this.embedder(query); } catch { /* ignore */ }
     }
-    return this.search(query, filters, limit, vec);
+    // Over-fetch so post-filtering by freshness still yields ~limit results.
+    const overFetch = Math.max(limit * 3, limit + 5);
+    const raw = this.search(query, filters, overFetch, vec);
+    return this.filterByFreshness(raw, limit);
+  }
+
+  /**
+   * Drop sessions with too many missing key files. Honours the
+   * `validateAgainstCodebase` + `freshnessFloor` config knobs. Safe to call on
+   * any list — if validation is disabled or there's no workspace, returns the
+   * input slice unchanged.
+   */
+  async filterByFreshness(sessions: CompressedSession[], limit: number): Promise<CompressedSession[]> {
+    const cfg = getConfig();
+    if (!cfg.validateAgainstCodebase || cfg.freshnessFloor <= 0 || sessions.length === 0) {
+      return sessions.slice(0, limit);
+    }
+    try {
+      const results = await validateSessions(sessions);
+      const kept: CompressedSession[] = [];
+      for (const s of sessions) {
+        const r = results.get(s.id);
+        // Missing validation (e.g. no workspace) — keep, don't penalise.
+        if (!r || r.emptyKeyFiles) { kept.push(s); }
+        else if (r.freshness >= cfg.freshnessFloor) { kept.push(s); }
+        if (kept.length >= limit) break;
+      }
+      return kept;
+    } catch {
+      return sessions.slice(0, limit);
+    }
   }
 
   /** Timeline: sessions in chronological order within a time window. */
@@ -312,7 +402,10 @@ export class ContextStore implements vscode.Disposable {
 
   getRelevantSessions(query: string, maxResults?: number): CompressedSession[] {
     const config = getConfig();
-    return this.search(query, { workspaceOnly: true }, maxResults ?? config.contextRetrievalCount);
+    const filters: SearchFilters = {};
+    if (config.scope === 'workspace') filters.workspaceOnly = true;
+    else if (config.scope === 'repo') filters.repoScope = getRepoScopeSync().id;
+    return this.search(query, filters, maxResults ?? config.contextRetrievalCount);
   }
 
   getRecentSessions(count: number): CompressedSession[] {
@@ -339,7 +432,12 @@ export class ContextStore implements vscode.Disposable {
    * `getRecentSessions` contract used by the chat participant.
    */
   getStartupCandidates(count: number): CompressedSession[] {
-    const workspace = this.getWorkspaceSessions();
+    const config = getConfig();
+    // Choose the candidate pool based on the configured scope.
+    let workspace: CompressedSession[];
+    if (config.scope === 'repo') workspace = this.getRepoSessions();
+    else if (config.scope === 'user') workspace = this.getAllSessions();
+    else workspace = this.getWorkspaceSessions();
     if (workspace.length === 0) return [];
     const now = Date.now();
     const DAY = 86_400_000;

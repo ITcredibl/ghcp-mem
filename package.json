@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "Persistent session memory for GitHub Copilot. Captures, compresses, and injects coding session context with built-in secret redaction and progressive disclosure.",
-  "version": "1.1.8",
+  "version": "1.2.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -84,6 +84,11 @@
         "icon": "$(tag)"
       },
       {
+        "command": "ghcpMem.togglePin",
+        "title": "GHCP-MEM: Pin/Unpin Session",
+        "icon": "$(pinned)"
+      },
+      {
         "command": "ghcpMem.openSession",
         "title": "GHCP-MEM: Open Session Detail",
         "icon": "$(eye)"
@@ -128,6 +133,24 @@
       {
         "command": "ghcpMem.showMcpInfo",
         "title": "GHCP-MEM: Show External MCP Client Config"
+      },
+      {
+        "command": "ghcpMem.filterSessions",
+        "title": "GHCP-MEM: Filter Sessions...",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "ghcpMem.clearFilter",
+        "title": "GHCP-MEM: Clear Filter",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "ghcpMem.exportSessionMarkdown",
+        "title": "GHCP-MEM: Export Session as Diff-Friendly Markdown..."
+      },
+      {
+        "command": "ghcpMem.runEval",
+        "title": "GHCP-MEM: Run Retrieval Eval"
       }
     ],
     "viewsContainers": {
@@ -151,14 +174,24 @@
     "menus": {
       "view/title": [
         {
+          "command": "ghcpMem.filterSessions",
+          "when": "view == ghcpMem.sessionsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ghcpMem.clearFilter",
+          "when": "view == ghcpMem.sessionsView",
+          "group": "navigation@2"
+        },
+        {
           "command": "ghcpMem.refreshView",
           "when": "view == ghcpMem.sessionsView",
-          "group": "navigation"
+          "group": "navigation@3"
         },
         {
           "command": "ghcpMem.captureSnapshot",
           "when": "view == ghcpMem.sessionsView",
-          "group": "navigation"
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -168,9 +201,19 @@
           "group": "inline@1"
         },
         {
-          "command": "ghcpMem.deleteSession",
+          "command": "ghcpMem.togglePin",
           "when": "view == ghcpMem.sessionsView && viewItem == session",
           "group": "inline@2"
+        },
+        {
+          "command": "ghcpMem.deleteSession",
+          "when": "view == ghcpMem.sessionsView && viewItem == session",
+          "group": "inline@3"
+        },
+        {
+          "command": "ghcpMem.exportSessionMarkdown",
+          "when": "view == ghcpMem.sessionsView && viewItem == session",
+          "group": "1_export@1"
         }
       ]
     },
@@ -205,6 +248,10 @@
           {
             "name": "azure",
             "description": "Show Azure-tagged sessions grouped by subsystem"
+          },
+          {
+            "name": "export",
+            "description": "Export a session (by ID prefix) as diff-friendly markdown"
           },
           {
             "name": "status",
@@ -363,16 +410,29 @@
         "ghcpMem.compressionIntervalMinutes": {
           "type": "number",
           "default": 15,
+          "minimum": 1,
+          "maximum": 1440,
           "description": "How often to compress captured events (minutes)"
         },
         "ghcpMem.maxStoredSessions": {
           "type": "number",
           "default": 50,
+          "minimum": 1,
+          "maximum": 10000,
           "description": "Maximum number of compressed sessions to retain"
+        },
+        "ghcpMem.maxStoreSizeMB": {
+          "type": "number",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 1024,
+          "markdownDescription": "Soft cap on the on-disk size of `~/.ghcp-mem/sessions.json`. When exceeded, oldest sessions are evicted until under cap (count-based `#ghcpMem.maxStoredSessions#` and age-based `#ghcpMem.retentionDays#` still apply first)."
         },
         "ghcpMem.retentionDays": {
           "type": "number",
           "default": 90,
+          "minimum": 0,
+          "maximum": 3650,
           "description": "Delete sessions older than this many days (0 = disabled)"
         },
         "ghcpMem.captureFileEdits": {
@@ -398,6 +458,8 @@
         "ghcpMem.contextRetrievalCount": {
           "type": "number",
           "default": 5,
+          "minimum": 1,
+          "maximum": 50,
           "description": "Number of relevant past sessions to inject"
         },
         "ghcpMem.redactSecrets": {
@@ -437,20 +499,94 @@
         "ghcpMem.autosave.eventThreshold": {
           "type": "number",
           "default": 40,
+          "minimum": 1,
+          "maximum": 10000,
           "description": "Trigger autosave once this many captured events are buffered"
         },
         "ghcpMem.autosave.minutesThreshold": {
           "type": "number",
           "default": 20,
+          "minimum": 1,
+          "maximum": 1440,
           "description": "Trigger autosave after this many minutes since the last flush (with any pending events)"
         },
         "ghcpMem.healthAlertThreshold": {
           "type": "number",
           "default": 30,
+          "minimum": 0,
+          "maximum": 100,
           "description": "Show a warning notification if memory health score falls below this value (0 = disabled)"
+        },
+        "ghcpMem.scope": {
+          "type": "string",
+          "enum": ["user", "workspace", "repo"],
+          "default": "user",
+          "markdownDescription": "Retrieval scope for stored sessions.\n\n- `user`: all sessions across all workspaces and repos.\n- `workspace`: sessions captured in the current VS Code workspace only.\n- `repo`: sessions captured against the same git origin URL (works across machines/clones)."
+        },
+        "ghcpMem.validateAgainstCodebase": {
+          "type": "boolean",
+          "default": true,
+          "description": "Drop or de-rank retrieved memories whose key files no longer exist or are empty in the current codebase."
+        },
+        "ghcpMem.freshnessFloor": {
+          "type": "number",
+          "default": 0.25,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum freshness score (0-1, fraction of key files still present) required for a memory to survive validation. Lower = more lenient."
+        },
+        "ghcpMem.githubCompatibleMode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Mirror GitHub Copilot's agentic-memory contract: 28-day retention and repo-scoped retrieval. When enabled, overrides `#ghcpMem.retentionDays#` and `#ghcpMem.scope#`."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "ghcpMem.getStarted",
+        "title": "Get started with GHCP-MEM",
+        "description": "Persistent, redacted session memory for GitHub Copilot — set up in three steps.",
+        "steps": [
+          {
+            "id": "open-view",
+            "title": "Open the Sessions view",
+            "description": "GHCP-MEM stores compressed coding sessions in the **Memory** sidebar. Open it to confirm capture is active.\n[Open Sessions view](command:workbench.view.extension.ghcpMem)",
+            "media": {
+              "image": "images/demo/pipeline-animation.png",
+              "altText": "GHCP-MEM sessions sidebar"
+            }
+          },
+          {
+            "id": "capture-snapshot",
+            "title": "Capture your first snapshot",
+            "description": "Force-capture the current activity so you can see how compression and redaction work.\n[Capture snapshot](command:ghcpMem.captureSnapshot)",
+            "media": {
+              "markdown": "walkthroughs/capture.md"
+            }
+          },
+          {
+            "id": "talk-to-mem",
+            "title": "Chat with your memory",
+            "description": "Open Copilot Chat and type `@mem /recent` to query past sessions. Try `/search`, `/timeline`, `/azure`, `/health`, or `/export`.\n[Open Copilot Chat](command:workbench.action.chat.open)",
+            "media": {
+              "markdown": "walkthroughs/chat.md"
+            }
+          },
+          {
+            "id": "configure",
+            "title": "Tune retention & GitHub-compatible mode",
+            "description": "Open Settings and adjust **Retention Days**, **Max Stored Sessions**, **Max Store Size MB**, or enable **GitHub Compatible Mode** to mirror Copilot's 28-day repo-scoped contract.\n[Open settings](command:workbench.action.openSettings?%22ghcpMem%22)",
+            "media": {
+              "markdown": "walkthroughs/configure.md"
+            },
+            "completionEvents": [
+              "onSettingChanged:ghcpMem.githubCompatibleMode"
+            ]
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run typecheck && npm run bundle:prod",
@@ -461,6 +597,8 @@
     "watch": "node esbuild.js --watch",
     "lint": "eslint src --ext ts",
     "test": "npm run lint && tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node --test \"out-test/src/test/*.test.js\"",
+    "bench": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/bench-search.js",
+    "eval:check": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js",
     "render:diagrams": "node scripts/render-diagrams.mjs",
     "package": "npm run vscode:prepublish && vsce package --out ghcp-mem.vsix",
     "publish": "vsce publish"

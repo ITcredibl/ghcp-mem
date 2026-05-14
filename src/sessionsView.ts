@@ -1,6 +1,21 @@
 import * as vscode from 'vscode';
 import { ContextStore } from './contextStore';
-import { CompressedSession } from './types';
+import { CompressedSession, ObservationType } from './types';
+import { getRepoScopeSync } from './repoScope';
+
+/**
+ * Active filter state for the sidebar tree.
+ *
+ * `setFilter`/`clearFilter` are public so a command can wire a quick-filter
+ * bar UX (input box → set filter → refresh).
+ */
+export interface TreeFilter {
+  text?: string;
+  type?: ObservationType;
+  tag?: string;
+  sinceDays?: number;
+  scope?: 'all' | 'workspace' | 'repo';
+}
 
 /**
  * Tree view in the sidebar showing stored sessions grouped by date.
@@ -11,6 +26,7 @@ export class SessionsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
   private readonly onDidChangeEmitter = new vscode.EventEmitter<TreeNode | undefined | void>();
   readonly onDidChangeTreeData = this.onDidChangeEmitter.event;
   private storeListener: vscode.Disposable;
+  private filter: TreeFilter = {};
 
   constructor(private readonly store: ContextStore) {
     this.storeListener = store.onChange(() => this.refresh());
@@ -20,42 +36,97 @@ export class SessionsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
     this.onDidChangeEmitter.fire();
   }
 
+  /** Set the active filter and refresh the view. */
+  setFilter(next: TreeFilter): void {
+    this.filter = { ...next };
+    this.refresh();
+  }
+
+  /** Get a copy of the active filter (for the picker UX). */
+  getFilter(): TreeFilter {
+    return { ...this.filter };
+  }
+
+  /** Clear all filter state. */
+  clearFilter(): void {
+    this.filter = {};
+    this.refresh();
+  }
+
+  hasActiveFilter(): boolean {
+    return !!(this.filter.text || this.filter.type || this.filter.tag || this.filter.sinceDays || this.filter.scope);
+  }
+
   getTreeItem(e: TreeNode): vscode.TreeItem {
     return e;
   }
 
   getChildren(e?: TreeNode): TreeNode[] {
     if (!e) {
-      // Root: group by day
-      const sessions = [...this.store.getWorkspaceSessions()].sort((a, b) => b.startTime - a.startTime);
-      if (sessions.length === 0) {
-        return [new TreeNode('No sessions yet', vscode.TreeItemCollapsibleState.None, 'info')];
-      }
+      // Pool selection follows the scope filter.
+      let pool: CompressedSession[];
+      if (this.filter.scope === 'all') pool = this.store.getAllSessions();
+      else if (this.filter.scope === 'repo') pool = this.store.getRepoSessions();
+      else pool = this.store.getWorkspaceSessions();
+
+      const filtered = this.applyFilter([...pool]).sort((a, b) => b.startTime - a.startTime);
       const stats = this.store.getStats();
+      const nodes: TreeNode[] = [];
+
       const header = new TreeNode(
-        `📊 ${stats.workspaceSessions} here · ${stats.totalSessions} total · ${stats.totalRedactions} redactions`,
+        `📊 ${filtered.length} shown · ${stats.totalSessions} total · ${stats.totalRedactions} redactions`,
         vscode.TreeItemCollapsibleState.None,
-        'header'
+        'header',
       );
-      header.tooltip = 'GHCP-MEM statistics for this workspace';
+      header.tooltip = 'GHCP-MEM statistics';
+      nodes.push(header);
+
+      if (this.hasActiveFilter()) {
+        const desc = describeFilter(this.filter);
+        const filterNode = new TreeNode(`🔎 Filter: ${desc}`, vscode.TreeItemCollapsibleState.None, 'filter');
+        filterNode.tooltip = 'Click to clear filter';
+        filterNode.command = { command: 'ghcpMem.clearFilter', title: 'Clear filter' };
+        nodes.push(filterNode);
+      }
+
+      if (filtered.length === 0) {
+        nodes.push(new TreeNode(
+          this.hasActiveFilter() ? 'No sessions match this filter' : 'No sessions yet',
+          vscode.TreeItemCollapsibleState.None,
+          'info',
+        ));
+        return nodes;
+      }
+
       const groups = new Map<string, CompressedSession[]>();
-      for (const s of sessions) {
+      const pinned: CompressedSession[] = [];
+      for (const s of filtered) {
+        if (s.userTags.includes('pinned')) {
+          pinned.push(s);
+          continue;
+        }
         const key = new Date(s.startTime).toLocaleDateString();
         const arr = groups.get(key) ?? [];
         arr.push(s);
         groups.set(key, arr);
       }
-      const dayNodes = Array.from(groups.entries()).map(([day, items]) => {
+      if (pinned.length) {
+        const n = new TreeNode(`📌 Pinned (${pinned.length})`, vscode.TreeItemCollapsibleState.Expanded, 'pinned-day');
+        n.sessions = pinned;
+        nodes.push(n);
+      }
+      for (const [day, items] of groups.entries()) {
         const n = new TreeNode(`${day} (${items.length})`, vscode.TreeItemCollapsibleState.Expanded, 'day');
         n.sessions = items;
-        return n;
-      });
-      return [header, ...dayNodes];
+        nodes.push(n);
+      }
+      return nodes;
     }
-    if (e.context === 'day' && e.sessions) {
+    if ((e.context === 'day' || e.context === 'pinned-day') && e.sessions) {
       return e.sessions.map(s => {
         const time = new Date(s.startTime).toLocaleTimeString();
-        const n = new TreeNode(`[${s.observationType}] ${time} — ${s.summary.substring(0, 60)}`, vscode.TreeItemCollapsibleState.None, 'session');
+        const pin = s.userTags.includes('pinned') ? '📌 ' : '';
+        const n = new TreeNode(`${pin}[${s.observationType}] ${time} — ${s.summary.substring(0, 60)}`, vscode.TreeItemCollapsibleState.None, 'session');
         n.session = s;
         n.tooltip = s.summary;
         n.description = s.userTags.join(', ');
@@ -71,6 +142,34 @@ export class SessionsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
     return [];
   }
 
+  /** Apply the current filter to a session list. */
+  private applyFilter(sessions: CompressedSession[]): CompressedSession[] {
+    const f = this.filter;
+    if (!this.hasActiveFilter()) return sessions;
+    const sinceTs = f.sinceDays ? Date.now() - f.sinceDays * 86_400_000 : 0;
+    const text = f.text?.toLowerCase();
+    const repoId = f.scope === 'repo' ? getRepoScopeSync().id : undefined;
+    return sessions.filter(s => {
+      if (f.type && s.observationType !== f.type) return false;
+      if (f.tag && !s.userTags.includes(f.tag)) return false;
+      if (sinceTs && s.endTime < sinceTs) return false;
+      if (repoId && s.repoScope && s.repoScope !== repoId) return false;
+      if (text) {
+        const hay = [
+          s.summary,
+          s.observationType,
+          ...s.keyFiles,
+          ...s.keyTopics,
+          ...s.decisions,
+          ...s.problemsSolved,
+          ...s.userTags,
+        ].join(' ').toLowerCase();
+        if (!hay.includes(text)) return false;
+      }
+      return true;
+    });
+  }
+
   dispose(): void {
     this.storeListener.dispose();
     this.onDidChangeEmitter.dispose();
@@ -84,12 +183,26 @@ export class TreeNode extends vscode.TreeItem {
   constructor(
     label: string,
     collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly context: 'day' | 'session' | 'info' | 'header'
+    public readonly context: 'day' | 'pinned-day' | 'session' | 'info' | 'header' | 'filter',
   ) {
     super(label, collapsibleState);
     this.contextValue = context;
     if (context === 'day') this.iconPath = new vscode.ThemeIcon('calendar');
+    if (context === 'pinned-day') this.iconPath = new vscode.ThemeIcon('pinned');
     if (context === 'session') this.iconPath = new vscode.ThemeIcon('note');
     if (context === 'info') this.iconPath = new vscode.ThemeIcon('info');
+    if (context === 'filter') this.iconPath = new vscode.ThemeIcon('filter-filled');
+    if (context === 'header') this.iconPath = new vscode.ThemeIcon('graph');
   }
+}
+
+/** Human-readable filter summary for the header chip. */
+export function describeFilter(f: TreeFilter): string {
+  const parts: string[] = [];
+  if (f.text) parts.push(`"${f.text}"`);
+  if (f.type) parts.push(`type=${f.type}`);
+  if (f.tag) parts.push(`tag=${f.tag}`);
+  if (f.sinceDays) parts.push(`since=${f.sinceDays}d`);
+  if (f.scope && f.scope !== 'workspace') parts.push(`scope=${f.scope}`);
+  return parts.join(' · ') || '(none)';
 }

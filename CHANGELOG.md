@@ -14,9 +14,6 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`src/test/redactor.test.ts`**, **`src/test/redactor.corpus.test.ts`** — Every secret-shaped fixture (PATs, OpenAI `sk-`, MongoDB+SRV URIs, Postgres URLs, PEM blocks, Bearer headers, …) is now assembled at runtime via string concatenation. Runtime values still match every redaction regex, but the source files no longer contain a complete-looking credential literal — so GitHub push-protection / secret scanning stop flagging the deliberate regression corpus as a leaked secret.
 - **`.github/secret_scanning.yml`** — New file. Adds `paths-ignore` for `src/test/**`, `out-test/**`, `docs/**` as defence-in-depth, with a header comment explaining the rationale (deliberate synthetic regression corpus, no real credentials). Production code paths remain fully scanned.
 
-### Added
-- **`docs/linkedin-launch.md`** — Long-form launch article (~1100 words) and short-form announcement post (~280 words) for v1.2.0, ready to publish.
-
 ---
 
 ## [1.2.0] — 2026-05-14

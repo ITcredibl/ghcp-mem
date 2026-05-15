@@ -21,3 +21,11 @@ Thumbs.db
 *.key
 secrets/
 .npmrc
+
+# Launch / marketing articles — drafted locally, not version-controlled.
+# Keeps the repo focused on code + technical docs; publishing drafts stay
+# on the author's workstation.
+docs/linkedin-*.md
+docs/medium-*.md
+docs/*-launch.md
+docs/*-article.md

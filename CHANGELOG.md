@@ -10,13 +10,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **`src/extension.ts`** — Added a respectful in-product Marketplace rating prompt flow. Prompt only appears after repeated successful user actions (capture/compress/Azure snapshot), enforces a 14-day cooldown, and supports `Rate GHCP-MEM`, `Later`, and `Don't Ask Again` choices.
-- **`docs/growth/90-day-score-plan.md`** — New execution plan to move Marketplace maturity/adoption from early-stage to top-tier over 90 days.
-- **`docs/growth/30-day-launch-content-calendar.md`** — New day-by-day launch calendar for first-month distribution and social proof building.
-- **`docs/growth/rating-prompt-flow.md`** — UX/logic specification for the rating prompt trigger model, cooldown, state transitions, and success metrics.
-- **`docs/growth/weekly-kpi-tracker.md`** — New weekly execution tracker to log install/rating movement, support SLA, release cadence, and top feedback themes.
 
 ### Changed
 - **`.gitignore`** — Added explicit `src/test/.env` ignore rule as defence-in-depth for local secrets in test harnesses.
+- **`.gitignore`** — `docs/growth/**` is now treated as local-only planning content and excluded from version control.
 
 ## [1.2.3] — 2026-05-17
 

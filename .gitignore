@@ -30,3 +30,6 @@ docs/linkedin-*.md
 docs/medium-*.md
 docs/*-launch.md
 docs/*-article.md
+
+# Personal/private growth planning docs — keep local only.
+docs/growth/**

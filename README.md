@@ -200,6 +200,7 @@ Inline filters: `@mem /search type:bugfix since:7d tag:auth login flow`
 - [docs/growth/90-day-score-plan.md](docs/growth/90-day-score-plan.md) — 90-day Marketplace maturity plan.
 - [docs/growth/30-day-launch-content-calendar.md](docs/growth/30-day-launch-content-calendar.md) — day-by-day launch calendar.
 - [docs/growth/rating-prompt-flow.md](docs/growth/rating-prompt-flow.md) — UX and trigger logic for ratings prompt.
+- [docs/growth/weekly-kpi-tracker.md](docs/growth/weekly-kpi-tracker.md) — weekly operating tracker for installs, ratings, support SLA, and release cadence.
 
 ---
 

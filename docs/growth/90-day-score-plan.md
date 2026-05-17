@@ -75,6 +75,8 @@ Exit Criteria:
 - Release shipped this week (Y/N):
 - Top 3 user feedback themes:
 
+Use [docs/growth/weekly-kpi-tracker.md](weekly-kpi-tracker.md) as the canonical weekly log so execution cadence stays visible across the full 90-day cycle.
+
 ## Risk Register
 - Low visibility despite quality releases
   - Mitigation: increase distribution cadence and partnerships.

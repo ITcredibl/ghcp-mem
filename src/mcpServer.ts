@@ -170,6 +170,18 @@ function summarizeForMcp(s: StoredSession): any {
   };
 }
 
+/** Timeline results ordered by most recent first for quick activity recall. */
+export function timelineSessions(db: StoredDatabase, days = 7, limit = 10): StoredSession[] {
+  const clampInt = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.floor(n)));
+  const d = clampInt(days, 1, 365);
+  const l = clampInt(limit, 1, 50);
+  const cutoff = Date.now() - d * 24 * 60 * 60 * 1000;
+  return db.sessions
+    .filter(s => s.endTime >= cutoff)
+    .sort((a, b) => b.endTime - a.endTime)
+    .slice(0, l);
+}
+
 const TOOLS = [
   {
     name: 'ghcpMem_search',
@@ -260,11 +272,7 @@ async function handleCall(name: string, args: any): Promise<any> {
     case 'ghcpMem_timeline': {
       const days = clamp(args?.days, 7, 365);
       const limit = clamp(args?.limit, 10, 50);
-      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-      const hits = db.sessions
-        .filter(s => s.endTime >= cutoff)
-        .sort((a, b) => a.endTime - b.endTime)
-        .slice(0, limit);
+      const hits = timelineSessions(db, days, limit);
       return textContent({ count: hits.length, days, results: hits.map(summarizeForMcp) });
     }
     case 'ghcpMem_get': {

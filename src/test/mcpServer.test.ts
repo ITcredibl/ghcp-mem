@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { searchSessions, TOOLS } from '../mcpServer';
+import { searchSessions, timelineSessions, TOOLS } from '../mcpServer';
 
 function mkSession(o: any = {}) {
   return {
@@ -64,4 +64,21 @@ test('mcpServer — searchSessions respects sinceDays filter', () => {
   };
   const hits = searchSessions(db, '', { sinceDays: 7 }, 5);
   assert.ok(hits.every(h => h.summary !== 'old'));
+});
+
+test('mcpServer — timelineSessions returns most recent first', () => {
+  const now = Date.now();
+  const db = {
+    version: 2,
+    lastUpdated: now,
+    sessions: [
+      mkSession({ id: 'old', summary: 'old', endTime: now - 3 * 24 * 60 * 60 * 1000 }),
+      mkSession({ id: 'mid', summary: 'mid', endTime: now - 2 * 24 * 60 * 60 * 1000 }),
+      mkSession({ id: 'new', summary: 'new', endTime: now - 1 * 24 * 60 * 60 * 1000 }),
+    ],
+  };
+  const hits = timelineSessions(db as any, 7, 2);
+  assert.equal(hits.length, 2);
+  assert.equal(hits[0].id, 'new');
+  assert.equal(hits[1].id, 'mid');
 });

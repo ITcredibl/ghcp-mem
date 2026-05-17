@@ -214,3 +214,40 @@ test('ContextStore — enforceSizeCap is a no-op when cap is 0', async () => {
     vscode.workspace.getConfiguration = origGet;
   }
 });
+
+test('ContextStore — getStats includes today sessions and token-savings estimate', async () => {
+  const mem = new InMemoryMemento() as any;
+  const store = new ContextStore(mem);
+  const now = Date.now();
+  await store.addSession(makeSession({
+    id: '99999999-9999-4999-8999-999999999999',
+    startTime: now - 1000,
+    endTime: now,
+    summary: 'short summary',
+    keyFiles: ['src/a.ts', 'src/b.ts'],
+    keyTopics: ['auth', 'token'],
+    decisions: ['adopt strategy x'],
+    problemsSolved: ['fixed import error'],
+  }));
+  const stats = store.getStats();
+  assert.equal(stats.todaySessions, 1);
+  assert.ok(stats.todayEstimatedTokensSaved > 0);
+});
+
+test('ContextStore — getStats excludes non-today sessions from today metrics', async () => {
+  const mem = new InMemoryMemento() as any;
+  const store = new ContextStore(mem);
+  const now = Date.now();
+  const yesterday = now - 24 * 60 * 60 * 1000;
+  await store.addSession(makeSession({
+    id: 'aaaaaaaa-9999-4999-8999-999999999999',
+    startTime: yesterday - 1000,
+    endTime: yesterday,
+    summary: 'old session',
+    keyFiles: ['legacy.ts'],
+    decisions: ['legacy decision'],
+  }));
+  const stats = store.getStats();
+  assert.equal(stats.todaySessions, 0);
+  assert.equal(stats.todayEstimatedTokensSaved, 0);
+});

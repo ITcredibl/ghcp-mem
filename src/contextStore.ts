@@ -520,9 +520,33 @@ export class ContextStore implements vscode.Disposable {
 
   getStats() {
     const ws = this.getWorkspaceSessions();
+    const today = new Date();
+    const isSameLocalDay = (ts: number) => {
+      const d = new Date(ts);
+      return d.getFullYear() === today.getFullYear()
+        && d.getMonth() === today.getMonth()
+        && d.getDate() === today.getDate();
+    };
+    const estimateTokens = (chars: number) => chars / 4;
+    const todaySessions = this.db.sessions.filter(s => isSameLocalDay(s.endTime));
+    const todayEstimatedTokensSaved = todaySessions.reduce((acc, s) => {
+      const summary = s.summary ?? '';
+      const summaryChars = summary.length;
+      const fullChars = [
+        summary,
+        ...(s.keyFiles ?? []),
+        ...(s.keyTopics ?? []),
+        ...(s.decisions ?? []),
+        ...(s.problemsSolved ?? []),
+      ].join(' ').length;
+      const saved = Math.max(0, estimateTokens(fullChars) - estimateTokens(summaryChars));
+      return acc + saved;
+    }, 0);
     return {
       totalSessions: this.db.sessions.length,
       workspaceSessions: ws.length,
+      todaySessions: todaySessions.length,
+      todayEstimatedTokensSaved: Math.round(todayEstimatedTokensSaved),
       oldestSession: this.db.sessions.length ? this.db.sessions[0].startTime : null,
       newestSession: this.db.sessions.length ? this.db.sessions[this.db.sessions.length - 1].endTime : null,
       totalRedactions: this.db.sessions.reduce((a, s) => a + (s.redactionCount ?? 0), 0),

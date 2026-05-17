@@ -49,6 +49,8 @@ export class ContextProvider implements vscode.Disposable {
     stream.markdown(`## Memory Status\n\n`);
     stream.markdown(`- **Total sessions:** ${stats.totalSessions}\n`);
     stream.markdown(`- **This workspace:** ${stats.workspaceSessions}\n`);
+    stream.markdown(`- **Today sessions:** ${stats.todaySessions}\n`);
+    stream.markdown(`- **Estimated tokens saved today:** ${stats.todayEstimatedTokensSaved}\n`);
     stream.markdown(`- **Redactions applied:** ${stats.totalRedactions}\n`);
     if (stats.oldestSession) stream.markdown(`- **Oldest:** ${new Date(stats.oldestSession).toLocaleDateString()}\n`);
     if (stats.newestSession) stream.markdown(`- **Newest:** ${new Date(stats.newestSession).toLocaleDateString()}\n`);

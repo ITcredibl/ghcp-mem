@@ -25,12 +25,27 @@ let tree: SessionsTreeProvider;
 let compressionTimer: NodeJS.Timeout | undefined;
 let statusBarItem: vscode.StatusBarItem;
 let autosave: AutosaveTrigger | undefined;
+let reviewStateStore: vscode.Memento | undefined;
 /** Last content hash written to session-memory.instructions.md — skip write if unchanged. */
 let lastStartupContextHash: string | undefined;
 /** File where we stash drained events on shutdown so the next activation can recover. */
 let recoveryFile: vscode.Uri | undefined;
 /** Promise that the (best-effort) shutdown compress is tracked through, so deactivate() can await it. */
 let shutdownCompress: Promise<void> | undefined;
+let reviewPromptInFlight = false;
+
+const REVIEW_PROMPT_KEY = 'ghcpMem.reviewPromptState';
+const REVIEW_PROMPT_MIN_SUCCESSES = 3;
+const REVIEW_PROMPT_MIN_SESSIONS = 3;
+const REVIEW_PROMPT_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+const MARKETPLACE_REVIEW_URL = 'https://marketplace.visualstudio.com/items?itemName=itcredibl.ghcp-mem&ssr=false#review-details';
+
+interface ReviewPromptState {
+  successes: number;
+  rated: boolean;
+  doNotAskAgain: boolean;
+  lastPromptAt?: number;
+}
 
 export function activate(context: vscode.ExtensionContext) {
   const config = getConfig();
@@ -38,6 +53,8 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('[GHCP-MEM] Disabled via settings.');
     return;
   }
+
+  reviewStateStore = context.globalState;
 
   const backupDir = vscode.Uri.joinPath(context.globalStorageUri, 'backups');
   recoveryFile = vscode.Uri.joinPath(context.globalStorageUri, 'pending-events.json');
@@ -100,6 +117,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('ghcpMem.captureSnapshot', async () => {
       await compressAndStore();
       vscode.window.showInformationMessage('GHCP-MEM: Snapshot captured.');
+      void recordSuccessAndMaybePromptForRating();
     }),
 
     vscode.commands.registerCommand('ghcpMem.showContext', async () => {
@@ -136,6 +154,7 @@ export function activate(context: vscode.ExtensionContext) {
         async () => { await compressAndStore(); }
       );
       vscode.window.showInformationMessage('GHCP-MEM: Compression complete.');
+      void recordSuccessAndMaybePromptForRating();
     }),
 
     vscode.commands.registerCommand('ghcpMem.exportMemory', async () => {
@@ -407,6 +426,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(
             `GHCP-MEM: Azure snapshot saved (${ctx.subscriptionName ?? 'sub'}${ctx.resourceGroup ? ' / ' + ctx.resourceGroup : ''}).`
           );
+          void recordSuccessAndMaybePromptForRating();
         }
       );
     }),
@@ -766,6 +786,45 @@ function updateStatusBar(): void {
     `Total redactions: ${stats.totalRedactions}`,
     'Click to capture a snapshot',
   ].join('\n');
+}
+
+async function recordSuccessAndMaybePromptForRating(): Promise<void> {
+  if (!reviewStateStore || reviewPromptInFlight) return;
+  const state = reviewStateStore.get<ReviewPromptState>(REVIEW_PROMPT_KEY) ?? {
+    successes: 0,
+    rated: false,
+    doNotAskAgain: false,
+  };
+  if (state.rated || state.doNotAskAgain) return;
+
+  state.successes += 1;
+  await reviewStateStore.update(REVIEW_PROMPT_KEY, state);
+
+  const now = Date.now();
+  const cooldownActive = typeof state.lastPromptAt === 'number' && (now - state.lastPromptAt) < REVIEW_PROMPT_COOLDOWN_MS;
+  const stats = store.getStats();
+  const eligible = state.successes >= REVIEW_PROMPT_MIN_SUCCESSES && stats.totalSessions >= REVIEW_PROMPT_MIN_SESSIONS && !cooldownActive;
+  if (!eligible) return;
+
+  reviewPromptInFlight = true;
+  try {
+    const choice = await vscode.window.showInformationMessage(
+      'Is GHCP-MEM helping your workflow? A Marketplace rating helps more developers discover it.',
+      'Rate GHCP-MEM',
+      'Later',
+      "Don\'t Ask Again",
+    );
+    state.lastPromptAt = now;
+    if (choice === 'Rate GHCP-MEM') {
+      state.rated = true;
+      await vscode.env.openExternal(vscode.Uri.parse(MARKETPLACE_REVIEW_URL));
+    } else if (choice === "Don\'t Ask Again") {
+      state.doNotAskAgain = true;
+    }
+    await reviewStateStore.update(REVIEW_PROMPT_KEY, state);
+  } finally {
+    reviewPromptInFlight = false;
+  }
 }
 
 async function writeStartupContext(): Promise<void> {

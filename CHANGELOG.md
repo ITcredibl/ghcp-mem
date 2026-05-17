@@ -6,6 +6,41 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **`src/extension.ts`** — Added a respectful in-product Marketplace rating prompt flow. Prompt only appears after repeated successful user actions (capture/compress/Azure snapshot), enforces a 14-day cooldown, and supports `Rate GHCP-MEM`, `Later`, and `Don't Ask Again` choices.
+- **`docs/growth/90-day-score-plan.md`** — New execution plan to move Marketplace maturity/adoption from early-stage to top-tier over 90 days.
+- **`docs/growth/30-day-launch-content-calendar.md`** — New day-by-day launch calendar for first-month distribution and social proof building.
+- **`docs/growth/rating-prompt-flow.md`** — UX/logic specification for the rating prompt trigger model, cooldown, state transitions, and success metrics.
+
+### Changed
+- **`.gitignore`** — Added explicit `src/test/.env` ignore rule as defence-in-depth for local secrets in test harnesses.
+
+## [1.2.3] — 2026-05-17
+
+### Fixed
+- **`src/mcpServer.ts`** — `ghcpMem_timeline` now returns most-recent activity first (`endTime` descending) so MCP clients show the newest context by default.
+
+### Added
+- **`src/test/mcpServer.test.ts`** — Added regression coverage for timeline ordering and limit handling.
+
+### Changed
+- **`package.json`**, **`package-lock.json`** — Version bump to `1.2.3` for Marketplace release.
+
+## [1.2.2] — 2026-05-17
+
+### Fixed
+- **`src/azureContext.ts`** — Azure context cache is now option-aware (`includeResources` + `resourceGroup`) to avoid stale/mismatched snapshot reuse.
+- **`src/validator.ts`** — Freshness validation now resolves workspace root per session in multi-root workspaces, reducing false missing-file drops.
+
+### Changed
+- **`src/health.ts`** — Health scoring now rewards lower secret incidence (`secretHygienePct`) while still reporting `redactionCoveragePct` transparently.
+
+### Tests
+- Updated/added tests in **`src/test/azureContext.test.ts`**, **`src/test/health.test.ts`**, and **`src/test/validator.test.ts`** to cover new behavior.
+- **`package.json`**, **`package-lock.json`** — Version bump to `1.2.2` for Marketplace release.
+
 ## [1.2.1] — 2026-05-14
 
 ### Security
@@ -39,13 +74,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ---
 
 ## [1.1.8] — 2026-05-14
-
-### Changed
-- **`images/icon.png`** — New neon-styled marketplace thumbnail (cyan/green outline on dark slate, "GHCP-MEM" wordmark). Matches the dark `galleryBanner` palette already set in `package.json`. 128×128 RGB, no alpha.
-- **`docs/diagrams/*.mmd`** — Pipeline diagram redesigned: flat `flowchart LR` with explicit fan-in edges instead of a `direction LR` subgraph (Mermaid was ignoring the hint, producing a 2126×2904 portrait that scrolled forever in the README). New aspect is 3168×902 landscape. Per-event redundant edge labels removed; the `debounced · glob-filtered` annotation moved into the Session Capture node.
 - **`docs/diagrams/*.mmd`** — Retrieval and architecture diagrams restyled with a unified dark-slate theme + colour-grouped `classDef`s. Architecture cluster backgrounds set to `#f1f5f9` explicitly so labels stay readable (the default theme rendered them in dark brown).
-
----
 
 ## [1.1.7] — 2026-05-13
 

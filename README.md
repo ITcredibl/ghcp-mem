@@ -15,7 +15,7 @@
 [![Marketplace Rating](https://img.shields.io/visual-studio-marketplace/r/ITcredibl.ghcp-mem?label=rating&color=007ACC&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem&ssr=false#review-details)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE)
-[![Tests](https://img.shields.io/badge/tests-132%20passing-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/tree/main/src/test)
+[![Tests](https://img.shields.io/badge/tests-136%20passing-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/tree/main/src/test)
 [![Native deps](https://img.shields.io/badge/native_deps-0-22c55e?style=flat-square)](#-why-it-matters)
 [![Network ports](https://img.shields.io/badge/network_ports-0-22c55e?style=flat-square)](#-privacy--security)
 [![Redaction rules](https://img.shields.io/badge/redaction_rules-24-22c55e?style=flat-square)](#-privacy--security)
@@ -188,6 +188,18 @@ Plus `<private>...</private>` user-tagged blocks.
 | 2 (detail) | `/detail <id-prefix>` | full | full session — only after filtering |
 
 Inline filters: `@mem /search type:bugfix since:7d tag:auth login flow`
+
+### ⭐ Rating Prompt Flow
+
+- Shows only after repeated successful outcomes (capture/compress/Azure snapshot) — not on first launch.
+- Uses a 14-day cooldown and one-tap controls: `Rate GHCP-MEM`, `Later`, `Don't Ask Again`.
+- Designed to collect feedback respectfully without interrupting core workflows.
+
+### 📈 Growth Playbooks
+
+- [docs/growth/90-day-score-plan.md](docs/growth/90-day-score-plan.md) — 90-day Marketplace maturity plan.
+- [docs/growth/30-day-launch-content-calendar.md](docs/growth/30-day-launch-content-calendar.md) — day-by-day launch calendar.
+- [docs/growth/rating-prompt-flow.md](docs/growth/rating-prompt-flow.md) — UX and trigger logic for ratings prompt.
 
 ---
 

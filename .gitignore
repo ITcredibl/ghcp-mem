@@ -33,3 +33,17 @@ docs/*-article.md
 
 # Personal/private growth planning docs — keep local only.
 docs/growth/**
+
+# Marketing assets — drafts, AI-gen prompts, promo renders, working files.
+# Everything under docs/marketing/ is local-only by policy; same for any
+# *-promo.* media or linkedin/medium/launch named videos that aren't the
+# canonical day-01-launch.* set the README depends on.
+docs/marketing/**
+images/demo/*-promo.mp4
+images/demo/*-promo.gif
+images/demo/*-promo.svg
+images/demo/linkedin-*.mp4
+images/demo/linkedin-*.gif
+images/demo/medium-*.mp4
+images/demo/medium-*.gif
+ghcp_mem_promo.*

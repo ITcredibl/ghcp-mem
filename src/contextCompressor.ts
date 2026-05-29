@@ -1,11 +1,28 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { SessionEvent, CompressedSession, ObservationType, computeContentHash, AzureContextMeta } from './types';
 import { redact } from './redactor';
 import { AzureSubsystem, inferAzureObservationType } from './azureDetect';
 import { captureAzureContext } from './azureContext';
 import { classifyByRules } from './ruleClassifier';
 import { getRepoScope } from './repoScope';
+
+const execAsync = promisify(exec);
+
+/** Resolve the current git branch name, or undefined if not in a git repo. */
+async function getCurrentBranch(): Promise<string | undefined> {
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!cwd) return undefined;
+  try {
+    const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', { cwd });
+    const branch = stdout.trim();
+    return branch && branch !== 'HEAD' ? branch : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface CompressorInput {
   events: SessionEvent[];
@@ -93,6 +110,10 @@ ${eventLog}`;
           session.repoScope = scope.id;
           session.repoScopeLabel = scope.label;
         } catch { /* ignore */ }
+        // Stamp the git branch name so sessions can be filtered by branch.
+        try {
+          session.branchName = await getCurrentBranch();
+        } catch { /* ignore */ }
       }
       return session;
     } catch (err) {
@@ -112,7 +133,13 @@ ${eventLog}`;
     azureSubsystems: AzureSubsystem[]
   ): Promise<CompressedSession | null> {
     const messages = [vscode.LanguageModelChatMessage.User(prompt)];
-    const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
+    const cts = new vscode.CancellationTokenSource();
+    let response: vscode.LanguageModelChatResponse;
+    try {
+      response = await model.sendRequest(messages, {}, cts.token);
+    } finally {
+      cts.dispose();
+    }
 
     let responseText = '';
     for await (const chunk of response.text) responseText += chunk;

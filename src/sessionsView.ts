@@ -128,8 +128,10 @@ export class SessionsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
         const pin = s.userTags.includes('pinned') ? '📌 ' : '';
         const n = new TreeNode(`${pin}[${s.observationType}] ${time} — ${s.summary.substring(0, 60)}`, vscode.TreeItemCollapsibleState.None, 'session');
         n.session = s;
-        n.tooltip = s.summary;
-        n.description = s.userTags.join(', ');
+        const branchLabel = s.branchName ? `  [${s.branchName}]` : '';
+        n.tooltip = s.summary + branchLabel;
+        const tagDesc = s.userTags.filter(t => t !== 'pinned').join(', ');
+        n.description = s.branchName ? (tagDesc ? `${s.branchName} · ${tagDesc}` : s.branchName) : tagDesc;
         n.id = s.id;
         n.command = {
           command: 'ghcpMem.openSession',

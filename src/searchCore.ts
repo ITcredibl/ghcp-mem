@@ -31,6 +31,37 @@ const WEIGHT_PROBLEM = 4;
 const WEIGHT_USER_TAG = 6;
 const WORKSPACE_BOOST = 2;
 
+/** BM25 tuning parameters. */
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+
+/**
+ * Compute a weighted document length for BM25 normalisation.
+ * Counts unique terms across all weighted fields (weighted by field weight).
+ */
+export function sessionDocLen(s: ScorableSession): number {
+  let total = 0;
+  const addField = (text: string, weight: number) => {
+    total += extractTerms(text).size * weight;
+  };
+  addField(s.summary, WEIGHT_SUMMARY);
+  for (const t of s.keyTopics) addField(t, WEIGHT_KEY_TOPIC);
+  for (const f of s.keyFiles) addField(f, WEIGHT_KEY_FILE);
+  for (const d of s.decisions) addField(d, WEIGHT_DECISION);
+  for (const p of s.problemsSolved) addField(p, WEIGHT_PROBLEM);
+  for (const t of s.userTags) addField(t, WEIGHT_USER_TAG);
+  return total || 1;
+}
+
+/**
+ * Compute the average document length across a set of sessions for BM25.
+ * Falls back to a sensible default (50 weighted terms) when the set is empty.
+ */
+export function computeAvgDocLen(sessions: ScorableSession[]): number {
+  if (sessions.length === 0) return 50;
+  return sessions.reduce((sum, s) => sum + sessionDocLen(s), 0) / sessions.length;
+}
+
 /**
  * Tokenise a piece of free text into a set of search terms.
  * Identical splitting rules used everywhere we score: lowercase, strip
@@ -48,30 +79,51 @@ export function extractTerms(text: string): Set<string> {
 }
 
 /**
- * Keyword score for one session against a set of query terms.
+ * BM25-weighted keyword score for one session against a set of query terms.
+ *
+ * Field weights are applied as multipliers to the per-term weighted TF,
+ * preserving the original field-importance hierarchy while adding BM25's
+ * TF-saturation and document-length normalisation.
+ *
  * When `workspaceId` is supplied AND matches the session's workspaceId the
  * score gets a small additive boost. The MCP server passes no workspaceId
  * since it serves cross-workspace queries from disk.
+ *
+ * @param avgDocLen  Average document length (weighted) across the candidate
+ *                   set. Callers should compute this with `computeAvgDocLen()`
+ *                   before scoring. Defaults to 50 for backward compatibility.
  */
 export function keywordScore(
   s: ScorableSession,
   terms: Set<string>,
   workspaceId?: string,
+  avgDocLen = 50,
 ): number {
   let score = 0;
   if (workspaceId && s.workspaceId === workspaceId) score += WORKSPACE_BOOST;
 
-  const check = (text: string, weight: number) => {
-    const toks = extractTerms(text);
-    for (const t of terms) if (toks.has(t)) score += weight;
+  // Build a weighted term-frequency map across all fields.
+  const wtf = new Map<string, number>();
+  const addField = (text: string, weight: number) => {
+    for (const tok of extractTerms(text)) {
+      wtf.set(tok, (wtf.get(tok) ?? 0) + weight);
+    }
   };
+  addField(s.summary, WEIGHT_SUMMARY);
+  for (const t of s.keyTopics) addField(t, WEIGHT_KEY_TOPIC);
+  for (const f of s.keyFiles) addField(f, WEIGHT_KEY_FILE);
+  for (const d of s.decisions) addField(d, WEIGHT_DECISION);
+  for (const p of s.problemsSolved) addField(p, WEIGHT_PROBLEM);
+  for (const t of s.userTags) addField(t, WEIGHT_USER_TAG);
 
-  check(s.summary, WEIGHT_SUMMARY);
-  for (const t of s.keyTopics) check(t, WEIGHT_KEY_TOPIC);
-  for (const f of s.keyFiles) check(f, WEIGHT_KEY_FILE);
-  for (const d of s.decisions) check(d, WEIGHT_DECISION);
-  for (const p of s.problemsSolved) check(p, WEIGHT_PROBLEM);
-  for (const t of s.userTags) check(t, WEIGHT_USER_TAG);
+  const docLen = wtf.size || 1;
+
+  for (const term of terms) {
+    const tf = wtf.get(term) ?? 0;
+    if (tf === 0) continue;
+    // BM25 TF-saturation with document-length normalisation.
+    score += (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * (1 - BM25_B + BM25_B * (docLen / avgDocLen)));
+  }
 
   return score;
 }

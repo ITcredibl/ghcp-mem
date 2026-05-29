@@ -57,7 +57,9 @@ const RULES: RedactionRule[] = [
 
   { name: 'password-assign', pattern: /(password|passwd|pwd|secret|api[_-]?key|auth[_-]?token)\s*[:=]\s*["']?([^\s"',;]{4,})["']?/gi, replacement: '$1=[REDACTED]' },
   { name: 'email', pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, replacement: '[REDACTED:email]' },
-  { name: 'ipv4', pattern: /\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g, replacement: '[REDACTED:ip]' },
+  // Only redact IP addresses that appear in a credential/connection context to avoid
+  // false positives in log lines, route tables, or diagnostic output.
+  { name: 'ipv4', pattern: /\b(host|server|endpoint|addr(?:ess)?|ip(?:_addr(?:ess)?)?|remote|peer|bind|listen)\s*[:=]\s*["']?(\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b)["']?/gi, replacement: '$1=[REDACTED:ip]' },
   // Restricted to common 4-4-4-4 / 4-4-4-4-suffix CC layouts. The earlier
   // /\b(?:\d[ -]*?){13,16}\b/ combined a greedy quantifier with an inner lazy
   // one which is a classic ReDoS shape on digit-heavy strings (log lines,

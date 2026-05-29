@@ -1,29 +1,80 @@
 # 🧠 GHCP-MEM
 
-### Persistent memory for GitHub Copilot. Built for VS Code, the enterprise, and Azure.
+### Persistent session memory for GitHub Copilot in VS Code
 
-**Zero dependencies · Zero network ports · Native MCP · Secret-redacted by default**
+**Zero dependencies · Zero network ports · Native Copilot + MCP · Secret-redacted by default**
 
 [![VS Code Extension](https://img.shields.io/badge/VS_Code-1.93+-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![GitHub Copilot](https://img.shields.io/badge/GitHub_Copilot-Native-24292e?style=for-the-badge&logo=github&logoColor=white)](https://github.com/features/copilot)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-7e3aed?style=for-the-badge)](https://modelcontextprotocol.io/)
-[![Azure-aware](https://img.shields.io/badge/Azure-aware-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](#%EF%B8%8F-azure--enterprise)
+[![Azure-aware](https://img.shields.io/badge/Azure-aware-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](#enterprise--azure)
 
 [![Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/ITcredibl.ghcp-mem?label=marketplace&color=007ACC&style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem)
 [![Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/ITcredibl.ghcp-mem?label=installs&color=007ACC&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem)
 [![Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/ITcredibl.ghcp-mem?label=downloads&color=007ACC&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem)
 [![Marketplace Rating](https://img.shields.io/visual-studio-marketplace/r/ITcredibl.ghcp-mem?label=rating&color=007ACC&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem&ssr=false#review-details)
-
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE)
-[![Tests](https://img.shields.io/badge/tests-136%20passing-22c55e?style=flat-square)](https://github.com/ITcredibl/ghcp-mem/tree/main/src/test)
-[![Native deps](https://img.shields.io/badge/native_deps-0-22c55e?style=flat-square)](#-why-it-matters)
-[![Network ports](https://img.shields.io/badge/network_ports-0-22c55e?style=flat-square)](#-privacy--security)
-[![Redaction rules](https://img.shields.io/badge/redaction_rules-24-22c55e?style=flat-square)](#-privacy--security)
-[![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Contributing](https://img.shields.io/badge/contributing-guide-orange?style=flat-square)](CONTRIBUTING.md)
+[![Security](https://img.shields.io/badge/security-policy-red?style=flat-square)](SECURITY.md)
 
 ---
 
-## 🚀 Install
+## Why this exists
+
+You use GitHub Copilot to build real software, and you want it to remember what already happened:
+
+- what you fixed
+- what you decided
+- which files mattered
+- what broke last time
+- how you deployed it
+
+You do **not** want to re-explain your project every session.
+
+---
+
+## What gets in the way
+
+Copilot is powerful, but every new session starts with memory loss.
+
+That creates three problems:
+
+| Problem | What it costs |
+|---|---|
+| **Context disappears** | You repeat the same history, architecture, and decisions. |
+| **Most memory tools are heavy** | They need sidecars, native binaries, localhost ports, or cloud sync. |
+| **Enterprise reality gets ignored** | Locked-down laptops, air-gapped installs, and Azure-heavy workflows break the usual "just run another service" advice. |
+
+The result is friction, lost flow, and avoidable mistakes.
+
+---
+
+## Why GHCP-MEM
+
+**GHCP-MEM** gives GitHub Copilot a persistent memory layer built for the way engineers actually work in VS Code.
+
+It captures what you do, compresses it into useful memory, redacts secrets before storage, and makes that context available again through:
+
+- the **`@mem`** chat participant
+- native Copilot **agent tools**
+- a bundled **stdio MCP server** for external clients
+
+Why teams trust it:
+
+| What GHCP-MEM does | Why it matters |
+|---|---|
+| **Runs with zero native dependencies** | No Bun, Python, SQLite binary, WASM, Chroma, or model downloads. |
+| **Opens zero network ports** | Nothing listens on localhost. Nothing phones home. |
+| **Stores data locally** | Memory stays on disk under your control. |
+| **Redacts secrets by default** | 24-rule dual-pass redaction plus `<private>...</private>` stripping. |
+| **Works with Copilot natively** | `@mem`, `#ghcpMemSearch`, `#ghcpMemStore`, and MCP all ship together. |
+| **Understands Azure workflows** | Azure subsystem tagging, live `az` snapshotting, and Azure-specific redaction rules. |
+
+---
+
+## How it works
+
+### Step 1: Install it
 
 > **Live on the VS Code Marketplace** — one-click install, auto-updates included.
 
@@ -39,212 +90,254 @@
 
 | Method | Steps |
 |---|---|
-| **🟢 Marketplace (recommended)** | Click [**Install on the Marketplace listing**](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem) — VS Code opens, click `Install`. Auto-updates are on by default. |
-| **🟢 Inside VS Code** | Open the Extensions sidebar (`⇧⌘X` / `Ctrl+Shift+X`), search **GHCP-MEM**, click **Install**. |
-| **🟢 Command line** | `code --install-extension ITcredibl.ghcp-mem` |
-| **🔵 Offline / air-gapped** | Download the latest [`.vsix` from GitHub Releases](https://github.com/ITcredibl/ghcp-mem/releases) → `code --install-extension ghcp-mem-<version>.vsix` |
+| **Marketplace (recommended)** | Install from the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem). |
+| **Inside VS Code** | Open Extensions (`⇧⌘X` / `Ctrl+Shift+X`), search **GHCP-MEM**, click **Install**. |
+| **Command line** | `code --install-extension ITcredibl.ghcp-mem` |
+| **Offline / air-gapped** | Download a [`.vsix` from Releases](https://github.com/ITcredibl/ghcp-mem/releases) and run `code --install-extension ghcp-mem-<version>.vsix` |
 
-After install, open any workspace and run **`GHCP-MEM: Capture Session Snapshot Now`** from the command palette to verify it's working.
+### Step 2: Let it capture your work
+
+GHCP-MEM records the signals that matter in a coding session:
+
+- file edits, creates, deletes, renames, opens, closes
+- diagnostics transitions
+- git changes
+- debug session start and stop
+- task runs with exit codes
+- terminal commands through VS Code shell integration
+
+Then it debounces, redacts, classifies, and compresses those events into structured memory.
+
+### Step 3: Ask for the right memory at the right time
+
+Use:
+
+- `@mem /recent`
+- `@mem /search`
+- `@mem /timeline`
+- `@mem /detail`
+- `#ghcpMemSearch`
+- `#ghcpMemStore`
+
+Or connect the bundled MCP server from clients like Cursor, Cline, Windsurf, or Claude Desktop.
+
+---
+
+## Get started
+
+If you want Copilot to stop starting from zero, install GHCP-MEM and capture your first snapshot:
+
+1. Install **GHCP-MEM**
+2. Open any workspace
+3. Run **`GHCP-MEM: Capture Session Snapshot Now`**
+4. Open Copilot Chat and try **`@mem /recent`**
 
 <details>
 <summary><b>📺 Watch the install in 5 seconds</b></summary>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/demo/install-animation.gif" alt="Animated terminal: code --install-extension ITcredibl.ghcp-mem then 'Installed successfully · READY TO USE'" width="720">
+  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/demo/install-animation.gif" alt="Animated terminal: code --install-extension ITcredibl.ghcp-mem then installed successfully" width="720">
 </p>
 
 </details>
 
 ---
 
-## 🎬 See it in action
+## Why teams need this
+
+Without persistent session memory, teams keep paying the same tax:
+
+- repeating the same project context
+- losing deployment and debugging history
+- forgetting why a change was made
+- exposing themselves to unnecessary tool sprawl
+- adopting memory tools that add ports, sidecars, or cloud risk
+
+GHCP-MEM is designed to avoid that failure mode while keeping the attack surface small.
+
+---
+
+## What success looks like
+
+With GHCP-MEM, a better workflow becomes normal:
+
+- Copilot recalls prior decisions instead of guessing
+- you resume work faster after interruptions
+- enterprise machines stay compliant and simple
+- Azure-heavy teams get memory that understands their stack
+- useful context shows up without flooding the prompt window
+- **token savings are visible** — `@mem /savings` shows lifetime tokens saved and a dollar-equivalent at GPT-4o pricing
+
+That is the outcome: **less repetition, better continuity, and more reliable AI-assisted development.**
+
+---
+
+## See it in action
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/demo/pipeline-animation.gif" alt="Animated GHCP-MEM pipeline: code edits flow through redactor, AI summariser, store, then return as recalled memory in @mem chat" width="900">
+  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/demo/pipeline-animation.gif" alt="Animated GHCP-MEM pipeline: edits flow through redaction and compression, then return as recalled memory in chat" width="900">
 </p>
 
-**What you're watching:** every edit, diagnostic, git op, and terminal command you make in VS Code is **debounced**, **scrubbed of secrets** (24 rules + `<private>` tags), **summarised by your existing Copilot LM**, and **stored locally**. Next session, when you ask `@mem` anything, the relevant prior context is recalled in milliseconds — no sidecar, no port, no cloud round-trip.
-
-### 💡 Why this is a category-of-one tool
-
-| | What it gives you | Why no other tool does this |
-|---|---|---|
-| 🏢 **Works on locked-down enterprise machines** | A `.vsix` you double-click. No admin. No Bun, uv, Python, SQLite, WASM, or Chroma. No ports for vuln scanners to flag. | Every "memory" alternative needs a sidecar binary, a localhost HTTP worker, or a cloud sync token. |
-| ☁️ **Azure-shop native** | Auto-tags every edit by Azure subsystem (`bicep`, `azd`, `aks`, `keyvault`, …). Live `az` snapshot. 8 Azure-specific redaction rules (storage / SAS / SP secrets / sub GUIDs). | No other Copilot memory plugin understands Azure DSL. |
-| 🤖 **Speaks Copilot's protocol natively** | `@mem` chat participant + `#ghcpMemSearch` / `#ghcpMemStore` agent tools, plus a stdio MCP server for Cursor / Cline / Windsurf / Claude Desktop. | Most "memory" tools target one chat client. This one ships four entry points in the same `.vsix`. |
-| 🔒 **Privacy-first by default** | All data on your disk. No telemetry. Dual-pass redaction. `.gitignore` auto-guarded so the auto-injected brief never gets committed. | Cloud-memory tools require trusting their backend with every line of code you wrote. |
-| 🌳 **Token-efficient by design** | Three-layer progressive disclosure: `/search` returns ~100-token summaries; `/detail` only after you filter. Doesn't burn 8k tokens per question. | Naïve RAG dumps 5–10 full sessions into context. This one stays under 500 tokens for the average query. |
+**What happens:** every edit, diagnostic, git op, and terminal command is debounced, scrubbed of secrets, summarized through your existing Copilot LM, and stored locally. Later, GHCP-MEM recalls the most relevant prior context in milliseconds.
 
 ---
 
-## 🎯 What it is
+## Core features
 
-**GHCP-MEM gives GitHub Copilot a persistent memory** across every session, file, and project — without spinning up a single sidecar, port, or native binary.
-
-It captures what you actually do (edits, diagnostics, git, debug, tasks, terminal), compresses each session into a structured summary via the Copilot Language Model, scrubs secrets in a 24-rule dual-pass scanner, and quietly re-injects relevant prior context whenever you start a new conversation.
-
----
-
-## 💡 Why it matters
-
-Most "AI memory" tools were built for a single chat client and a single laptop. GHCP-MEM was built for **engineers who ship to production from VS Code** — often inside an enterprise, often on Azure, often on a machine with no admin rights, no Bun, no Python, and no open ports allowed.
-
-### 🪶 Zero dependencies
-
-No Bun. No uv. No Python. No SQLite binary. No WASM. No Chroma. No model downloads.
-
-**Pure TypeScript on the VS Code API.**
-
-### 🔌 Zero network ports
-
-Nothing listens. Nothing phones home. No `:37777`. No `localhost` HTTP worker.
-
-**Air-gap friendly. Audit-friendly.**
-
-### 🤖 Native MCP + Copilot
-
-Bundled stdio MCP server, `@mem` chat participant, and `#ghcpMemSearch` / `#ghcpMemStore` agent-mode tools.
-
-**Speaks Copilot's protocol natively.**
-
----
-
-## 📐 How it works
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/diagrams/pipeline.png" alt="GHCP-MEM capture pipeline: events → redactor → compressor → classifier → store → MCP / chat / agent tools" width="900">
-</p>
-
-> _Mermaid source: [docs/diagrams/pipeline.mmd](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/diagrams/pipeline.mmd) · regenerate with `npm run render:diagrams`._
-
----
-
-## 🏢 Enterprise & Azure
-
-> **Note:** GHCP-MEM is the only memory layer in this category designed from day one for **enterprise developer machines** and **Azure-shop workflows**. The defaults are conservative; the surface is small; the data never leaves the box.
-
-### 🔒 Built for locked-down machines
-
-- **No admin install.** `.vsix` drops in like any other extension.
-- **No outbound network.** No telemetry, no auto-updates, no cloud sync.
-- **No native binaries.** Zero ABI surface to audit.
-- **No open ports.** Nothing for a vuln scanner to flag.
-- **Glob-based exclusion** of `.env*`, `*.pem`, `*.key`, `secrets/**`, `node_modules/**` by default.
-- **`<private>...</private>` tags** are stripped before compression and never persisted.
-- **All storage is per-user.** Lives in VS Code `globalState` + `~/.ghcp-mem/sessions.json`.
-- **MIT licensed.** No copyleft, no per-seat fees, no commercial restrictions.
-
-### ☁️ Built for Azure shops
-
-- **12-subsystem classifier** auto-tags every edit and terminal command: `iac-bicep`, `iac-terraform`, `iac-arm`, `azd`, `functions`, `appservice`, `aks`, `containerapps`, `storage`, `keyvault`, `openai`, `az-cli`.
-- **Live `az` snapshot** records subscription, tenant, RG, location, and up to 50 resource IDs.
-- **`deployment` / `infra` observation types** auto-inferred from Azure signals (`azd up`, `az deployment`, `.bicep` / `.tf` edits).
-- **`@mem /azure` slash command** groups Azure-tagged sessions by subsystem with `sub=… · rg=…` annotations.
-- **8 Azure-specific redaction rules** (storage / Service Bus / Cosmos / SQL connection strings, SAS tokens, 88-char storage keys, SP secrets, subscription/tenant GUIDs).
-- **Graceful degrade** — no `az` installed or not signed in? Records an informational note, never errors.
-
----
-
-## ⭐ Features
-
-### 📥 Automatic Capture
+### Automatic capture
 
 - File edits, creates, deletes, renames, opens, closes
-- Diagnostics transitions (errors ↔ clean)
+- Diagnostics transitions
 - Git state changes
-- Debug sessions start / stop
+- Debug sessions
 - Task execution with exit codes
 - Terminal commands (VS Code 1.93+ shell integration)
-- All events debounced and rate-limited
+- Debounced and rate-limited capture
 
-### 🏷️ Observation Typing
+### Observation typing
 
-Auto-classified into 12 types:
+GHCP-MEM classifies sessions into:
 
 `feature` · `bugfix` · `refactor` · `docs` · `test` · `chore` · `research` · `config` · `security` · `deployment` · `infra` · `unknown`
 
-`deployment` / `infra` inferred from Azure signals (`azd` / `az` cmds, `.bicep` / `.tf` edits).
+Azure signals such as `azd`, `az`, `.bicep`, and `.tf` edits influence `deployment` and `infra` inference automatically.
 
-### 🔒 Secret Redaction — 24 rules, dual-pass
+### Secret redaction
 
-**16 generic:** AWS access key + secret · GitHub PATs (classic + fine-grained) · npm tokens · OpenAI · Anthropic · Stripe live keys · Google API · Slack · JWT · Bearer tokens · DB connection URL passwords · PEM private key blocks · `password=` assignments · emails · IPv4 · credit cards
+**16 generic patterns** including:
 
-**8 Azure-specific:** Storage / Service Bus / Cosmos / SQL connection strings · SAS tokens · 88-char storage keys · SP secrets · subscription/tenant GUIDs
+- AWS access key and secret
+- GitHub PATs
+- npm tokens
+- OpenAI and Anthropic keys
+- Stripe live keys
+- Google API keys
+- Slack tokens
+- JWT and Bearer tokens
+- DB URL passwords
+- PEM private key blocks
+- `password=` assignments
+- emails, IPv4 addresses, and credit cards
 
-Plus `<private>...</private>` user-tagged blocks.
+**8 Azure-specific patterns** including:
 
-### 🔍 Hybrid Retrieval — RRF K=60
+- Storage, Service Bus, Cosmos, and SQL connection strings
+- SAS tokens
+- 88-character storage keys
+- service principal secrets
+- subscription and tenant GUIDs
+
+Also strips user-tagged `<private>...</private>` blocks before persistence.
+
+### Hybrid retrieval
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/diagrams/retrieval.png" alt="Hybrid retrieval: keyword + recency + embeddings fused via Reciprocal Rank Fusion (K=60), then Jaccard dedup" width="800">
+  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/diagrams/retrieval.png" alt="Hybrid retrieval with keyword, recency, embeddings, and rank fusion" width="800">
 </p>
 
-### 🌳 Progressive Disclosure (token-efficient)
+Retrieval blends keyword search, recency, embeddings when available, and deduplication so the right memories surface first.
 
-| Layer | Command | Tokens / result | Use |
-|---|---|---|---|
-| 1 (index) | `/search <query>` | ~100 | IDs, type, 1-line summary |
-| 1b (timeline) | `/timeline <id\|window>` | ~150 | chronological window |
-| 2 (detail) | `/detail <id-prefix>` | full | full session — only after filtering |
+### Progressive disclosure
 
-Inline filters: `@mem /search type:bugfix since:7d tag:auth login flow`
+| Layer | Command | Use |
+|---|---|---|
+| **Index** | `/search <query>` | short summaries and IDs |
+| **Timeline** | `/timeline <window>` | chronological context around a date or session |
+| **Detail** | `/detail <id-prefix>` | full session only after filtering |
 
-### ⭐ Rating Prompt Flow
+This keeps memory useful without dumping huge amounts of text into every prompt.
 
-- Shows only after repeated successful outcomes (capture/compress/Azure snapshot) — not on first launch.
-- Uses a 14-day cooldown and one-tap controls: `Rate GHCP-MEM`, `Later`, `Don't Ask Again`.
-- Designed to collect feedback respectfully without interrupting core workflows.
+### Visual Timeline
+
+**`GHCP-MEM: Open Visual Timeline`** (`⌥⌘M` → Command Palette) opens a full WebviewPanel timeline — color-coded by observation type, searchable by keyword or branch, with expandable session cards.
+
+### Session CodeLens
+
+A `📚 N sessions touched this file` lens appears at the top of every opened source file. Click it to open a quick-pick of sessions that edited the same path, pre-sorted by recency.
+
+### AI-powered chat commands
+
+| Command | What it generates |
+|---|---|
+| `@mem /standup` | Daily standup note from yesterday's sessions |
+| `@mem /commit` | Conventional commit message from staged diff + recent sessions |
+| `@mem /ask <question>` | Cited answer pulled from matching sessions via RAG |
+| `@mem /recap [7d\|30d\|90d]` | Narrative engineering recap for sprint retros |
+| `@mem /related` | Sessions that touched the active file, grouped by recency |
+| `@mem /decisions [keyword]` | ADR-style decision log deduped across all sessions |
+| `@mem /savings` | Lifetime token savings and GPT-4o dollar-equivalent |
 
 ---
 
-## 🎛️ Commands
+## Enterprise & Azure
 
-<details open>
-<summary><b>📋 24 commands organized by purpose</b></summary>
+### Built for locked-down machines
+
+- No admin install required
+- No outbound service dependency
+- No native binaries
+- No open ports
+- Default glob exclusions for `.env*`, `*.pem`, `*.key`, `secrets/**`, and `node_modules/**`
+- `<private>...</private>` content never persists
+- Data stored per-user in VS Code state plus `~/.ghcp-mem/sessions.json`
+- MIT licensed
+
+### Built for Azure shops
+
+- 12-subsystem classifier across `bicep`, Terraform, `azd`, Functions, App Service, AKS, Container Apps, Storage, Key Vault, OpenAI, `az` CLI, and more
+- Live `az` snapshot with subscription, tenant, resource group, location, and up to 50 resource IDs
+- `@mem /azure` groups Azure-tagged sessions by subsystem
+- Azure-aware observation typing and redaction
+- Graceful fallback when `az` is missing or not signed in
+
+---
+
+## Commands
 
 | Group | Command | Description |
 |---|---|---|
-| **Capture** | `GHCP-MEM: Capture Session Snapshot Now` | Manually trigger compression |
-| | `GHCP-MEM: Compress Current Session` | Same, with progress notification |
-| **Inspect** | `GHCP-MEM: Show Stored Context` | Markdown report of all sessions |
-| | `GHCP-MEM: Show Memory Health Score` | 0–100 score breakdown with notes |
-| | `GHCP-MEM: Run Retrieval Eval` | recall@5 / MRR over keyword vs hybrid vs hybrid+freshness |
+| **Capture** | `GHCP-MEM: Capture Session Snapshot Now` | Manually trigger compression (`⌥⌘M` / `Ctrl+Alt+M`) |
+|  | `GHCP-MEM: Compress Current Session` | Compress with progress |
+| **Inspect** | `GHCP-MEM: Show Stored Context` | Open a markdown report of sessions |
+|  | `GHCP-MEM: Show Memory Health Score` | Show 0-100 health score and notes |
+|  | `GHCP-MEM: Run Retrieval Eval` | Compare retrieval quality |
+|  | `GHCP-MEM: Open Visual Timeline` | Color-coded WebviewPanel timeline of all sessions |
+|  | `GHCP-MEM: Show File Session History` | Sessions that touched the active file (quick-pick) |
 | **Backup / Restore** | `GHCP-MEM: Export Memory to JSON...` | Full backup |
-| | `GHCP-MEM: Import Memory from JSON...` | Restore / merge |
-| | `GHCP-MEM: Restore From Backup...` | Restore from rolling 5-snapshot backup |
-| **Team Sharing (Packs)** | `GHCP-MEM: Export Memory Pack...` | Build a shareable `.ghcpmem-pack.json` |
-| | `GHCP-MEM: Import Memory Pack...` | Install a pack from disk |
-| | `GHCP-MEM: Uninstall Memory Pack...` | Remove every session belonging to a pack |
-| **Sidebar** | `GHCP-MEM: Filter Sessions...` | Quick-filter (scope / type / tag / days / text) |
-| | `GHCP-MEM: Clear Filter` | Reset the active filter chip |
-| | `GHCP-MEM: Refresh` | Refresh the sessions tree view |
-| **Chat** | `GHCP-MEM: Inject Relevant Context Into Copilot Chat...` | Copy top-N matches, open Chat |
-| **Manage** | `GHCP-MEM: Delete Session` | Remove a single session |
-| | `GHCP-MEM: Tag Session...` | Add user tags |
-| | `GHCP-MEM: Pin/Unpin Session` | Toggle pinned tier (pinned sessions surface on top) |
-| | `GHCP-MEM: Open Session Detail` | Open a session in a markdown preview |
-| | `GHCP-MEM: Export Session as Diff-Friendly Markdown...` | Stable, deterministic markdown export (commit-friendly) |
-| | `GHCP-MEM: Clear All Stored Context` | Wipe everything (irreversible) |
-| **Azure** | `GHCP-MEM: Capture Azure Context Snapshot...` | Live `az` subscription/RG/resource IDs |
-| | `GHCP-MEM: Seed Azure Demo Sessions` | 5 pre-tagged demo sessions |
-| **MCP** | `GHCP-MEM: Show External MCP Client Config` | `mcp.json` snippets for other clients |
-
-</details>
+|  | `GHCP-MEM: Import Memory from JSON...` | Restore or merge |
+|  | `GHCP-MEM: Restore From Backup...` | Restore from rolling backup |
+| **Team sharing** | `GHCP-MEM: Export Memory Pack...` | Build a `.ghcpmem-pack.json` |
+|  | `GHCP-MEM: Import Memory Pack...` | Install a pack |
+|  | `GHCP-MEM: Uninstall Memory Pack...` | Remove imported pack sessions |
+| **Sidebar** | `GHCP-MEM: Filter Sessions...` | Filter by scope, type, tag, days, or text |
+|  | `GHCP-MEM: Clear Filter` | Reset active filter |
+|  | `GHCP-MEM: Refresh` | Refresh sessions tree |
+| **Chat** | `GHCP-MEM: Inject Relevant Context Into Copilot Chat...` | Copy top matches into chat |
+| **Manage** | `GHCP-MEM: Delete Session` | Delete one session |
+|  | `GHCP-MEM: Tag Session...` | Add user tags |
+|  | `GHCP-MEM: Pin/Unpin Session` | Pin or unpin a session |
+|  | `GHCP-MEM: Open Session Detail` | Open session detail view |
+|  | `GHCP-MEM: Export Session as Diff-Friendly Markdown...` | Stable markdown export |
+|  | `GHCP-MEM: Clear All Stored Context` | Wipe all stored context |
+| **Azure** | `GHCP-MEM: Capture Azure Context Snapshot...` | Save live Azure context |
+|  | `GHCP-MEM: Seed Azure Demo Sessions` | Create demo sessions |
+| **MCP** | `GHCP-MEM: Show External MCP Client Config` | Show resolved MCP config |
 
 ---
 
-## 🛠️ Agent Mode Tools
+## Agent mode tools
 
-Copilot's **agent mode** can call these tools automatically — no MCP server required.
+Copilot agent mode can call these without a separate MCP setup:
 
 | Tool | Inline reference | What it does |
 |---|---|---|
-| 🔍 `ghcpMem_search` | `#ghcpMemSearch <query>` | Search past sessions by keyword / type / date / tag |
-| 💾 `ghcpMem_store` | `#ghcpMemStore <note>` | Persist a durable note (decisions, facts, preferences) |
+| `ghcpMem_search` | `#ghcpMemSearch <query>` | Search past sessions by keyword, type, date, or tag |
+| `ghcpMem_store` | `#ghcpMemStore <note>` | Persist a durable note, decision, or preference |
+| `ghcpMem_delete` | — | Delete a session or set of sessions by ID prefix (MCP write) |
 
 ---
 
-## 💬 `@mem` Chat Participant
+## `@mem` chat participant
 
 | Command | Example |
 |---|---|
@@ -253,51 +346,56 @@ Copilot's **agent mode** can call these tools automatically — no MCP server re
 | `/search` | `@mem /search type:bugfix since:7d authentication` |
 | `/timeline` | `@mem /timeline 72h` or `@mem /timeline <id>` |
 | `/detail` | `@mem /detail a1b2c3d4` |
-| `/export` | `@mem /export a1b2c3d4` (diff-friendly markdown — paste into PR) |
+| `/export` | `@mem /export a1b2c3d4` |
 | `/azure` | `@mem /azure key-vault` |
 | `/health` | `@mem /health` |
+| `/savings` | `@mem /savings` — token savings breakdown with dollar-equivalent |
+| `/related` | `@mem /related` — sessions touching the currently open file |
+| `/decisions` | `@mem /decisions` or `@mem /decisions auth` — ADR-style decision log |
+| `/standup` | `@mem /standup` or `@mem /standup yesterday` — AI daily standup note |
+| `/commit` | `@mem /commit` — AI conventional commit message from staged diff + sessions |
+| `/ask` | `@mem /ask why did we change the auth flow?` — RAG Q&A over session history |
+| `/recap` | `@mem /recap 7d` / `30d` / `90d` — narrative engineering recap for retros |
 
 ---
 
-## ⚙️ Settings
+## Settings
 
 <details>
-<summary><b>🎚️ 22 configurable settings</b></summary>
+<summary><b>Configuration reference</b></summary>
 
 | Key | Default | Description |
 |---|---|---|
 | `ghcpMem.enabled` | `true` | Master switch |
 | `ghcpMem.compressionIntervalMinutes` | `15` | Periodic compression |
 | `ghcpMem.maxStoredSessions` | `50` | Count-based retention |
-| `ghcpMem.maxStoreSizeMB` | `25` | Soft byte cap on `~/.ghcp-mem/sessions.json` (size-based eviction) |
-| `ghcpMem.retentionDays` | `90` | Age-based retention (`0` = off; clamped to `28` in `githubCompatibleMode`) |
-| `ghcpMem.contextRetrievalCount` | `5` | Results injected into search |
-| `ghcpMem.scope` | `"user"` | Retrieval scope: `user` / `workspace` / `repo` (auto-detected from `.git/config`) |
-| `ghcpMem.validateAgainstCodebase` | `true` | Drop sessions whose `keyFiles` no longer exist in the workspace (60s cache) |
-| `ghcpMem.freshnessFloor` | `0.25` | Minimum fraction of `keyFiles` that must still exist (`0`–`1`, runtime-clamped) |
-| `ghcpMem.githubCompatibleMode` | `false` | Mirror Copilot Memory's contract: 28-day retention + repo scope (overrides above) |
-| `ghcpMem.redactSecrets` | `true` | Secret/PII scanning |
-| `ghcpMem.honorPrivateTags` | `true` | Strip `<private>...</private>` content |
-| `ghcpMem.excludeGlobs` | `["**/.env*","**/*.pem","**/*.key","**/secrets/**","**/node_modules/**"]` | Skip these paths (matched at any directory depth) |
-| `ghcpMem.autoInjectStartupContext` | `true` | Write `.github/instructions/*.md` (auto-gitignored) |
-| `ghcpMem.healthAlertThreshold` | `30` | Warn at startup when memory health score falls below this value (`0` = off) |
-| `ghcpMem.autosave.enabled` | `true` | Master switch for context-pressure autosave |
-| `ghcpMem.autosave.eventThreshold` | `40` | Buffered events that trigger an autosave |
-| `ghcpMem.autosave.minutesThreshold` | `20` | Wall-clock minutes since last flush that trigger an autosave |
-| `ghcpMem.captureFileEdits` | `true` | Capture file edit events |
-| `ghcpMem.captureDiagnostics` | `true` | Capture diagnostic transitions |
-| `ghcpMem.captureTerminalCommands` | `true` | Capture terminal commands (needs shell integration) |
+| `ghcpMem.maxStoreSizeMB` | `25` | Soft size cap on `~/.ghcp-mem/sessions.json` |
+| `ghcpMem.retentionDays` | `90` | Age-based retention |
+| `ghcpMem.contextRetrievalCount` | `5` | Number of injected matches |
+| `ghcpMem.scope` | `"user"` | Retrieval scope: `user`, `workspace`, or `repo` |
+| `ghcpMem.validateAgainstCodebase` | `true` | Drop stale memories whose key files no longer exist |
+| `ghcpMem.freshnessFloor` | `0.25` | Minimum surviving key-file fraction |
+| `ghcpMem.githubCompatibleMode` | `false` | Mirror Copilot Memory's 28-day repo-scoped contract |
+| `ghcpMem.redactSecrets` | `true` | Secret and PII scanning |
+| `ghcpMem.honorPrivateTags` | `true` | Strip `<private>...</private>` |
+| `ghcpMem.excludeGlobs` | default exclusions | Skip sensitive or noisy paths |
+| `ghcpMem.autoInjectStartupContext` | `true` | Write auto-injected instructions file |
+| `ghcpMem.healthAlertThreshold` | `30` | Warn when health score is low |
+| `ghcpMem.autosave.enabled` | `true` | Enable context-pressure autosave |
+| `ghcpMem.autosave.eventThreshold` | `40` | Autosave after buffered event threshold |
+| `ghcpMem.autosave.minutesThreshold` | `20` | Autosave after time threshold |
+| `ghcpMem.captureFileEdits` | `true` | Capture file edits |
+| `ghcpMem.captureDiagnostics` | `true` | Capture diagnostics |
+| `ghcpMem.captureTerminalCommands` | `true` | Capture terminal commands |
 | `ghcpMem.captureGitOps` | `true` | Capture git operations |
 
 </details>
 
 ---
 
-## 🔌 External MCP Clients (Cursor, Cline, Windsurf, Claude Desktop)
+## External MCP clients
 
-GHCP-MEM mirrors its memory to `~/.ghcp-mem/sessions.json`. Any MCP-compatible client can read it via the bundled stdio server.
-
-**`mcp.json` / `claude_desktop_config.json`:**
+GHCP-MEM mirrors memory to `~/.ghcp-mem/sessions.json`. MCP-compatible clients can read it through the bundled stdio server.
 
 ```json
 {
@@ -310,96 +408,100 @@ GHCP-MEM mirrors its memory to `~/.ghcp-mem/sessions.json`. Any MCP-compatible c
 }
 ```
 
-Use `GHCP-MEM: Show External MCP Client Config` to get the exact resolved path.
+Use **`GHCP-MEM: Show External MCP Client Config`** to get the resolved path on your machine.
 
-**MCP tools exposed:**
+**Exposed MCP tools (6 total):**
 
-- `ghcpMem_search(query, type?, sinceDays?, tag?, workspaceName?, limit?)` — RRF-fused keyword + recency search
+- `ghcpMem_search(query, type?, sinceDays?, tag?, workspaceName?, limit?)` — keyword + RRF search
 - `ghcpMem_recent(limit?, workspaceName?)` — most recent sessions
-- `ghcpMem_timeline(days?, limit?)` — chronological within a window
-- `ghcpMem_get(id)` — full detail by ID or prefix
+- `ghcpMem_timeline(days?, limit?)` — sessions by time window
+- `ghcpMem_get(id)` — full session by ID prefix
+- `ghcpMem_store(summary, tags?, observationType?)` — write a new session from an external client
+- `ghcpMem_delete(id)` — delete a session by ID prefix
 
 ---
 
-## 🏛️ Architecture
+## Architecture
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/diagrams/architecture.png" alt="GHCP-MEM module architecture — extension.ts orchestrates capture, redactor, compressor, store, MCP, chat, tree view, and agent tools" width="900">
+  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/diagrams/pipeline.png" alt="GHCP-MEM capture pipeline: events, redaction, compression, storage, and retrieval" width="900">
 </p>
 
-<details>
-<summary><b>📁 Module-by-module breakdown</b></summary>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/diagrams/architecture.png" alt="GHCP-MEM module architecture" width="900">
+</p>
+
+Key modules:
 
 | Module | Responsibility |
 |---|---|
-| [src/types.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/types.ts) | Event types, observation types, config reader (with runtime clamping), glob matcher, `AzureContextMeta` |
-| [src/redactor.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/redactor.ts) | 24-rule secret/PII scanner (incl. 8 Azure rules), `<private>` tag stripper, redactor-corpus tests |
-| [src/azureDetect.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/azureDetect.ts) | 12-subsystem classifier for file paths, terminal commands, and content |
-| [src/azureContext.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/azureContext.ts) | `az` CLI wrapper (5-min cache, graceful fallback) — **fully tested** |
-| [src/sessionCapture.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/sessionCapture.ts) | VS Code event hooks with debounce + exclude + redact + Azure tagging |
-| [src/contextCompressor.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/contextCompressor.ts) | `vscode.lm` calls, rule-based fallback, observation-type classification, Azure context, repo-scope tagging — **fully tested** |
-| [src/contextStore.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/contextStore.ts) | Persistent DB, inverted index (async chunked rebuild), serial sync queue, age + count + size eviction, redact-on-import, rolling backups, freshness filter |
-| [src/searchCore.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/searchCore.ts) | Shared keyword-scorer used by `mcpServer` and `contextStore` (eliminates ranking drift) |
-| [src/embeddings.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/embeddings.ts) | Feature-detected `vscode.lm.computeEmbeddings` helper |
-| [src/ruleClassifier.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/ruleClassifier.ts) | Pre-LM observation typing |
-| [src/repoScope.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/repoScope.ts) | Stable per-repo scope ID from git `origin` URL (or workspace fallback); 1 MB `.git/config` cap |
-| [src/validator.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/validator.ts) | Codebase validation (drop sessions whose `keyFiles` are gone), 60s cache, `skipped` counter |
-| [src/autosave.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/autosave.ts) | Context-pressure autosave trigger |
-| [src/health.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/health.ts) | 0–100 health score with configurable alert threshold |
-| [src/packs.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/packs.ts) | Build / import (with redaction) / uninstall `.ghcpmem-pack.json` |
-| [src/markdownExport.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/markdownExport.ts) | Diff-friendly stable-output markdown exporter (sorted arrays, ISO timestamps) |
-| [src/eval.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/eval.ts) | recall@k + MRR harness over keyword vs hybrid vs hybrid+freshness retrieval |
-| [src/contextProvider.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/contextProvider.ts) | `@mem` chat participant with layered slash commands |
-| [src/sessionsView.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/sessionsView.ts) | Activity bar tree view with quick-filter chip + pinned tier |
-| [src/memoryTool.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/memoryTool.ts) | Agent-mode `ghcpMem_search` + `ghcpMem_store` tools |
-| [src/mcpServer.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/mcpServer.ts) | Stand-alone stdio JSON-RPC server with workspace-scoped filtering |
-| [src/extension.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/extension.ts) | Lifecycle, 24 commands, walkthroughs, shutdown recovery, gitignore guard, health alert |
-| [src/test/integration.test.ts](https://github.com/ITcredibl/ghcp-mem/blob/main/src/test/integration.test.ts) | End-to-end pipeline tests (compress → store → search → dedup → retention → import-redaction) |
+| `src/redactor.ts` | 24-rule secret and privacy redaction |
+| `src/azureDetect.ts` | Azure subsystem detection |
+| `src/azureContext.ts` | `az` CLI snapshotting with cache and fallback |
+| `src/sessionCapture.ts` | VS Code event hooks and capture pipeline |
+| `src/contextCompressor.ts` | LM compression, classification, and git branch tagging |
+| `src/contextStore.ts` | Persistent storage, indexing, eviction, backups, lifetime token stats |
+| `src/searchCore.ts` | Shared retrieval scoring (BM25 + RRF + recency decay) |
+| `src/contextProvider.ts` | `@mem` chat participant with 15 slash commands |
+| `src/memoryTool.ts` | Agent-mode tools |
+| `src/mcpServer.ts` | Stand-alone stdio MCP server (6 tools, read + write) |
+| `src/timelinePanel.ts` | Visual Memory Timeline WebviewPanel |
+| `src/sessionCodeLens.ts` | Inline file-history CodeLens at line 0 |
+| `src/extension.ts` | Lifecycle, commands, walkthroughs, integration wiring |
 
-</details>
+More detail: [docs/diagrams/pipeline.mmd](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/diagrams/pipeline.mmd)
 
 ---
 
-## 🔐 Privacy & Security
+## Privacy & security
 
-> **Important:** All data stays on your machine. GHCP-MEM never opens a network port, never phones home, and never ships data to a third party.
+> **All data stays on your machine.** GHCP-MEM does not open a port, phone home, or send your stored memory to a third party.
 
-- 🏠 **Storage:** VS Code `globalState` + atomic mirror to `~/.ghcp-mem/sessions.json`
-- 🤖 **LM traffic:** your existing Copilot subscription only
-- 🔒 **Redaction:** 24 rules, dual-pass (capture + LM output) plus redact-on-import for third-party packs
-- 📁 **Workspace artifact:** only `.github/instructions/session-memory.instructions.md` — **auto-added to `.gitignore`** on first write
-- 🛡️ **Attack surface:** VS Code extension host only — no subprocesses, no HTTP servers, no native modules
+- **Storage:** VS Code `globalState` plus atomic mirror to `~/.ghcp-mem/sessions.json`
+- **LM traffic:** your existing Copilot subscription only
+- **Redaction:** dual-pass redaction at capture and LM output time, plus redact-on-import
+- **Workspace artifact:** `.github/instructions/session-memory.instructions.md`, automatically added to `.gitignore`
+- **Attack surface:** VS Code extension host only
 
 ---
 
-## 🩺 Troubleshooting
-
-<details>
-<summary><b>🚑 Common issues & fixes</b></summary>
+## Troubleshooting
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Status bar shows `MEM ●○○○○ 0` and never increments | No edits have triggered a snapshot yet. Run `Capture Session Snapshot Now`, or lower `ghcpMem.autosave.eventThreshold` to `3`. |
-| `@mem` says "no Copilot language model available" | GitHub Copilot extension isn't installed / signed in. Compression and `@mem` chat need `vscode.lm`. Everything else still works. |
-| `/azure` prints "Azure CLI not signed in" | Run `az login` once (cached 5 min). Also degrades gracefully if `az` isn't installed. |
-| `~/.ghcp-mem/sessions.json` doesn't exist | Created on first successful persist — trigger one via `Capture Session Snapshot Now`. |
-| MCP client can't see any tools | Bundled server is at `<extension-install-dir>/out/mcpServer.js`. Use `Show External MCP Client Config` to get the resolved path. |
-| Terminal commands aren't captured | Requires VS Code shell integration. Enable `terminal.integrated.shellIntegration.enabled` + a supported shell. |
-| Tests fail with `Cannot find module 'vscode'` | Run `npm install` first, then `npm test`. Mock is wired by [scripts/setup-test-env.js](https://github.com/ITcredibl/ghcp-mem/blob/main/scripts/setup-test-env.js). |
-| Want to wipe everything | `Clear All Stored Context` + delete `~/.ghcp-mem/`. Backups stay in extension global storage under `backups/`. |
-
-</details>
+| Memory count stays at zero | Trigger `Capture Session Snapshot Now`, or lower autosave thresholds. |
+| `@mem` says no Copilot language model is available | Install and sign in to GitHub Copilot. |
+| `/azure` says Azure CLI is not signed in | Run `az login`; GHCP-MEM degrades gracefully if Azure CLI is unavailable. |
+| `~/.ghcp-mem/sessions.json` does not exist | It is created on first successful persist. |
+| MCP client cannot see tools | Point it to `<extension-install-dir>/out/mcpServer.js` or use the built-in config command. |
+| Terminal commands are missing | Enable VS Code shell integration. |
+| Tests fail with `Cannot find module 'vscode'` | Run `npm install` first, then `npm test`. |
+| You want to wipe everything | Run `Clear All Stored Context`, delete `~/.ghcp-mem/`, and see [docs/UNINSTALL.md](docs/UNINSTALL.md) for a full clean-removal checklist. |
 
 ---
 
-## 📜 License
+## Uninstall
+
+To remove GHCP-MEM completely — extension, stored sessions, workspace artifact, and any MCP/cross-editor injections — follow the step-by-step guide:
+
+**[docs/UNINSTALL.md](docs/UNINSTALL.md)**
+
+Quick summary:
+1. *(Optional)* Export your memory: `GHCP-MEM: Export Memory to JSON...`
+2. Clear stored data: `GHCP-MEM: Clear All Stored Context`
+3. Uninstall the extension: Extensions sidebar → gear → **Uninstall** (or `code --uninstall-extension ITcredibl.ghcp-mem`)
+4. Delete `~/.ghcp-mem/` (the MCP mirror file)
+5. Remove `.github/instructions/session-memory.instructions.md` from your workspace
+6. Remove any cross-editor files (`CLAUDE.md` block / `.cursor/rules/ghcp-mem.md`) if injected
+
+---
+
+## License
 
 MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 ---
 
-### Built for the GitHub Copilot ecosystem
+[Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](docs/DEMO.md) · [Compare memory tools](docs/COMPARISON.md) · [Uninstall guide](docs/UNINSTALL.md) · [Configuration reference](docs/CONFIGURATION.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
-[Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare against other memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md)
-
-<sub>**v1.2.3** · 136 passing tests · zero native deps · zero ports · 24-rule redaction · CI: ubuntu × windows × node 20</sub>
+<sub>**v1.3.0** · zero native deps · zero ports · local-first memory for Copilot</sub>

@@ -4,7 +4,7 @@
 
 ### How GHCP-MEM compares to other persistent-memory tools for AI coding assistants
 
-[![v1.2.0](https://img.shields.io/badge/version-1.2.0-7c3aed?style=for-the-badge)](../package.json)
+[![v1.2.4](https://img.shields.io/badge/version-1.2.4-7c3aed?style=for-the-badge)](../package.json)
 [![Scope](https://img.shields.io/badge/scope-VS_Code_+_Copilot-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](../README.md)
 
 </div>
@@ -86,7 +86,7 @@ GitHub announced [Copilot Memory](https://docs.github.com/en/copilot/concepts/ag
 | No external service / port | ✅ | ❌ (service by default) | ❌ (needs pipx + Python server) | ✅ | ✅ | ❌ (`:37777` worker) |
 | No native deps | ✅ | 🟡 (better-sqlite3 in legacy) | ❌ | ✅ | ❌ (sql-wasm, Nomic) | ❌ (SQLite, Chroma, Bun) |
 | Auto-capture signals | ✅ (edits, diagnostics, git, debug, tasks, terminal) | 🟡 (file save only) | ❌ (user-driven) | ✅ (chat transcript) | ✅ (transcript hooks) | ✅ |
-| Auto secret/PII redaction | ✅ (13 generic + 8 Azure, dual-pass + redact-on-import) | ❌ | ❌ | ❌ | ❌ | 🟡 (`<private>` tags only) |
+| Auto secret/PII redaction | ✅ (16 generic + 8 Azure, dual-pass + redact-on-import) | ❌ | ❌ | ❌ | ❌ | 🟡 (`<private>` tags only) |
 | Glob-based file exclusion | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Observation typing | ✅ (12 types, rule + LM) | ❌ | 🟡 (manual scopes) | ✅ (decision / bug / arch) | ❌ | 🟡 (by tag) |
 | Progressive disclosure | ✅ (`/search` → `/timeline` → `/detail`) | 🟡 (`/recall`) | ❌ | 🟡 | ❌ | ✅ |
@@ -108,7 +108,7 @@ GitHub announced [Copilot Memory](https://docs.github.com/en/copilot/concepts/ag
 | Health score alerting | ✅ (0–100, configurable threshold notification) | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Auto-gitignore injected files | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Async non-blocking index rebuild | ✅ (chunked `setImmediate`) | ❌ | n/a | ❌ | ❌ | n/a |
-| Formal test suite | ✅ (132 `node:test` cases + eval gate + bench + smoke + CI matrix ubuntu×windows) | ✅ (vitest) | 🟡 | 🟡 | ✅ (231 tests) | ❌ |
+| Formal test suite | ✅ (136 `node:test` cases + eval gate + bench + smoke + CI matrix ubuntu×windows) | ✅ (vitest) | 🟡 | 🟡 | ✅ (231 tests) | ❌ |
 
 </details>
 
@@ -150,13 +150,19 @@ GHCP-MEM made specific bets that not every user will agree with:
 
 ## ✅ Roadmap (v1.0 → v1.x)
 
-Every gap from the original v0.x analysis was closed before v1.0. Remaining items are research-level:
+Every gap from the original v0.x analysis was closed before v1.0. Items shipped in v1.2.x:
 
-- 🟡 **Chat transcript capture** — depends on Copilot Chat APIs exposing user turns.
-- 🟡 **Quick-filter bar on the sessions tree view.**
+- ✅ **Quick-filter bar on the sessions tree view** — shipped in v1.2.0.
+- ✅ **Pinned tier** — sessions can be pinned to the top of the tree view.
+- ✅ **Diff-friendly markdown export** — stable, byte-deterministic session export.
+- ✅ **Retrieval eval gate** — recall@k + MRR baseline enforced in CI.
+- ✅ **GitHub-compatible mode** — 28-day retention + repo-scoped retrieval to match Copilot Memory contract.
+
+Remaining research-level items:
+
+- 🔬 **Chat transcript capture** — depends on Copilot Chat APIs exposing user turns.
 - 🔬 **Intent-aware compression** — feed `@mem` the user's current prompt; rewrite the summary to emphasise relevant info (query-focused summarization).
 - 🔬 **Cross-workspace knowledge graph** — extract `{entity, relation, entity}` triples from summaries.
-- 🔬 **Evaluation harness** — record a real session, replay synthetic queries, measure recall@k vs keyword baseline.
 
 ---
 
@@ -164,7 +170,7 @@ Every gap from the original v0.x analysis was closed before v1.0. Remaining item
 
 [← Back to README](../README.md) · [Live demo](DEMO.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Comparison for GHCP-MEM v1.2.0** · last refreshed May 2026</sub>
+<sub>**Comparison for GHCP-MEM v1.2.4** · last refreshed May 2026</sub>
 
 </div>
 

@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🎬 GHCP-MEM v1.2.0 — Live Demo
+# 🎬 GHCP-MEM v1.3.0 — Live Demo
 
-### A 6-minute walkthrough that exercises every v1.2.0 capability
+### A 6-minute walkthrough that exercises every capability
 
 [![Duration](https://img.shields.io/badge/Duration-6%20min-blueviolet?style=for-the-badge)](#)
 [![Steps](https://img.shields.io/badge/Steps-12-22c55e?style=for-the-badge)](#)
@@ -11,7 +11,7 @@
 </div>
 
 > [!NOTE]
-> **Prereqs:** GHCP-MEM v1.2.0 installed (Marketplace search **GHCP-MEM**, or `code --install-extension ITcredibl.ghcp-mem`) and VS Code reloaded. Open any workspace. No Azure subscription needed — the Azure steps degrade gracefully if `az` isn't installed or signed in.
+> **Prereqs:** GHCP-MEM v1.3.0 installed (Marketplace search **GHCP-MEM**, or `code --install-extension ITcredibl.ghcp-mem`) and VS Code reloaded. Open any workspace. No Azure subscription needed — the Azure steps degrade gracefully if `az` isn't installed or signed in.
 
 ---
 
@@ -19,7 +19,7 @@
 
 ```mermaid
 timeline
-    title GHCP-MEM v1.2.0 — 6-minute live demo
+    title GHCP-MEM v1.3.0 — 6-minute live demo
     section 🩺 Health
         0. Sanity check (10s)              : status bar glyph
         1. Seed Azure sessions (15s)       : Seed Azure Demo Sessions
@@ -133,7 +133,7 @@ flowchart TB
 
 ---
 
-## 4. Quick-filter bar (30 sec) **NEW in v1.2.0**
+## 4. Quick-filter bar (30 sec)
 
 In the Sessions sidebar, click the funnel icon → **`GHCP-MEM: Filter Sessions...`**.
 
@@ -151,7 +151,7 @@ The active filter shows as a clickable chip in the tree header. Click the chip (
 
 ---
 
-## 5. Pinned tier (20 sec) **NEW in v1.2.0**
+## 5. Pinned tier (20 sec)
 
 Right-click any session in the tree → **Pin/Unpin Session** (or run `GHCP-MEM: Pin/Unpin Session`).
 
@@ -243,7 +243,7 @@ sequenceDiagram
     CLI->>MCP: notifications/initialized
     CLI->>MCP: tools/list
     MCP->>STORE: mtime check (cached)
-    MCP-->>CLI: ghcpMem_search · _recent · _timeline · _get
+    MCP-->>CLI: ghcpMem_search · _recent · _timeline · _get · _store · _delete
 ```
 
 **Quick verification** (POSIX shell, no other client needed):
@@ -268,14 +268,14 @@ $mcp = (Get-ChildItem "$env:USERPROFILE\.vscode\extensions\*ghcp-mem*\out\mcpSer
 '@ | node $mcp
 ```
 
-Returns the 4-tool catalog: `ghcpMem_search`, `ghcpMem_recent`, `ghcpMem_timeline`, `ghcpMem_get`.
+Returns the 6-tool catalog: `ghcpMem_search`, `ghcpMem_recent`, `ghcpMem_timeline`, `ghcpMem_get`, `ghcpMem_store`, `ghcpMem_delete`.
 
 > [!TIP]
 > **What this demonstrates:** Copilot-only is gone; any MCP client can read the store over a stdio JSON-RPC channel.
 
 ---
 
-## 10. Diff-friendly markdown export (30 sec) **NEW in v1.2.0**
+## 10. Diff-friendly markdown export (30 sec)
 
 Right-click any session in the tree → **Export Session as Diff-Friendly Markdown...** (or run `GHCP-MEM: Export Session as Diff-Friendly Markdown...`). Pick a save location.
 
@@ -292,7 +292,7 @@ The output is **byte-stable** (sorted arrays, ISO timestamps, deterministic orde
 
 ---
 
-## 11. Retrieval eval gate (30 sec) **NEW in v1.2.0**
+## 11. Retrieval eval gate (30 sec)
 
 `Ctrl+Shift+P` → **`GHCP-MEM: Run Retrieval Eval`**.
 
@@ -311,7 +311,7 @@ This is the same suite the CI eval-gate runs (`scripts/eval-check.js`) — and t
 
 ---
 
-## 12. GitHub-compatible mode (15 sec) **NEW in v1.2.0**
+## 12. GitHub-compatible mode (15 sec)
 
 Open Settings → search `ghcpMem.githubCompatibleMode` → toggle **on**.
 
@@ -334,11 +334,11 @@ Terminal (from the repo root):
 npm test
 ```
 
-You should see **132 tests pass**, covering: redactor + redactor-corpus, contextStore, types, azureDetect, ruleClassifier, health, packs, autosave, mcpServer + mcpServer schema, eval, validator, repoScope, markdownExport, contextCompressor, integration.
+You should see **138 tests pass**, covering: redactor + redactor-corpus, contextStore, types, azureDetect, ruleClassifier, health, packs, autosave, mcpServer + mcpServer schema, eval, validator, repoScope, markdownExport, contextCompressor, integration.
 
 ```
-ℹ tests 132
-ℹ pass 132
+ℹ tests 138
+ℹ pass 138
 ℹ fail 0
 ```
 
@@ -368,7 +368,7 @@ Plus the CI pipeline runs three additional gates: `npm run lint` → `npm test` 
 </div>
 
 > [!IMPORTANT]
-> All v1.2.0 features are demonstrable in under 6 minutes. Compare against the [GitHub Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) cloud preview in [COMPARISON.md](COMPARISON.md).
+> All features are demonstrable in under 6 minutes. Compare against the [GitHub Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) cloud preview in [COMPARISON.md](COMPARISON.md).
 
 ---
 
@@ -376,6 +376,6 @@ Plus the CI pipeline runs three additional gates: `npm run lint` → `npm test` 
 
 [← Back to README](../README.md) · [Competitive analysis](COMPARISON.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Demo script for GHCP-MEM v1.2.0** · 132 tests · zero native deps · zero ports · CI ubuntu × windows × node 20</sub>
+<sub>**Demo script for GHCP-MEM v1.3.0** · 138 tests · zero native deps · zero ports · CI ubuntu × windows × node 20</sub>
 
 </div>

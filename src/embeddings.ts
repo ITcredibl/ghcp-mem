@@ -19,7 +19,28 @@ export async function getEmbedder(): Promise<EmbeddingFn | undefined> {
   const lm = vscode.lm as any;
   if (!lm) return undefined;
 
-  // Preferred (proposed) API surface: vscode.lm.computeEmbeddings({ model, inputs })
+  // Preferred: stable VS Code ≥1.102 API — computeEmbeddings(model, { inputs })
+  if (typeof lm.computeEmbeddings === 'function' && typeof lm.selectEmbeddingModels === 'function') {
+    return async (text: string) => {
+      try {
+        const models: any[] = await lm.selectEmbeddingModels({});
+        if (models.length > 0) {
+          const res = await lm.computeEmbeddings(models[0], { inputs: [text] });
+          const vec = res?.embeddings?.[0]?.values ?? res?.[0]?.values;
+          if (Array.isArray(vec)) return vec;
+        }
+      } catch { /* fall through to older shape */ }
+      try {
+        const res = await lm.computeEmbeddings({ inputs: [text] });
+        const vec = res?.[0]?.values ?? res?.embeddings?.[0]?.values;
+        return Array.isArray(vec) ? vec : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+  }
+
+  // Proposed API surface (pre-1.102): vscode.lm.computeEmbeddings({ model, inputs })
   if (typeof lm.computeEmbeddings === 'function') {
     return async (text: string) => {
       try {

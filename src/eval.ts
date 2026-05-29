@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ContextStore, SearchFilters } from './contextStore';
 import { CompressedSession } from './types';
-import { extractTerms, keywordScore } from './searchCore';
+import { extractTerms, keywordScore, computeAvgDocLen } from './searchCore';
 
 /**
  * Lightweight retrieval evaluation harness (rebase recommendation #7).
@@ -80,9 +80,10 @@ function keywordOnlyRun(store: ContextStore, query: string, limit: number): Comp
   const terms = extractTerms(query);
   if (terms.size === 0) return [];
   const wsId = vscode.workspace.workspaceFolders?.[0]?.uri.toString();
-  return store
-    .getAllSessions()
-    .map(s => ({ s, score: keywordScore(s, terms, wsId) }))
+  const all = store.getAllSessions();
+  const avgDocLen = computeAvgDocLen(all);
+  return all
+    .map(s => ({ s, score: keywordScore(s, terms, wsId, avgDocLen) }))
     .filter(e => e.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)

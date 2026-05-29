@@ -25,10 +25,11 @@ import { createInterface } from 'readline';
 import { homedir } from 'os';
 import { join } from 'path';
 import { promises as fs } from 'fs';
+import { randomUUID } from 'crypto';
 // Import shared types to avoid duplicating interface definitions.
 import type { CompressedSession, ContextDatabase } from './types';
 // Shared keyword scorer — single source of truth shared with ContextStore.
-import { extractTerms, keywordScore } from './searchCore';
+import { extractTerms, keywordScore, computeAvgDocLen } from './searchCore';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'ghcp-mem';
@@ -115,7 +116,8 @@ function searchSessions(
   }
 
   const terms = extractTerms(query ?? '');
-  const kScored = candidates.map(s => ({ s, k: keywordScore(s, terms) }));
+  const avgDocLen = computeAvgDocLen(candidates);
+  const kScored = candidates.map(s => ({ s, k: keywordScore(s, terms, undefined, avgDocLen) }));
 
   // When the user supplied a query AND at least one candidate has a positive
   // keyword score, drop the zero-score candidates so unrelated sessions can't
@@ -235,7 +237,52 @@ const TOOLS = [
       required: ['id'],
     },
   },
+  {
+    name: 'ghcpMem_store',
+    description:
+      'Persist a note or session summary into GHCP-MEM so it will be recalled in future sessions. Use for durable facts, decisions, or preferences.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: '2-4 sentence summary of what should be remembered.' },
+        observationType: {
+          type: 'string',
+          description: 'Category (feature, bugfix, refactor, docs, test, chore, research, config, security, deployment, infra, unknown). Default: research.',
+        },
+        keyTopics: { type: 'array', items: { type: 'string' }, description: 'Up to 10 topic keywords.' },
+        keyFiles: { type: 'array', items: { type: 'string' }, description: 'Up to 10 relevant file paths.' },
+        decisions: { type: 'array', items: { type: 'string' }, description: 'Architectural or design decisions.' },
+        problemsSolved: { type: 'array', items: { type: 'string' }, description: 'Problems resolved.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'User-facing tags.' },
+      },
+      required: ['summary'],
+    },
+  },
+  {
+    name: 'ghcpMem_delete',
+    description: 'Delete a GHCP-MEM session by ID or ID prefix.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Session ID or unique prefix to delete.' },
+      },
+      required: ['id'],
+    },
+  },
 ];
+
+/** Atomically write `db` back to disk (same rename pattern as the extension). */
+async function saveDatabase(db: StoredDatabase): Promise<void> {
+  const p = storePath();
+  const dir = join(p, '..');
+  await fs.mkdir(dir, { recursive: true });
+  const tmp = `${p}.${process.pid}.tmp`;
+  db.lastUpdated = Date.now();
+  await fs.writeFile(tmp, JSON.stringify(db), { encoding: 'utf8', mode: 0o600 });
+  await fs.rename(tmp, p);
+  // Bust the mtime cache so the next loadDatabase re-reads the file.
+  dbCache = undefined;
+}
 
 function textContent(obj: unknown): any {
   return { content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] };
@@ -287,6 +334,38 @@ async function handleCall(name: string, args: any): Promise<any> {
         startTime: new Date(hit.startTime).toISOString(),
         endTime: new Date(hit.endTime).toISOString(),
       });
+    }
+    case 'ghcpMem_store': {
+      const now = Date.now();
+      const session: StoredSession = {
+        id: randomUUID(),
+        workspaceId: 'mcp',
+        workspaceName: 'mcp-client',
+        startTime: now,
+        endTime: now,
+        summary: String(args?.summary ?? '').substring(0, 2000),
+        observationType: (args?.observationType ?? 'research') as StoredSession['observationType'],
+        keyFiles: (Array.isArray(args?.keyFiles) ? args.keyFiles : []).slice(0, 10).map(String),
+        keyTopics: (Array.isArray(args?.keyTopics) ? args.keyTopics : []).slice(0, 10).map(String),
+        decisions: (Array.isArray(args?.decisions) ? args.decisions : []).slice(0, 20).map(String),
+        problemsSolved: (Array.isArray(args?.problemsSolved) ? args.problemsSolved : []).slice(0, 20).map(String),
+        userTags: (Array.isArray(args?.tags) ? args.tags : []).slice(0, 10).map(String),
+        rawEventCount: 0,
+        redactionCount: 0,
+      };
+      const storeDb = await loadDatabase();
+      storeDb.sessions.push(session);
+      await saveDatabase(storeDb);
+      return textContent({ stored: true, id: session.id, shortId: session.id.substring(0, 8) });
+    }
+    case 'ghcpMem_delete': {
+      const delId = String(args?.id ?? '');
+      const delDb = await loadDatabase();
+      const before = delDb.sessions.length;
+      delDb.sessions = delDb.sessions.filter(s => s.id !== delId && !s.id.startsWith(delId));
+      const deleted = before - delDb.sessions.length;
+      if (deleted > 0) await saveDatabase(delDb);
+      return textContent({ deleted, id: delId });
     }
     default:
       throw new Error(`Unknown tool: ${name}`);

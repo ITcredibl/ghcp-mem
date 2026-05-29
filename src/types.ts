@@ -133,6 +133,8 @@ export interface CompressedSession {
   repoScope?: string;
   /** Human-readable label for the repo scope (e.g. "github.com/foo/bar"). */
   repoScopeLabel?: string;
+  /** Git branch name at time of session capture (e.g. "feat/auth", "main"). */
+  branchName?: string;
 }
 
 export interface ContextDatabase {

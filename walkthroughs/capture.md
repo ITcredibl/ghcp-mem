@@ -2,7 +2,7 @@
 
 GHCP-MEM normally captures activity automatically every 15 minutes (configurable via `ghcpMem.compressionIntervalMinutes`).
 
-When you want to snapshot _right now_ — say, before a refactor — run **GHCP-MEM: Capture Snapshot** from the command palette, or click the camera icon at the top of the Sessions view.
+When you want to snapshot _right now_ — say, before a refactor — run **GHCP-MEM: Capture Session Snapshot Now** from the command palette, or click the camera icon at the top of the Sessions view.
 
 ## What gets stored
 

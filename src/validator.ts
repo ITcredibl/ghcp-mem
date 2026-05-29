@@ -125,17 +125,24 @@ export async function validateSession(
 /**
  * Bulk-validate sessions. Returns a map keyed by session.id.
  *
- * Resolves each `stat` in parallel — `vscode.workspace.fs.stat` is async and
- * non-blocking, and we cap concurrency implicitly via Promise.all rather than
- * adding a semaphore (sessions are typically ≤50).
+ * Resolves each `stat` in parallel with a concurrency cap of 20 to avoid
+ * firing thousands of concurrent fs.stat calls on large stores.
  */
 export async function validateSessions(
   sessions: CompressedSession[],
   workspaceRoot?: vscode.Uri,
 ): Promise<Map<string, ValidationResult>> {
-  const results = await Promise.all(sessions.map(s => validateSession(s, workspaceRoot ?? resolveWorkspaceRootForSession(s))));
+  const CONCURRENCY = 20;
+  const allResults: ValidationResult[] = [];
+  for (let i = 0; i < sessions.length; i += CONCURRENCY) {
+    const batch = sessions.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(s => validateSession(s, workspaceRoot ?? resolveWorkspaceRootForSession(s)))
+    );
+    allResults.push(...batchResults);
+  }
   const map = new Map<string, ValidationResult>();
-  for (const r of results) map.set(r.sessionId, r);
+  for (const r of allResults) map.set(r.sessionId, r);
   return map;
 }
 

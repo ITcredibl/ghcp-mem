@@ -16,6 +16,8 @@ import { getConfig, CompressedSession, AzureContextMeta, SessionEvent } from './
 import { computeHealth, formatHealthMarkdown, fillGlyph } from './health';
 import { buildPack, parsePack, importPack, uninstallPack, listInstalledPacks, PACK_TAG_PREFIX } from './packs';
 import { AutosaveTrigger } from './autosave';
+import { MemoryTimelinePanel } from './timelinePanel';
+import { SessionCodeLensProvider } from './sessionCodeLens';
 
 let capture: SessionCapture;
 let compressor: ContextCompressor;
@@ -28,11 +30,19 @@ let autosave: AutosaveTrigger | undefined;
 let reviewStateStore: vscode.Memento | undefined;
 /** Last content hash written to session-memory.instructions.md — skip write if unchanged. */
 let lastStartupContextHash: string | undefined;
+/** Last content hash written to CLAUDE.md — skip write if unchanged. */
+let lastClaudeMdHash: string | undefined;
 /** File where we stash drained events on shutdown so the next activation can recover. */
 let recoveryFile: vscode.Uri | undefined;
 /** Promise that the (best-effort) shutdown compress is tracked through, so deactivate() can await it. */
 let shutdownCompress: Promise<void> | undefined;
 let reviewPromptInFlight = false;
+/** Structured log output channel — visible via View > Output > GHCP-MEM. */
+let memLog: vscode.OutputChannel;
+
+function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string): void {
+  memLog?.appendLine(`[${new Date().toISOString()}] [${level}] ${msg}`);
+}
 
 const REVIEW_PROMPT_KEY = 'ghcpMem.reviewPromptState';
 const REVIEW_PROMPT_MIN_SUCCESSES = 3;
@@ -48,9 +58,12 @@ interface ReviewPromptState {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  memLog = vscode.window.createOutputChannel('GHCP-MEM');
+  context.subscriptions.push(memLog);
+
   const config = getConfig();
   if (!config.enabled) {
-    console.log('[GHCP-MEM] Disabled via settings.');
+    log('INFO', 'Disabled via settings.');
     return;
   }
 
@@ -81,11 +94,25 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.lm.registerTool('ghcpMem_store', new MemoryStoreTool(store)),
   );
 
+  // Auto-register the MCP server so other tools can access GHCP-MEM sessions over the MCP protocol.
+  const lmAny = vscode.lm as any;
+  if (typeof lmAny.registerMcpServerDefinitionProvider === 'function') {
+    const mcpBin = context.asAbsolutePath('out/mcpServer.js');
+    context.subscriptions.push(
+      lmAny.registerMcpServerDefinitionProvider('ghcp-mem.mcp', {
+        resolve() {
+          return { label: 'GHCP-MEM', command: { command: process.execPath, args: [mcpBin] } };
+        },
+      })
+    );
+    log('INFO', 'MCP server provider registered.');
+  }
+
   // Feature-detect the embeddings API (proposed). Safe no-op when unavailable.
   getEmbedder().then(fn => {
     if (fn) {
       store.setEmbedder(fn);
-      console.log('[GHCP-MEM] Embedding-based hybrid search enabled.');
+      log('INFO', 'Embedding-based hybrid search enabled.');
     }
   }).catch(() => {});
 
@@ -116,7 +143,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('ghcpMem.captureSnapshot', async () => {
       await compressAndStore();
-      vscode.window.showInformationMessage('GHCP-MEM: Snapshot captured.');
+      vscode.window.setStatusBarMessage('$(check) GHCP-MEM: Snapshot captured.', 3000);
       void recordSuccessAndMaybePromptForRating();
     }),
 
@@ -153,7 +180,7 @@ export function activate(context: vscode.ExtensionContext) {
         { location: vscode.ProgressLocation.Notification, title: `GHCP-MEM: Compressing ${eventCount} events...`, cancellable: false },
         async () => { await compressAndStore(); }
       );
-      vscode.window.showInformationMessage('GHCP-MEM: Compression complete.');
+      vscode.window.setStatusBarMessage('$(check) GHCP-MEM: Compression complete.', 3000);
       void recordSuccessAndMaybePromptForRating();
     }),
 
@@ -165,7 +192,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!target) return;
       const json = await store.exportToJson();
       await vscode.workspace.fs.writeFile(target, Buffer.from(json, 'utf-8'));
-      vscode.window.showInformationMessage(`GHCP-MEM: Exported to ${target.fsPath}`);
+      vscode.window.setStatusBarMessage(`$(check) GHCP-MEM: Exported to ${target.fsPath}`, 3000);
     }),
 
     vscode.commands.registerCommand('ghcpMem.importMemory', async () => {
@@ -178,7 +205,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         const result = await store.importFromJson(Buffer.from(bytes).toString('utf-8'), true);
         const skippedMsg = result.skippedInvalid > 0 ? ` (${result.skippedInvalid} skipped — invalid IDs)` : '';
-        vscode.window.showInformationMessage(`GHCP-MEM: Imported ${result.imported} session(s)${skippedMsg}.`);
+        vscode.window.setStatusBarMessage(`$(check) GHCP-MEM: Imported ${result.imported} session(s)${skippedMsg}.`, 3000);
         updateStatusBar();
       } catch (err) {
         vscode.window.showErrorMessage(`GHCP-MEM: Import failed — ${err instanceof Error ? err.message : String(err)}`);
@@ -585,11 +612,73 @@ export function activate(context: vscode.ExtensionContext) {
       for (const s of seeds) await store.addSession(s);
       tree.refresh();
       updateStatusBar();
-      vscode.window.showInformationMessage(`GHCP-MEM: Seeded ${seeds.length} Azure demo session(s). Filter by tag:demo to find them.`);
+      vscode.window.setStatusBarMessage(`$(check) GHCP-MEM: Seeded ${seeds.length} Azure demo session(s). Filter by tag:demo to find them.`, 4000);
     }),
   );
 
-  if (config.autoInjectStartupContext) writeStartupContext();
+  // ── Game-changing UX features ──
+
+  // Visual memory timeline
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ghcpMem.openTimeline', () => {
+      MemoryTimelinePanel.show(store, context);
+    }),
+  );
+
+  // File session history quick-pick — invoked by the CodeLens
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ghcpMem.showFileHistory', async (relPath?: string, sessions?: CompressedSession[]) => {
+      // When called programmatically (CodeLens) sessions are passed directly.
+      // When triggered from the command palette, derive from active editor.
+      let targetPath = relPath;
+      let targetSessions = sessions;
+
+      if (!targetPath || !targetSessions) {
+        const doc = vscode.window.activeTextEditor?.document;
+        if (!doc) { vscode.window.showWarningMessage('GHCP-MEM: No active file.'); return; }
+        targetPath = vscode.workspace.asRelativePath(doc.uri.fsPath);
+        const codeLens = new SessionCodeLensProvider(store);
+        targetSessions = codeLens.findSessionsForFile(targetPath, doc.uri.fsPath);
+        codeLens.dispose();
+      }
+
+      if (!targetSessions || targetSessions.length === 0) {
+        vscode.window.showInformationMessage(`GHCP-MEM: No session history for "${targetPath}".`);
+        return;
+      }
+
+      const items: vscode.QuickPickItem[] = targetSessions.map(s => ({
+        label: `$(history) [${s.observationType}]  ${new Date(s.endTime).toLocaleString()}`,
+        description: s.id.substring(0, 8),
+        detail: s.summary.substring(0, 200),
+        id: s.id,
+      } as vscode.QuickPickItem & { id: string }));
+
+      const pick = await vscode.window.showQuickPick(items, {
+        title: `Session history: ${targetPath}`,
+        placeHolder: `${targetSessions.length} session(s) touched this file`,
+        matchOnDescription: true,
+        matchOnDetail: true,
+      }) as (vscode.QuickPickItem & { id: string }) | undefined;
+
+      if (pick?.id) {
+        await vscode.commands.executeCommand('workbench.action.chat.open', {
+          query: `@mem /detail ${pick.id}`,
+        });
+      }
+    }),
+  );
+
+  // Session CodeLens — shows session count inline on files
+  const codeLensProvider = new SessionCodeLensProvider(store);
+  context.subscriptions.push(
+    codeLensProvider,
+    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, codeLensProvider),
+  );
+
+  log('INFO', 'Timeline, file history, and CodeLens features registered.');
+
+  if (config.autoInjectStartupContext) { writeStartupContext(); writeCrossEditorContext(); }
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -625,7 +714,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   const stats = store.getStats();
-  console.log(`[GHCP-MEM] Active. ${stats.workspaceSessions} workspace session(s) available.`);
+  log('INFO', `Active. ${stats.workspaceSessions} workspace session(s) available.`);
 
   // Health threshold notification — warn when score falls below 30.
   const health = computeHealth(store.getAllSessions());
@@ -721,7 +810,7 @@ async function restorePendingEvents(): Promise<void> {
   try { await vscode.workspace.fs.delete(recoveryFile); } catch { /* ignore */ }
   if (!payload || payload.events.length === 0) return;
   for (const e of payload.events) capture.pushExistingEvent?.(e);
-  console.log(`[GHCP-MEM] Restored ${payload.events.length} event(s) from prior session.`);
+  log('INFO', `Restored ${payload.events.length} event(s) from prior session.`);
 }
 
 // ── Internals ───────────────────────────────────────────────
@@ -748,20 +837,32 @@ async function pickSessionId(node?: TreeNode): Promise<string | undefined> {
 async function compressAndStore(): Promise<void> {
   const { events, redactionCount, azureSubsystems, azureTags } = capture.drain();
   if (events.length === 0) return;
-  const session = await compressor.compress({
-    events,
-    sessionStartTime: capture.startTime,
-    captureRedactionCount: redactionCount,
-    azureSubsystems,
-    azureTags,
-  });
-  if (session) {
-    await store.addSession(session);
-    capture.resetStartTime();
-    updateStatusBar();
-    autosave?.notifyFlushed();
-    const config = getConfig();
-    if (config.autoInjectStartupContext) writeStartupContext();
+  setStatusBarState('compressing');
+  try {
+    const session = await compressor.compress({
+      events,
+      sessionStartTime: capture.startTime,
+      captureRedactionCount: redactionCount,
+      azureSubsystems,
+      azureTags,
+    });
+    if (session) {
+      await store.addSession(session);
+      capture.resetStartTime();
+      setStatusBarState('idle');
+      autosave?.notifyFlushed();
+      const config = getConfig();
+      if (config.autoInjectStartupContext) {
+        writeStartupContext();
+        writeCrossEditorContext();
+      }
+    } else {
+      setStatusBarState('idle');
+    }
+  } catch (err) {
+    setStatusBarState('error');
+    log('ERROR', `compressAndStore failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   }
 }
 
@@ -769,6 +870,21 @@ function startCompressionTimer(intervalMinutes: number): void {
   compressionTimer = setInterval(async () => {
     if (capture.eventCount > 0) await compressAndStore();
   }, intervalMinutes * 60 * 1000);
+}
+
+/** Live status bar states: compressing shows a spinner; error shows in red. */
+function setStatusBarState(state: 'idle' | 'compressing' | 'error'): void {
+  if (!statusBarItem) return;
+  if (state === 'compressing') {
+    statusBarItem.text = '$(loading~spin) MEM compressing…';
+    statusBarItem.backgroundColor = undefined;
+  } else if (state === 'error') {
+    statusBarItem.text = '$(error) MEM error';
+    statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+  } else {
+    updateStatusBar();
+    statusBarItem.backgroundColor = undefined;
+  }
 }
 
 function updateStatusBar(): void {
@@ -852,8 +968,50 @@ ${contextText}
     // Ensure the auto-generated file is git-ignored so it is never committed.
     await ensureGitIgnored(ws.uri, '.github/instructions/session-memory.instructions.md');
   } catch (err) {
-    console.warn('[GHCP-MEM] Could not write startup context:', err);
+    log('WARN', `Could not write startup context: ${err}`);
   }
+}
+
+/** Write session context into CLAUDE.md and .cursor/rules for cross-editor continuity. */
+async function writeCrossEditorContext(): Promise<void> {
+  const contextText = provider.buildStartupContext();
+  if (!contextText) return;
+  const ws = vscode.workspace.workspaceFolders?.[0];
+  if (!ws) return;
+
+  const START = '<!-- GHCP-MEM:START -->';
+  const END = '<!-- GHCP-MEM:END -->';
+  const block = `${START}\n${contextText}\n${END}`;
+
+  const targets: [vscode.Uri, string][] = [
+    [vscode.Uri.joinPath(ws.uri, 'CLAUDE.md'), 'CLAUDE.md'],
+    [vscode.Uri.joinPath(ws.uri, '.cursor', 'rules'), '.cursor/rules'],
+  ];
+
+  const contentHash = crypto.createHash('sha256').update(contextText).digest('hex');
+  if (contentHash === lastClaudeMdHash) return;
+
+  for (const [fileUri, gitIgnorePath] of targets) {
+    try {
+      let existing = '';
+      try { existing = Buffer.from(await vscode.workspace.fs.readFile(fileUri)).toString('utf-8'); } catch {}
+      let updated: string;
+      const startIdx = existing.indexOf(START);
+      const endIdx = existing.indexOf(END);
+      if (startIdx !== -1 && endIdx !== -1) {
+        updated = existing.slice(0, startIdx) + block + existing.slice(endIdx + END.length);
+      } else {
+        updated = existing ? `${existing}\n\n${block}\n` : `${block}\n`;
+      }
+      const dir = vscode.Uri.joinPath(fileUri, '..');
+      await vscode.workspace.fs.createDirectory(dir);
+      await vscode.workspace.fs.writeFile(fileUri, Buffer.from(updated, 'utf-8'));
+      await ensureGitIgnored(ws.uri, gitIgnorePath);
+    } catch (err) {
+      log('WARN', `Could not write cross-editor context to ${gitIgnorePath}: ${err}`);
+    }
+  }
+  lastClaudeMdHash = contentHash;
 }
 
 /** Append `entry` to the workspace .gitignore if it isn't already listed. */

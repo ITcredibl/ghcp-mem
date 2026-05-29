@@ -8,12 +8,68 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- **`src/extension.ts`** — Added a respectful in-product Marketplace rating prompt flow. Prompt only appears after repeated successful user actions (capture/compress/Azure snapshot), enforces a 14-day cooldown, and supports `Rate GHCP-MEM`, `Later`, and `Don't Ask Again` choices.
+### Added — AI-powered commands
+
+- **`@mem /standup`** — AI-generated daily standup note from yesterday's compressed sessions, formatted as "What I did · What I'm doing today · Any blockers".
+- **`@mem /commit`** — AI conventional commit message synthesised from staged diff content plus matching session history; paste straight into the commit dialog.
+- **`@mem /ask <question>`** — RAG Q&A: finds the top-5 sessions most relevant to the question, synthesises an answer with inline session citations.
+- **`@mem /recap [7d|30d|90d]`** — Narrative engineering recap showing "what shipped, key decisions, patterns" for sprint retros and manager updates.
+- **`@mem /related`** — Sessions that touched the currently open file (exact path · suffix · basename match), ranked by recency.
+- **`@mem /decisions [keyword]`** — ADR-style decision log deduped across all sessions, grouped by observation type. Shows date, branch, session ID. AI synthesis when ≥5 decisions found.
+- **`@mem /savings`** — Lifetime token savings breakdown: per-session rows with raw chars vs compact chars, totals, avg compression ratio, and GPT-4o dollar-equivalent ($5/1M tokens).
+
+### Added — Visual UX
+
+- **`src/timelinePanel.ts`** — Visual Memory Timeline WebviewPanel (`GHCP-MEM: Open Visual Timeline`, shortcut `⌥⌘M`). Color-coded session cards by observation type, full-text search, branch filter, expandable detail on click.
+- **`src/sessionCodeLens.ts`** — Session CodeLens at line 0 of every source file (`📚 N sessions touched this file`). Click to open a quick-pick of matching sessions pre-sorted by recency.
+- **`package.json`** — `openTimeline` added to `view/title` menu; `showFileHistory` added to `editor/context` menu.
+
+### Added — Hardening (batch 1)
+
+- **`src/searchCore.ts`** — BM25 scoring replaces weighted TF for keyword scoring (better IDF weighting at scale).
+- **`src/contextCompressor.ts`** — Stable `vscode.lm.computeEmbeddings` API replaces the preview path; embeddings stored per-session for hybrid retrieval.
+- **`src/contextCompressor.ts`** — `CancellationTokenSource` is now properly disposed in a `finally` block (memory leak fix).
+- **`src/contextCompressor.ts`** — Git branch name (`branchName`) stamped on every compressed session via `git rev-parse --abbrev-ref HEAD`; visible in sidebar, timeline cards, `/detail`, and `/related`.
+- **`src/redactor.ts`** — IPv4 redaction narrowed to credential context (`host=`, `ip=`, etc.) to avoid false-positive source-code redactions.
+- **`src/validator.ts`** — Freshness-validation concurrency capped at 20 with a semaphore to prevent I/O storms on large workspaces.
+- **`src/extension.ts`** — Keyboard shortcut `⌥⌘M` / `Ctrl+Alt+M` wired to `ghcpMem.captureSnapshot`.
+- **`src/extension.ts`** — `ghcpMem_search` and `ghcpMem_store` registered as VS Code agent-mode tool sets via `vscode.lm.registerTool`.
+- **`src/extension.ts`** — Notification hygiene: 5 routine info-toast notifications converted to status-bar messages or output-channel entries.
+- **`src/extension.ts`** — Live status bar item shows spinner (⟳) during compression and error indicator on failure, plus tooltip with current session count.
+- **`src/extension.ts`** — Dedicated `GHCP-MEM` output channel (`memLog`) with structured `log()` helper for diagnostics without VS Code notification spam.
+- **`src/extension.ts`** — MCP server auto-registered via feature-detected `vscode.lm.registerMcpServer` API (VS Code ≥1.101) with graceful fallback.
+- **`src/extension.ts`** — Follow-up provider registered with context-aware suggestions based on last `@mem` command used.
+- **`src/extension.ts`** — CLAUDE.md and `.cursor/rules/ghcp-mem.md` cross-editor instruction injection (hash-guarded to avoid duplicate writes).
+- **`src/mcpServer.ts`** — Two new MCP write tools: `ghcpMem_store` (persist an external session) and `ghcpMem_delete` (delete by ID prefix).
+- **`src/contextStore.ts`** — `getStats()` upgraded: now returns `lifetimeEstimatedTokensSaved`, `avgCompressionRatio`, `totalCompactTokens` with `RAW_EVENT_OVERHEAD_CHARS = 800` per-session estimate.
+- **`src/types.ts`** — `CompressedSession` gains `branchName?: string`.
+- **Walkthroughs** — All 5 walkthrough steps now emit `completionEvent` so VS Code marks them done.
+
+### Fixed
+
+- **`src/test/redactor.test.ts`** — IPv4 test updated from plain prose to credential-context string (`host=192.168.1.42`) to match the narrowed regex.
+- **`src/test/mcpServer.test.ts`** — TOOLS count assertion updated from 4 → 6 (added `ghcpMem_store`, `ghcpMem_delete`).
+
+### Added — Documentation and README
+
+- **`README.md`** — Updated `@mem` commands table to list all 15 slash commands.
+- **`README.md`** — New "Visual Timeline", "Session CodeLens", and "AI-powered chat commands" subsections under Core features.
+- **`README.md`** — Commands table includes `GHCP-MEM: Open Visual Timeline` and `GHCP-MEM: Show File Session History`.
+- **`README.md`** — External MCP tools section updated to list all 6 tools (including `ghcpMem_store` and `ghcpMem_delete`).
+- **`README.md`** — Architecture module table includes `timelinePanel.ts` and `sessionCodeLens.ts`.
+- **`README.md`** — Agent mode tools table includes `ghcpMem_delete`.
+- **`README.md`** — Version footer updated to `v1.3.0`.
+- **`walkthroughs/chat.md`** — All new slash commands documented.
+
+### Added — Previous [Unreleased] item
+
+- **`src/extension.ts`** — In-product Marketplace rating prompt flow (14-day cooldown, `Rate / Later / Don't Ask Again`).
 
 ### Changed
+
 - **`.gitignore`** — Added explicit `src/test/.env` ignore rule as defence-in-depth for local secrets in test harnesses.
 - **`.gitignore`** — `docs/growth/**` is now treated as local-only planning content and excluded from version control.
+
 
 ## [1.2.3] — 2026-05-17
 

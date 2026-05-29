@@ -67,22 +67,35 @@ console.log(`  src: ${inputPath}`);
 console.log(`  tmp: ${tmp}`);
 
 // 1. Capture each frame at evenly-spaced animation times via virtual time.
+// Per-frame timeout: Chrome headless can deadlock on SVGs with heavy filters
+// (bloom + animateMotion + multiple SMIL anims). 30s/frame is generous; a
+// stuck frame is detected immediately instead of stalling the whole render.
+const PER_FRAME_TIMEOUT_MS = 30_000;
 const frames = [];
 for (let i = 0; i < numFrames; i++) {
   // Pin a small floor (50ms) for frame 0 so Chrome's SMIL engine has actually
   // started; some versions emit a blank frame at t=0.
   const t = Math.max(50, Math.round((i * durationMs) / numFrames));
   const out = join(tmp, `frame-${String(i).padStart(5, '0')}.png`);
-  execFileSync(CHROME, [
-    '--headless',
-    '--disable-gpu',
-    '--no-sandbox',
-    '--hide-scrollbars',
-    `--virtual-time-budget=${t}`,
-    `--window-size=${width},${height}`,
-    `--screenshot=${out}`,
-    `file://${inputPath}`,
-  ], { stdio: ['ignore', 'ignore', 'ignore'] });
+  try {
+    execFileSync(CHROME, [
+      '--headless',
+      '--disable-gpu',
+      '--no-sandbox',
+      '--hide-scrollbars',
+      `--virtual-time-budget=${t}`,
+      `--window-size=${width},${height}`,
+      `--screenshot=${out}`,
+      `file://${inputPath}`,
+    ], { stdio: ['ignore', 'ignore', 'ignore'], timeout: PER_FRAME_TIMEOUT_MS, killSignal: 'SIGKILL' });
+  } catch (err) {
+    if (err.code === 'ETIMEDOUT' || err.signal === 'SIGKILL' || err.signal === 'SIGTERM') {
+      console.error(`  frame ${i} (t=${t}ms) timed out after ${PER_FRAME_TIMEOUT_MS}ms — likely a filter/animation deadlock. Simplify the SVG (reduce bloom stdDeviation, drop nested filters, fewer concurrent SMIL anims).`);
+    } else {
+      console.error(`  frame ${i} (t=${t}ms) failed: ${err.message}`);
+    }
+    process.exit(1);
+  }
   if (!existsSync(out)) {
     console.error(`  frame ${i} (t=${t}ms) not captured — aborting`);
     process.exit(1);

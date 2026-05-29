@@ -52,7 +52,9 @@ test('redactor — email', () => {
 });
 
 test('redactor — IPv4', () => {
-  const r = redact('connect to 192.168.1.42 now', OPTS);
+  // IPv4 is only redacted when it appears in a credential/connection context
+  // (host=, server=, endpoint=, etc.) to avoid false positives in log output.
+  const r = redact('host=192.168.1.42', OPTS);
   assert.match(r.text, /\[REDACTED:ip\]/);
 });
 

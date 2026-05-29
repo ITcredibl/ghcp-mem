@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { CompressedSession, ContextDatabase, ObservationType, getConfig } from './types';
 import { cosineSim, EmbeddingFn } from './embeddings';
 import { redact } from './redactor';
-import { extractTerms as sharedExtractTerms, keywordScore as sharedKeywordScore } from './searchCore';
+import { extractTerms as sharedExtractTerms, keywordScore as sharedKeywordScore, computeAvgDocLen } from './searchCore';
 import { validateSessions } from './validator';
 import { getRepoScopeSync } from './repoScope';
 
@@ -297,8 +297,9 @@ export class ContextStore implements vscode.Disposable {
     if (filters.tag) candidates = candidates.filter(s => s.userTags.includes(filters.tag!));
     if (filters.repoScope) candidates = candidates.filter(s => s.repoScope === filters.repoScope);
 
-    // --- Rank 1: keyword score (term-frequency × field weight) ---
-    const keywordScores = candidates.map(s => ({ s, score: this.keywordScore(s, terms, wsId) }));
+    // --- Rank 1: keyword score (BM25 with field weights) ---
+    const avgDocLen = computeAvgDocLen(candidates);
+    const keywordScores = candidates.map(s => ({ s, score: this.keywordScore(s, terms, wsId, avgDocLen) }));
     const keywordRanked = [...keywordScores].sort((a, b) => b.score - a.score);
     const keywordRankById = new Map<string, number>();
     keywordRanked.forEach((e, i) => keywordRankById.set(e.s.id, i));
@@ -527,26 +528,65 @@ export class ContextStore implements vscode.Disposable {
         && d.getMonth() === today.getMonth()
         && d.getDate() === today.getDate();
     };
-    const estimateTokens = (chars: number) => chars / 4;
-    const todaySessions = this.db.sessions.filter(s => isSameLocalDay(s.endTime));
-    const todayEstimatedTokensSaved = todaySessions.reduce((acc, s) => {
-      const summary = s.summary ?? '';
-      const summaryChars = summary.length;
-      const fullChars = [
-        summary,
+
+    /**
+     * Estimate tokens from character count (GPT-4 / Claude average: ~4 chars/token).
+     * We compare two views of each session:
+     *
+     *   rawChars    — what you'd have to paste manually without GHCP-MEM:
+     *                 all structured fields concatenated. We also add a constant
+     *                 per-session overhead (~800 chars) that represents the raw
+     *                 VS Code activity events that were captured and compressed
+     *                 into this session (file edits, terminal cmds, diagnostics).
+     *
+     *   compactChars — what GHCP-MEM actually injects: just the summary string.
+     *
+     * The difference is the per-session "injection savings" — context you got for
+     * free because GHCP-MEM already had it memorised.
+     */
+    const RAW_EVENT_OVERHEAD_CHARS = 800; // conservative estimate per session
+    const estimateTokens = (chars: number) => Math.round(chars / 4);
+
+    const sessionSavings = (s: { summary?: string; keyFiles?: string[]; keyTopics?: string[]; decisions?: string[]; problemsSolved?: string[] }) => {
+      const summaryChars = (s.summary ?? '').length;
+      const rawChars = [
+        s.summary ?? '',
         ...(s.keyFiles ?? []),
         ...(s.keyTopics ?? []),
         ...(s.decisions ?? []),
         ...(s.problemsSolved ?? []),
-      ].join(' ').length;
-      const saved = Math.max(0, estimateTokens(fullChars) - estimateTokens(summaryChars));
-      return acc + saved;
-    }, 0);
+      ].join(' ').length + RAW_EVENT_OVERHEAD_CHARS;
+      const ratio = summaryChars > 0 ? rawChars / summaryChars : 1;
+      return {
+        tokensSaved: Math.max(0, estimateTokens(rawChars) - estimateTokens(summaryChars)),
+        rawTokens: estimateTokens(rawChars),
+        compactTokens: estimateTokens(summaryChars),
+        compressionRatio: Math.round(ratio * 10) / 10,
+      };
+    };
+
+    const todaySessions = this.db.sessions.filter(s => isSameLocalDay(s.endTime));
+    const todayEstimatedTokensSaved = todaySessions.reduce((acc, s) => acc + sessionSavings(s).tokensSaved, 0);
+    const lifetimeEstimatedTokensSaved = this.db.sessions.reduce((acc, s) => acc + sessionSavings(s).tokensSaved, 0);
+
+    const ratios = this.db.sessions.map(s => sessionSavings(s).compressionRatio).filter(r => r > 1);
+    const avgCompressionRatio = ratios.length
+      ? Math.round((ratios.reduce((a, b) => a + b, 0) / ratios.length) * 10) / 10
+      : 1;
+
+    // Total tokens currently held in compact form (what GHCP-MEM injects)
+    const totalCompactTokens = this.db.sessions.reduce(
+      (acc, s) => acc + estimateTokens((s.summary ?? '').length), 0
+    );
+
     return {
       totalSessions: this.db.sessions.length,
       workspaceSessions: ws.length,
       todaySessions: todaySessions.length,
       todayEstimatedTokensSaved: Math.round(todayEstimatedTokensSaved),
+      lifetimeEstimatedTokensSaved: Math.round(lifetimeEstimatedTokensSaved),
+      avgCompressionRatio,
+      totalCompactTokens,
       oldestSession: this.db.sessions.length ? this.db.sessions[0].startTime : null,
       newestSession: this.db.sessions.length ? this.db.sessions[this.db.sessions.length - 1].endTime : null,
       totalRedactions: this.db.sessions.reduce((a, s) => a + (s.redactionCount ?? 0), 0),
@@ -556,8 +596,8 @@ export class ContextStore implements vscode.Disposable {
   // ── Internals ──
 
   /** Keyword-frequency score over weighted fields. Public-ish for tests. */
-  keywordScore(s: CompressedSession, terms: Set<string>, wsId: string | undefined): number {
-    return sharedKeywordScore(s, terms, wsId);
+  keywordScore(s: CompressedSession, terms: Set<string>, wsId: string | undefined, avgDocLen?: number): number {
+    return sharedKeywordScore(s, terms, wsId, avgDocLen);
   }
 
   private indexSession(s: CompressedSession): void {

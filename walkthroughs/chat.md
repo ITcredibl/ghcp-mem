@@ -35,4 +35,4 @@ Search and timeline accept inline filters:
 
 ## Beyond Copilot
 
-GHCP-MEM also ships a JSON-RPC stdio MCP server (`node mcpServer.js`) so non-Copilot agents (Claude Code, Cline, etc.) can query the same memory. The server exposes 6 tools: `ghcpMem_search`, `ghcpMem_recent`, `ghcpMem_timeline`, `ghcpMem_get`, `ghcpMem_store`, and `ghcpMem_delete`.
+GHCP-MEM also ships a JSON-RPC stdio MCP server (`node out/mcpServer.js`) so non-Copilot agents (Claude Code, Cline, etc.) can query the same memory. The server exposes 6 tools: `ghcpMem_search`, `ghcpMem_recent`, `ghcpMem_timeline`, `ghcpMem_get`, `ghcpMem_store`, and `ghcpMem_delete`.

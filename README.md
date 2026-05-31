@@ -76,7 +76,7 @@ Why engineers trust it:
 | **Runs with zero native dependencies** | No Bun, Python, SQLite binary, WASM, Chroma, or model downloads |
 | **Opens zero network ports** | No GHCP-MEM backend or telemetry. LM compression uses your existing Copilot subscription only |
 | **Stores data locally** | Memory stays on your machine under your control |
-| **Redacts secrets by default** | 24-rule dual-pass redaction plus `<private>...</private>` stripping |
+| **Redacts secrets by default** | 26-rule dual-pass redaction plus `<private>...</private>` stripping |
 | **Understands Azure workflows** | Azure subsystem tagging, live `az` snapshotting, Azure-specific redaction |
 
 ---
@@ -222,7 +222,7 @@ Azure signals such as `azd`, `az`, `.bicep`, and `.tf` edits influence `deployme
 
 ### Secret redaction
 
-**16 generic patterns** including:
+**18 generic patterns** including:
 
 - AWS access key and secret
 - GitHub PATs
@@ -267,7 +267,7 @@ This keeps memory useful without dumping huge amounts of text into every prompt.
 
 ### Visual Timeline
 
-**`GHCP-MEM: Open Visual Timeline`** (`⌥⌘M` → Command Palette) opens a full WebviewPanel timeline — color-coded by observation type, searchable by keyword or branch, with expandable session cards.
+**`GHCP-MEM: Open Visual Timeline`** (Command Palette) opens a full WebviewPanel timeline — color-coded by observation type, searchable by keyword or branch, with expandable session cards.
 
 ### Session CodeLens
 
@@ -319,7 +319,7 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 
 | Group | Command | Description |
 |---|---|---|
-| **Capture** | `GHCP-MEM: Capture Session Snapshot Now` | Manually trigger compression (`⌥⌘M` / `Ctrl+Alt+M`) |
+| **Capture** | `GHCP-MEM: Capture Session Snapshot Now` | Manually trigger compression (`⌘⇧⌥S` / `Ctrl+Shift+Alt+S`) |
 |  | `GHCP-MEM: Compress Current Session` | Compress with progress |
 | **Inspect** | `GHCP-MEM: Show Stored Context` | Open a markdown report of sessions |
 |  | `GHCP-MEM: Show Memory Health Score` | Show 0-100 health score and notes |
@@ -357,7 +357,6 @@ Copilot agent mode can call these without a separate MCP setup:
 |---|---|---|
 | `ghcpMem_search` | `#ghcpMemSearch <query>` | Search past sessions by keyword, type, date, or tag |
 | `ghcpMem_store` | `#ghcpMemStore <note>` | Persist a durable note, decision, or preference |
-| `ghcpMem_delete` | — | Delete a session or set of sessions by ID prefix (MCP write) |
 
 ---
 
@@ -408,7 +407,8 @@ Copilot agent mode can call these without a separate MCP setup:
 | `ghcpMem.redactSecrets` | `true` | Secret and PII scanning |
 | `ghcpMem.honorPrivateTags` | `true` | Strip `<private>...</private>` |
 | `ghcpMem.excludeGlobs` | default exclusions | Skip sensitive or noisy paths |
-| `ghcpMem.autoInjectStartupContext` | `true` | Write auto-injected instructions file |
+| `ghcpMem.autoInjectStartupContext` | `true` | Write prior session context to `.github/instructions/session-memory.instructions.md`, `CLAUDE.md`, and `.cursor/rules` on startup and after each compression |
+| `ghcpMem.startupContextSessionCount` | `5` | Number of recent sessions (1–20) included in the auto-injected instructions file |
 | `ghcpMem.healthAlertThreshold` | `30` | Warn when health score is low |
 | `ghcpMem.autosave.enabled` | `true` | Enable context-pressure autosave |
 | `ghcpMem.autosave.eventThreshold` | `40` | Autosave after buffered event threshold |
@@ -464,7 +464,7 @@ Key modules:
 
 | Module | Responsibility |
 |---|---|
-| `src/redactor.ts` | 24-rule secret and privacy redaction |
+| `src/redactor.ts` | 26-rule secret and privacy redaction |
 | `src/azureDetect.ts` | Azure subsystem detection |
 | `src/azureContext.ts` | `az` CLI snapshotting with cache and fallback |
 | `src/sessionCapture.ts` | VS Code event hooks and capture pipeline |
@@ -523,7 +523,7 @@ Quick summary:
 3. Uninstall the extension: Extensions sidebar → gear → **Uninstall** (or `code --uninstall-extension ITcredibl.ghcp-mem`)
 4. Delete `~/.ghcp-mem/` (the MCP mirror file)
 5. Remove `.github/instructions/session-memory.instructions.md` from your workspace
-6. Remove any cross-editor files (`CLAUDE.md` block / `.cursor/rules/ghcp-mem.md`) if injected
+6. Remove any cross-editor files (`CLAUDE.md` block / `.cursor/rules`) if injected
 
 ---
 
@@ -535,4 +535,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](docs/DEMO.md) · [Compare memory tools](docs/COMPARISON.md) · [Uninstall guide](docs/UNINSTALL.md) · [Configuration reference](docs/CONFIGURATION.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
-<sub>**v1.4.3** · zero native deps · zero ports · local-first memory for Copilot</sub>
+<sub>**v1.4.7** · zero native deps · zero ports · local-first memory for Copilot</sub>

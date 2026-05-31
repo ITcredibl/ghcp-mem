@@ -70,7 +70,8 @@ All settings live under the `ghcpMem` namespace and can be edited in VS Code Set
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `ghcpMem.autoInjectStartupContext` | boolean | `true` | Write `.github/instructions/session-memory.instructions.md` for GitHub Copilot auto-injection on workspace open. |
+| `ghcpMem.autoInjectStartupContext` | boolean | `true` | On startup and after each compression, write `.github/instructions/session-memory.instructions.md` (Copilot auto-injection), `CLAUDE.md`, and `.cursor/rules` with recent session context. |
+| `ghcpMem.startupContextSessionCount` | number | `5` | How many recent sessions (1–20) to include in the auto-injected instructions file. |
 | `ghcpMem.healthAlertThreshold` | number (0–100) | `30` | Show a warning notification if the memory health score falls below this value. Set to `0` to disable. |
 
 ---

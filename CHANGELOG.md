@@ -6,7 +6,40 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.4.6] — 2026-05-31
+
+### Changed
+- **`src/extension.ts`** — `activate()` is now `async`; `writeStartupContext()` is properly awaited so the instructions file is written before the first Copilot chat opens.
+- **`src/contextProvider.ts`** — `buildStartupContext()` now uses configurable session count (`ghcpMem.startupContextSessionCount`, default 5) instead of hardcoded 3.
+- **`src/contextProvider.ts`** — Injected session entries now include `branchName`, `workspaceName`, and Azure subsystems; key files shown increased from 5 to 8.
+- **`src/extension.ts`** — `writeStartupContext()` deletes stale instructions file when no sessions exist; logs at `ERROR` (not `WARN`) on write failure.
+- **`src/types.ts`**, **`package.json`** — New `ghcpMem.startupContextSessionCount` setting (1–20, default 5).
+
+---
+
+## [1.4.5] — 2026-05-31
+
+### Changed
+- **`README.md`** — Restored accurate "automatically, via VS Code's native instructions file" language with mechanism explanation.
+- **`package.json`** — Version bump to `1.4.5`.
+
+---
+
+## [1.4.4] — 2026-05-31
+
+### Fixed
+- **`README.md`** — Replaced overclaiming language ("Copilot already knows", "hands context back automatically", "zero network") with accurate descriptions; added "Who it is built for" positioning section; labeled token savings as estimates; corrected `@mem` command count from 15 to 20; updated footer to v1.4.4.
+
+---
+
+## [1.4.3] — 2026-05-31
+
+### Fixed
+- **`package.json`** — Extension `description` field updated to lead with token-waste core message: "Stops Copilot burning tokens re-reading code it already knew."
+
+---
+
+## [1.4.2] — 2026-05-31
 
 ### Added — Developer Intelligence commands (Batch 3)
 
@@ -48,14 +81,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`src/contextCompressor.ts`** — Git branch name (`branchName`) stamped on every compressed session via `git rev-parse --abbrev-ref HEAD`; visible in sidebar, timeline cards, `/detail`, and `/related`.
 - **`src/redactor.ts`** — IPv4 redaction narrowed to credential context (`host=`, `ip=`, etc.) to avoid false-positive source-code redactions.
 - **`src/validator.ts`** — Freshness-validation concurrency capped at 20 with a semaphore to prevent I/O storms on large workspaces.
-- **`src/extension.ts`** — Keyboard shortcut `⌥⌘M` / `Ctrl+Alt+M` wired to `ghcpMem.captureSnapshot`.
+- **`src/extension.ts`** — Keyboard shortcut `⌘⇧⌥S` / `Ctrl+Shift+Alt+S` wired to `ghcpMem.captureSnapshot`.
 - **`src/extension.ts`** — `ghcpMem_search` and `ghcpMem_store` registered as VS Code agent-mode tool sets via `vscode.lm.registerTool`.
 - **`src/extension.ts`** — Notification hygiene: 5 routine info-toast notifications converted to status-bar messages or output-channel entries.
 - **`src/extension.ts`** — Live status bar item shows spinner (⟳) during compression and error indicator on failure, plus tooltip with current session count.
 - **`src/extension.ts`** — Dedicated `GHCP-MEM` output channel (`memLog`) with structured `log()` helper for diagnostics without VS Code notification spam.
 - **`src/extension.ts`** — MCP server auto-registered via feature-detected `vscode.lm.registerMcpServer` API (VS Code ≥1.101) with graceful fallback.
 - **`src/extension.ts`** — Follow-up provider registered with context-aware suggestions based on last `@mem` command used.
-- **`src/extension.ts`** — CLAUDE.md and `.cursor/rules/ghcp-mem.md` cross-editor instruction injection (hash-guarded to avoid duplicate writes).
+- **`src/extension.ts`** — CLAUDE.md and `.cursor/rules` cross-editor instruction injection (hash-guarded to avoid duplicate writes).
 - **`src/mcpServer.ts`** — Two new MCP write tools: `ghcpMem_store` (persist an external session) and `ghcpMem_delete` (delete by ID prefix).
 - **`src/contextStore.ts`** — `getStats()` upgraded: now returns `lifetimeEstimatedTokensSaved`, `avgCompressionRatio`, `totalCompactTokens` with `RAW_EVENT_OVERHEAD_CHARS = 800` per-session estimate.
 - **`src/types.ts`** — `CompressedSession` gains `branchName?: string`.
@@ -68,12 +101,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added — Documentation and README
 
-- **`README.md`** — Updated `@mem` commands table to list all 15 slash commands.
+- **`README.md`** — Updated `@mem` commands table to list all 20 slash commands.
 - **`README.md`** — New "Visual Timeline", "Session CodeLens", and "AI-powered chat commands" subsections under Core features.
 - **`README.md`** — Commands table includes `GHCP-MEM: Open Visual Timeline` and `GHCP-MEM: Show File Session History`.
 - **`README.md`** — External MCP tools section updated to list all 6 tools (including `ghcpMem_store` and `ghcpMem_delete`).
 - **`README.md`** — Architecture module table includes `timelinePanel.ts` and `sessionCodeLens.ts`.
-- **`README.md`** — Agent mode tools table includes `ghcpMem_delete`.
+- **`README.md`** — Agent mode tools table lists `ghcpMem_search` and `ghcpMem_store` (registered as languageModelTools).
 - **`README.md`** — Version footer updated to `v1.3.0`.
 - **`walkthroughs/chat.md`** — All new slash commands documented.
 

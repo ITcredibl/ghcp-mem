@@ -183,6 +183,7 @@ export interface PluginConfig {
   honorPrivateTags: boolean;
   excludeGlobs: string[];
   autoInjectStartupContext: boolean;
+  startupContextSessionCount: number;
   /** Retrieval scope. 'user' = cross-workspace, 'workspace' = current folder, 'repo' = current git repo. */
   scope: MemoryScope;
   /** Filter out sessions whose key files no longer exist in the current workspace. */
@@ -219,6 +220,7 @@ export function getConfig(): PluginConfig {
     honorPrivateTags: cfg.get('honorPrivateTags', true),
     excludeGlobs: cfg.get('excludeGlobs', []),
     autoInjectStartupContext: cfg.get('autoInjectStartupContext', true),
+    startupContextSessionCount: clampNum(cfg.get('startupContextSessionCount', 5), 1, 20, 5),
     scope: githubCompatibleMode ? 'repo' : scope,
     validateAgainstCodebase: cfg.get('validateAgainstCodebase', true),
     // Clamp to [0, 1] regardless of what the user types in settings.json.

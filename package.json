@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "Stops Copilot burning tokens re-reading code it already knew. Persistent session memory with zero dependencies, zero ports, local-first storage, and built-in secret redaction.",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -564,7 +564,14 @@
         "ghcpMem.autoInjectStartupContext": {
           "type": "boolean",
           "default": true,
-          "description": "Write .github/instructions/session-memory.instructions.md for auto-injection"
+          "description": "Write .github/instructions/session-memory.instructions.md on every VS Code startup and after each compression so Copilot always has recent session context."
+        },
+        "ghcpMem.startupContextSessionCount": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Number of recent sessions to include in the auto-injected instructions file."
         },
         "ghcpMem.autosave.enabled": {
           "type": "boolean",

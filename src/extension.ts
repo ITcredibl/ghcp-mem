@@ -57,7 +57,7 @@ interface ReviewPromptState {
   lastPromptAt?: number;
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   memLog = vscode.window.createOutputChannel('GHCP-MEM');
   context.subscriptions.push(memLog);
 
@@ -785,7 +785,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   log('INFO', 'Timeline, file history, and CodeLens features registered.');
 
-  if (config.autoInjectStartupContext) { writeStartupContext(); writeCrossEditorContext(); }
+  if (config.autoInjectStartupContext) {
+    await writeStartupContext();
+    writeCrossEditorContext();
+  }
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -1051,12 +1054,20 @@ async function recordSuccessAndMaybePromptForRating(): Promise<void> {
 }
 
 async function writeStartupContext(): Promise<void> {
-  const contextText = provider.buildStartupContext();
-  if (!contextText) return;
   const ws = vscode.workspace.workspaceFolders?.[0];
   if (!ws) return;
   const dir = vscode.Uri.joinPath(ws.uri, '.github', 'instructions');
   const file = vscode.Uri.joinPath(dir, 'session-memory.instructions.md');
+  const contextText = provider.buildStartupContext();
+
+  // If there are no sessions yet, remove any stale file so Copilot doesn't
+  // see outdated context from a previous install or workspace.
+  if (!contextText) {
+    try { await vscode.workspace.fs.delete(file); } catch { /* file may not exist, that's fine */ }
+    lastStartupContextHash = '';
+    return;
+  }
+
   const content = `---
 applyTo: "**"
 description: "Auto-generated session context from GHCP-MEM. Summaries of recent coding sessions for continuity."
@@ -1074,8 +1085,9 @@ ${contextText}
     lastStartupContextHash = contentHash;
     // Ensure the auto-generated file is git-ignored so it is never committed.
     await ensureGitIgnored(ws.uri, '.github/instructions/session-memory.instructions.md');
+    log('INFO', `Startup context written: ${provider.buildStartupContext().split('###').length - 1} session(s) injected.`);
   } catch (err) {
-    log('WARN', `Could not write startup context: ${err}`);
+    log('ERROR', `writeStartupContext failed — Copilot will not have prior session context: ${err}`);
   }
 }
 

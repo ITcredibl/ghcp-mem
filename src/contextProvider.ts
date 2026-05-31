@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { ContextStore } from './contextStore';
-import { CompressedSession, ObservationType } from './types';
+import { CompressedSession, ObservationType, getConfig } from './types';
 import { computeHealth } from './health';
 import { exportSessionMarkdown } from './markdownExport';
 
@@ -300,21 +300,27 @@ export class ContextProvider implements vscode.Disposable {
   }
 
   buildStartupContext(): string {
-    const recent = this.store.getStartupCandidates(3);
+    const config = getConfig();
+    const recent = this.store.getStartupCandidates(config.startupContextSessionCount);
     if (recent.length === 0) return '';
     const lines = ['## Previous Session Context (auto-injected by GHCP-MEM)', ''];
     for (const s of recent) {
       const when = formatInjectTimestamp(s.startTime);
-      lines.push(`### ${when} · ${s.observationType} · id:\`${s.id.substring(0, 8)}\``);
+      const branch = s.branchName ? ` · branch:\`${s.branchName}\`` : '';
+      const workspace = s.workspaceName ? ` · workspace:\`${s.workspaceName}\`` : '';
+      lines.push(`### ${when} · ${s.observationType} · id:\`${s.id.substring(0, 8)}\`${branch}${workspace}`);
       lines.push(s.summary);
       if (s.keyFiles.length) {
-        const shown = s.keyFiles.slice(0, 5);
+        const shown = s.keyFiles.slice(0, 8);
         const extra = s.keyFiles.length > shown.length ? ` (+${s.keyFiles.length - shown.length} more)` : '';
         lines.push(`Files: ${shown.join(', ')}${extra}`);
       }
       if (s.keyTopics.length) lines.push(`Topics: ${s.keyTopics.join(', ')}`);
       if (s.decisions.length) lines.push(`Decisions: ${s.decisions.join('; ')}`);
       if (s.problemsSolved.length) lines.push(`Resolved: ${s.problemsSolved.join('; ')}`);
+      if (s.azureContext?.subsystems?.length) {
+        lines.push(`Azure: ${s.azureContext.subsystems.join(', ')}`);
+      }
       if (s.userTags.length) lines.push(`Tags: ${s.userTags.join(', ')}`);
       lines.push('');
     }

@@ -76,7 +76,9 @@ Why engineers trust it:
 | **Runs with zero native dependencies** | No Bun, Python, SQLite binary, WASM, Chroma, or model downloads |
 | **Opens zero network ports** | No GHCP-MEM backend or telemetry. LM compression uses your existing Copilot subscription only |
 | **Stores data locally** | Memory stays on your machine under your control |
-| **Redacts secrets by default** | 26-rule dual-pass redaction plus `<private>...</private>` stripping |
+| **Redacts secrets by default** | 26-rule dual-pass redaction + custom regex rules + `<private>...</private>` stripping |
+| **Idle-triggered compression** | Auto-flush sessions when editor is inactive (configurable 0–300s timeout) |
+| **Enterprise compliance modes** | User-defined regex redaction rules for FinTech (PCI-DSS), Healthcare (HIPAA), or custom compliance |
 | **Understands Azure workflows** | Azure subsystem tagging, live `az` snapshotting, Azure-specific redaction |
 
 ---
@@ -416,6 +418,11 @@ Copilot agent mode can call these without a separate MCP setup:
 | `ghcpMem.captureFileEdits` | `true` | Capture file edits |
 | `ghcpMem.captureDiagnostics` | `true` | Capture diagnostics |
 | `ghcpMem.captureTerminalCommands` | `true` | Capture terminal commands |
+| `ghcpMem.captureDiagnostics` | `true` | Capture error/warning diagnostics |
+| `ghcpMem.captureGitOps` | `true` | Capture git operations |
+| `ghcpMem.redactSecrets` | `true` | Redact secrets and PII |
+| `ghcpMem.idleTimeoutSeconds` | `30` | Seconds of inactivity before idle-triggered compression (0 = disabled) |
+| `ghcpMem.customRedactionRules` | `[]` | Array of custom regex redaction rules for enterprise compliance modes |
 | `ghcpMem.captureGitOps` | `true` | Capture git operations |
 
 </details>
@@ -450,6 +457,48 @@ Use **`GHCP-MEM: Show External MCP Client Config`** to get the resolved path on 
 
 ---
 
+## CI/CD Integration: Memory Seeding
+
+GHCP-MEM ships a headless CLI seeder for pre-populating memory from CI/CD pipelines. When a developer checks out a feature branch, the pipeline can generate a condensed summary of recent production alerts, infrastructure changes, or staging test results, and pre-seed the local store.
+
+The next time they open VS Code, their AI assistant already has live-environment context without the developer having to ask.
+
+### Usage
+
+```bash
+# Seed from a JSON payload
+echo '{"sessions": [{"summary": "Prod API at 50% error rate", "observationType": "bugfix", "keyTopics": ["api", "reliability"]}]}' | \
+  npx ghcp-mem-ci-seed
+
+# Or via npm
+npm install --save-dev @ghcp-mem/cli
+echo '...' | npx ghcp-mem-ci-seed --seed-label=prod-alert
+```
+
+### Payload format
+
+```jsonc
+{
+  "sessions": [
+    {
+      "id": "optional-uuid",
+      "summary": "What happened",
+      "observationType": "deployment|bugfix|feature|etc",
+      "keyTopics": ["tag1", "tag2"],
+      "keyFiles": ["path/to/file1.ts"],
+      "decisions": ["ADR-style decision"],
+      "problemsSolved": ["What we fixed"]
+    }
+  ],
+  "observations": ["Free-form observation text"],
+  "seedLabel": "prod-alert"  // tagged for easy filtering later
+}
+```
+
+All secrets are automatically redacted using the 26-rule set + any custom rules defined in settings.
+
+---
+
 ## Architecture
 
 <p align="center">
@@ -464,7 +513,8 @@ Key modules:
 
 | Module | Responsibility |
 |---|---|
-| `src/redactor.ts` | 26-rule secret and privacy redaction |
+| `src/redactor.ts` | 26-rule secret and privacy redaction + user-defined regex rules |
+| `src/ciSeeder.ts` | Headless CLI for pre-seeding memory from CI/CD pipelines (reads JSON from stdin) |
 | `src/azureDetect.ts` | Azure subsystem detection |
 | `src/azureContext.ts` | `az` CLI snapshotting with cache and fallback |
 | `src/sessionCapture.ts` | VS Code event hooks and capture pipeline |
@@ -535,4 +585,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](docs/DEMO.md) · [Compare memory tools](docs/COMPARISON.md) · [Uninstall guide](docs/UNINSTALL.md) · [Configuration reference](docs/CONFIGURATION.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
-<sub>**v1.4.7** · zero native deps · zero ports · local-first memory for Copilot</sub>
+<sub>**v1.4.8** · zero native deps · zero ports · local-first memory for Copilot</sub>

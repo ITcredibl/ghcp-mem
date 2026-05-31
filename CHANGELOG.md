@@ -6,7 +6,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [1.4.6] — 2026-05-31
+## [1.4.8] — 2026-05-31
+
+### Added — Enterprise features
+- **`ghcpMem.idleTimeoutSeconds`** — New config (0–300s, default 30s) that triggers compression when editor is inactive, measured via editor and text-document activity hooks. Polls every 5s to stay lightweight.
+- **`ghcpMem.customRedactionRules`** — New config array allowing users to define custom regex-based redaction rules (name, pattern, replacement, flags) for enterprise compliance modes (PCI-DSS, HIPAA, etc.). Rules compose after the built-in 26-rule set; invalid regex silently skipped.
+- **`src/ciSeeder.ts`** — Headless CLI tool for pre-seeding memory from CI/CD pipelines. Reads JSON from stdin, applies redaction, merges into `~/.ghcp-mem/sessions.json`, deduplicates by content hash, and tags with seedLabel. Added to `package.json` bin as `ghcp-mem-ci-seed`.
+- **Enhanced temporal NL queries** — `parseInlineFilters` now understands natural language time specs: `since:yesterday`, `since:today`, `since:last-week`, `since:last-month` in addition to numeric formats (`7d`, `24h`). Underscores normalized to hyphens.
+- **`ContextDatabase.observations`** — Optional array for free-form CI-seeded context (prod alerts, infra notes, test results).
+
+### Changed
+- **`src/redactor.ts`** — `RedactOptions` interface now includes optional `customRules` parameter, applied after built-in rules.
+- **`src/extension.ts`** — Activity tracking via `onDidChangeTextDocument` and `onDidChangeActiveTextEditor` to support idle-timeout compression.
+
+---
+
+
 
 ### Changed
 - **`src/extension.ts`** — `activate()` is now `async`; `writeStartupContext()` is properly awaited so the instructions file is written before the first Copilot chat opens.

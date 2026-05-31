@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "Persistent session memory for GitHub Copilot. Captures, compresses, and injects coding session context with built-in secret redaction and progressive disclosure.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -161,6 +161,11 @@
         "command": "ghcpMem.showFileHistory",
         "title": "GHCP-MEM: Show File Session History",
         "icon": "$(history)"
+      },
+      {
+        "command": "ghcpMem.exportTeamMemory",
+        "title": "GHCP-MEM: Export Team Memory Snapshot",
+        "icon": "$(organization)"
       }
     ],
     "viewsContainers": {
@@ -306,6 +311,26 @@
           {
             "name": "decisions",
             "description": "Export architecture decisions as an ADR-style doc, optionally filtered by keyword"
+          },
+          {
+            "name": "whereami",
+            "description": "Interruption recovery brief — what you were working on, where you left off, and your next step"
+          },
+          {
+            "name": "debt",
+            "description": "Technical debt ledger — surface TODO/FIXME/HACK signals from session history, grouped by age"
+          },
+          {
+            "name": "adr",
+            "description": "Auto-generate a formal Architecture Decision Record from session history, optionally filtered by topic"
+          },
+          {
+            "name": "pr",
+            "description": "PR review context — surface sessions matching a PR's changed files (pass branch name or PR number)"
+          },
+          {
+            "name": "precommit",
+            "description": "Pre-commit architectural consistency check — verify staged changes against past decisions before committing"
           }
         ]
       }

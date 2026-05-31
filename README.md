@@ -273,6 +273,11 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 | `@mem /related` | Sessions that touched the active file, grouped by recency |
 | `@mem /decisions [keyword]` | ADR-style decision log deduped across all sessions |
 | `@mem /savings` | Lifetime token savings and GPT-4o dollar-equivalent |
+| `@mem /whereami` | Interruption-recovery brief: what you were doing, where you left off, your next step |
+| `@mem /debt` | Technical debt ledger — TODO/FIXME/HACK signals grouped by age and file |
+| `@mem /adr [topic]` | Formal Architecture Decision Record auto-generated from session history |
+| `@mem /pr [branch\|PR#]` | PR review context — surface sessions matching the PR's changed files |
+| `@mem /precommit` | Pre-commit check — verify staged changes against past architectural decisions |
 
 ---
 
@@ -316,6 +321,7 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 | **Team sharing** | `GHCP-MEM: Export Memory Pack...` | Build a `.ghcpmem-pack.json` |
 |  | `GHCP-MEM: Import Memory Pack...` | Install a pack |
 |  | `GHCP-MEM: Uninstall Memory Pack...` | Remove imported pack sessions |
+|  | `GHCP-MEM: Export Team Memory Snapshot` | Write `.github/memory/team-context.md` for git-native team context sharing |
 | **Sidebar** | `GHCP-MEM: Filter Sessions...` | Filter by scope, type, tag, days, or text |
 |  | `GHCP-MEM: Clear Filter` | Reset active filter |
 |  | `GHCP-MEM: Refresh` | Refresh sessions tree |
@@ -363,6 +369,11 @@ Copilot agent mode can call these without a separate MCP setup:
 | `/commit` | `@mem /commit` — AI conventional commit message from staged diff + sessions |
 | `/ask` | `@mem /ask why did we change the auth flow?` — RAG Q&A over session history |
 | `/recap` | `@mem /recap 7d` / `30d` / `90d` — narrative engineering recap for retros |
+| `/whereami` | `@mem /whereami` — interruption recovery brief with AI re-entry suggestion |
+| `/debt` | `@mem /debt` — technical debt ledger from session signals, grouped by age |
+| `/adr` | `@mem /adr auth` — formal ADR auto-generated from session history |
+| `/pr` | `@mem /pr main` or `@mem /pr 42` — PR review context from session history |
+| `/precommit` | `@mem /precommit` — pre-commit architectural consistency check |
 
 ---
 

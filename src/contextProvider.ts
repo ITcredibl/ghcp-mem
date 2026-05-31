@@ -31,6 +31,31 @@ export class ContextProvider implements vscode.Disposable {
         const last = context.history[context.history.length - 1];
         const cmd = last instanceof vscode.ChatRequestTurn ? last.command : undefined;
         switch (cmd) {
+          case 'whereami':
+            return [
+              { prompt: '', command: 'debt', label: '$(warning) Show tech debt', participant: 'ghcp-mem' },
+              { prompt: '', command: 'standup', label: '$(calendar) Daily standup', participant: 'ghcp-mem' },
+            ];
+          case 'debt':
+            return [
+              { prompt: '', command: 'precommit', label: '$(git-commit) Pre-commit check', participant: 'ghcp-mem' },
+              { prompt: '', command: 'decisions', label: '$(list-ordered) Architecture decisions', participant: 'ghcp-mem' },
+            ];
+          case 'adr':
+            return [
+              { prompt: '', command: 'decisions', label: '$(list-ordered) All decisions', participant: 'ghcp-mem' },
+              { prompt: '', command: 'precommit', label: '$(git-commit) Pre-commit check', participant: 'ghcp-mem' },
+            ];
+          case 'precommit':
+            return [
+              { prompt: '', command: 'commit', label: '$(git-commit) Generate commit message', participant: 'ghcp-mem' },
+              { prompt: '', command: 'debt', label: '$(warning) Show tech debt', participant: 'ghcp-mem' },
+            ];
+          case 'pr':
+            return [
+              { prompt: '', command: 'decisions', label: '$(list-ordered) Architecture decisions', participant: 'ghcp-mem' },
+              { prompt: '', command: 'search', label: '$(search) Search sessions', participant: 'ghcp-mem' },
+            ];
           case 'standup':
             return [
               { prompt: '', command: 'recap', label: '$(book) Weekly recap', participant: 'ghcp-mem' },
@@ -97,9 +122,14 @@ export class ContextProvider implements vscode.Disposable {
       case 'commit':   return this.commit(stream, request, token);
       case 'ask':      return this.ask(query, stream, request, token);
       case 'recap':    return this.recap(query, stream, request, token);
-      case 'savings':  return this.savings(stream);
-      case 'related':  return this.related(stream);
+      case 'savings':   return this.savings(stream);
+      case 'related':   return this.related(stream);
       case 'decisions': return this.decisions(query, stream, request, token);
+      case 'whereami':  return this.whereami(stream, request, token);
+      case 'debt':      return this.debt(stream, request, token);
+      case 'adr':       return this.adr(query, stream, request, token);
+      case 'pr':        return this.pr(query, stream, request, token);
+      case 'precommit': return this.precommit(stream, request, token);
       default:
         if (!query || query.toLowerCase() === 'status') return this.status(stream);
         if (query.toLowerCase() === 'recent') return this.recent(stream);
@@ -585,6 +615,497 @@ export class ContextProvider implements vscode.Disposable {
   }
 
   // ── Token Savings ──
+
+  // ── Where Am I? ──
+
+  /**
+   * `/whereami` — precise interruption-recovery brief.
+   * "You were in the middle of X. Last file touched: Y. These things were left TODO."
+   * Designed for returning after hours/days away and getting back into flow instantly.
+   */
+  private async whereami(
+    stream: vscode.ChatResponseStream,
+    request: vscode.ChatRequest,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    const all = this.store.getAllSessions();
+    if (all.length === 0) {
+      stream.markdown('_No sessions found. Start coding and GHCP-MEM will track your work automatically._\n');
+      return;
+    }
+
+    // Last 3 sessions for context
+    const recent = [...all].sort((a, b) => b.endTime - a.endTime).slice(0, 5);
+    const last = recent[0];
+    const lastDate = new Date(last.endTime).toLocaleString();
+    const ago = this.formatAgo(last.endTime);
+    const branch = last.branchName ? ` on \`${last.branchName}\`` : '';
+
+    stream.markdown(`## 🧭 Where You Were\n\n`);
+    stream.markdown(`**Last active:** ${lastDate} (${ago})${branch}\n\n`);
+
+    // Extract open TODOs / incomplete signals from recent sessions
+    const todoSignals: string[] = [];
+    for (const s of recent) {
+      for (const p of s.problemsSolved) {
+        if (/TODO|FIXME|WIP|incomplete|partial|left off|next step|still need/i.test(p)) {
+          todoSignals.push(`- ${p} _(${new Date(s.startTime).toLocaleDateString()})_`);
+        }
+      }
+      for (const d of s.decisions) {
+        if (/TODO|FIXME|WIP|incomplete|still need|plan to|will|next/i.test(d)) {
+          todoSignals.push(`- ${d} _(${new Date(s.startTime).toLocaleDateString()})_`);
+        }
+      }
+    }
+
+    // Summary of last 3 sessions
+    stream.markdown(`### 📋 Recent Activity\n\n`);
+    for (const s of recent.slice(0, 3)) {
+      const when = this.formatAgo(s.endTime);
+      const br = s.branchName ? ` · \`${s.branchName}\`` : '';
+      stream.markdown(`**${when}** [${s.observationType}]${br}\n${s.summary.substring(0, 200)}\n\n`);
+      if (s.keyFiles.length) {
+        stream.markdown(`_Files: ${s.keyFiles.slice(0, 4).map(f => `\`${f}\``).join(', ')}_\n\n`);
+      }
+    }
+
+    if (todoSignals.length > 0) {
+      stream.markdown(`### ⚠️ Likely Open Threads\n\n`);
+      stream.markdown(todoSignals.slice(0, 8).join('\n') + '\n\n');
+    }
+
+    // AI re-entry brief
+    stream.markdown(`### 🤖 Re-entry Brief\n\n`);
+    const recentContext = recent.slice(0, 3).map(s =>
+      `[${new Date(s.startTime).toLocaleDateString()} · ${s.observationType}] ${s.summary}\nFiles: ${s.keyFiles.slice(0, 5).join(', ')}\nDecisions: ${s.decisions.slice(0, 3).join('; ')}`
+    ).join('\n\n');
+
+    const prompt = [
+      'A developer is returning to work after a break. Based on their recent coding sessions below, write a concise re-entry brief (4-6 sentences):',
+      '1. What they were working on',
+      '2. Where they likely left off',
+      '3. The single most important next step to get back into flow',
+      'Be direct and practical. No preamble.',
+      '',
+      'Recent sessions:',
+      recentContext,
+    ].join('\n');
+
+    await this.streamLm(prompt, stream, request, token);
+
+    stream.markdown(`\n\n---\n_Use \`@mem /standup\` for a daily summary or \`@mem /debt\` to see open technical debt._\n`);
+  }
+
+  // ── Technical Debt Ledger ──
+
+  /**
+   * `/debt` — extract and surface technical debt signals from session history.
+   * Parses sessions for TODO/FIXME/HACK/workaround/shortcut signals,
+   * groups by file and age, and generates an AI prioritisation.
+   */
+  private async debt(
+    stream: vscode.ChatResponseStream,
+    request: vscode.ChatRequest,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    const all = this.store.getAllSessions();
+    if (all.length === 0) {
+      stream.markdown('_No sessions found yet — GHCP-MEM will detect debt signals automatically as you code._\n');
+      return;
+    }
+
+    const DEBT_PATTERNS = [
+      /TODO/i, /FIXME/i, /HACK/i, /XXX/i, /WORKAROUND/i,
+      /quick.?fix/i, /shortcut/i, /tech.?debt/i, /temporary/i,
+      /revisit/i, /clean.?up/i, /refactor/i, /not.?ideal/i,
+      /should.?be/i, /needs?.to/i, /broken/i, /fragile/i,
+    ];
+
+    interface DebtItem {
+      text: string;
+      file?: string;
+      date: string;
+      age: number; // days
+      type: string;
+      sessionId: string;
+    }
+
+    const debtItems: DebtItem[] = [];
+    const seen = new Set<string>();
+
+    for (const s of [...all].sort((a, b) => a.startTime - b.startTime)) {
+      const allTexts = [
+        ...s.problemsSolved.map(t => ({ text: t, file: s.keyFiles[0] })),
+        ...s.decisions.map(t => ({ text: t, file: s.keyFiles[0] })),
+        ...(s.summary ? [{ text: s.summary, file: s.keyFiles[0] }] : []),
+      ];
+
+      for (const { text, file } of allTexts) {
+        if (DEBT_PATTERNS.some(p => p.test(text))) {
+          // Extract the specific sentence with the debt signal
+          const sentences = text.split(/[.!?\n]/).filter(t => t.trim());
+          for (const sentence of sentences) {
+            if (DEBT_PATTERNS.some(p => p.test(sentence))) {
+              const key = sentence.trim().toLowerCase().substring(0, 80);
+              if (!seen.has(key) && sentence.trim().length > 10) {
+                seen.add(key);
+                debtItems.push({
+                  text: sentence.trim(),
+                  file,
+                  date: new Date(s.startTime).toLocaleDateString(),
+                  age: Math.round((Date.now() - s.startTime) / 86_400_000),
+                  type: s.observationType,
+                  sessionId: s.id.substring(0, 8),
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (debtItems.length === 0) {
+      stream.markdown('## 🏆 Technical Debt Ledger\n\n');
+      stream.markdown('_No debt signals detected in session history. Keep it clean!_\n\n');
+      stream.markdown('_GHCP-MEM looks for: TODO, FIXME, HACK, workaround, quick fix, refactor, fragile, and similar signals._\n');
+      return;
+    }
+
+    // Sort by age (oldest first — highest priority)
+    debtItems.sort((a, b) => b.age - a.age);
+
+    // Group by age buckets
+    const old = debtItems.filter(d => d.age > 30);
+    const medium = debtItems.filter(d => d.age > 7 && d.age <= 30);
+    const fresh = debtItems.filter(d => d.age <= 7);
+
+    stream.markdown(`## ⚠️ Technical Debt Ledger\n\n`);
+    stream.markdown(`_${debtItems.length} debt signal(s) found across ${all.length} sessions_\n\n`);
+
+    const renderGroup = (label: string, icon: string, items: DebtItem[]) => {
+      if (items.length === 0) return;
+      stream.markdown(`### ${icon} ${label} (${items.length})\n\n`);
+      for (const d of items.slice(0, 10)) {
+        const file = d.file ? ` · \`${d.file}\`` : '';
+        stream.markdown(`- **${d.text.substring(0, 120)}**  \n  _${d.date} · ${d.age}d ago${file} · session \`${d.sessionId}\`_\n`);
+      }
+      if (items.length > 10) stream.markdown(`_...and ${items.length - 10} more_\n`);
+      stream.markdown('\n');
+    };
+
+    renderGroup('Critical — older than 30 days', '🔴', old);
+    renderGroup('Aging — 8–30 days', '🟡', medium);
+    renderGroup('Recent — last 7 days', '🟢', fresh);
+
+    // AI prioritisation
+    stream.markdown('---\n\n### 🤖 AI Prioritisation\n\n');
+    const topDebt = debtItems.slice(0, 15).map(d => `- [${d.age}d old] ${d.text}`).join('\n');
+    const prompt = [
+      'Below is a list of technical debt items extracted from a developer\'s coding session history.',
+      'Write a prioritised action plan (max 5 items) focusing on:',
+      '1. Items that are oldest and most likely to cause problems',
+      '2. Items that are blocking other work',
+      '3. Quick wins that can be resolved in < 1 hour',
+      'Format as a numbered list. Be concise and actionable.',
+      '',
+      'Debt items:',
+      topDebt,
+    ].join('\n');
+
+    await this.streamLm(prompt, stream, request, token);
+    stream.markdown(`\n\n---\n_Use \`@mem /precommit\` before your next commit to check for architectural regressions._\n`);
+  }
+
+  // ── Auto-generated ADRs ──
+
+  /**
+   * `/adr [topic]` — generate a formal Architecture Decision Record from
+   * session history. Goes beyond `/decisions` by producing a structured
+   * ADR document: Title / Status / Context / Decision / Consequences.
+   */
+  private async adr(
+    query: string,
+    stream: vscode.ChatResponseStream,
+    request: vscode.ChatRequest,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    let sessions = this.store.getAllSessions().filter(s => s.decisions.length > 0 || s.keyTopics.length > 0);
+
+    if (query) {
+      const q = query.toLowerCase();
+      sessions = sessions.filter(s =>
+        s.decisions.some(d => d.toLowerCase().includes(q))
+        || s.keyTopics.some(t => t.toLowerCase().includes(q))
+        || s.summary.toLowerCase().includes(q)
+      );
+    }
+
+    if (sessions.length === 0) {
+      stream.markdown(query
+        ? `_No sessions found matching "${query}". Try a broader term or run \`@mem /decisions\` to see all recorded decisions._\n`
+        : '_No sessions with decisions found yet. GHCP-MEM extracts decisions automatically as you code._\n');
+      return;
+    }
+
+    // Collect all decisions and topics
+    const allDecisions = sessions.flatMap(s => s.decisions);
+    const allTopics = sessions.flatMap(s => s.keyTopics);
+    const allSummaries = sessions.map(s => s.summary);
+    const allFiles = [...new Set(sessions.flatMap(s => s.keyFiles))].slice(0, 20);
+    const dateRange = sessions.length > 0
+      ? `${new Date(Math.min(...sessions.map(s => s.startTime))).toLocaleDateString()} – ${new Date(Math.max(...sessions.map(s => s.endTime))).toLocaleDateString()}`
+      : 'unknown';
+
+    stream.markdown(`## 📄 Architecture Decision Record\n\n`);
+    if (query) stream.markdown(`_Topic: "${query}" · ${sessions.length} session(s) · ${dateRange}_\n\n`);
+    else stream.markdown(`_${sessions.length} session(s) with decisions · ${dateRange}_\n\n`);
+    stream.markdown(`_Affected files: ${allFiles.slice(0, 8).map(f => `\`${f}\``).join(', ')}_\n\n`);
+    stream.markdown('---\n\n');
+
+    const prompt = [
+      'Generate a formal Architecture Decision Record (ADR) based on the developer session history below.',
+      'Use this exact structure:',
+      '',
+      '# ADR: [descriptive title]',
+      '',
+      '## Status',
+      'Accepted | Proposed | Deprecated (choose the most appropriate)',
+      '',
+      '## Context',
+      'What problem or need drove this decision? What was the situation?',
+      '',
+      '## Decision',
+      'What was decided? Be specific and authoritative.',
+      '',
+      '## Options Considered',
+      'List 2-3 alternatives that were likely considered (infer from context if needed).',
+      '',
+      '## Consequences',
+      '### Positive',
+      '- list benefits',
+      '### Negative / Trade-offs',
+      '- list downsides or constraints',
+      '',
+      '## Related Files',
+      'List the key files involved.',
+      '',
+      'Base the ADR on these session insights:',
+      '',
+      `Decisions recorded:\n${allDecisions.slice(0, 20).map(d => `- ${d}`).join('\n')}`,
+      '',
+      `Topics:\n${allTopics.slice(0, 15).join(', ')}`,
+      '',
+      `Session summaries:\n${allSummaries.slice(0, 5).join('\n---\n')}`,
+    ].join('\n');
+
+    await this.streamLm(prompt, stream, request, token);
+
+    stream.markdown(`\n\n---\n_Run \`@mem /decisions\` to see all decisions · \`@mem /adr <topic>\` to generate a focused ADR_\n`);
+  }
+
+  // ── PR Review Context Injection ──
+
+  /**
+   * `/pr [branch-or-number]` — surface sessions that touched the same files
+   * as a pull request or branch diff, giving reviewers full history context.
+   * If no branch given, uses the current git branch diff against main/master.
+   */
+  private async pr(
+    query: string,
+    stream: vscode.ChatResponseStream,
+    request: vscode.ChatRequest,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    stream.markdown(`## 🔍 PR Review Context\n\n`);
+
+    // Get changed files from git diff
+    let changedFiles: string[] = [];
+    let branchLabel = query || 'current branch';
+
+    try {
+      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!cwd) throw new Error('No workspace open');
+
+      let diffCmd: string;
+      if (query && /^\d+$/.test(query.trim())) {
+        // PR number — try to get via gh CLI
+        const { stdout } = await execAsync(`gh pr view ${query.trim()} --json files --jq '.files[].path' 2>/dev/null || echo ''`, { cwd });
+        changedFiles = stdout.split('\n').map(f => f.trim()).filter(Boolean);
+        branchLabel = `PR #${query.trim()}`;
+      } else {
+        // Branch name or default: diff against main/master/HEAD~1
+        const base = query.trim() || 'HEAD~1';
+        const { stdout } = await execAsync(`git diff --name-only ${base} 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo ''`, { cwd });
+        changedFiles = stdout.split('\n').map(f => f.trim()).filter(Boolean);
+        if (query) branchLabel = query;
+      }
+    } catch {
+      // fallback: use active editor file
+      const active = vscode.window.activeTextEditor?.document.uri.fsPath;
+      if (active) {
+        changedFiles = [vscode.workspace.asRelativePath(active)];
+        branchLabel = 'active file';
+      }
+    }
+
+    if (changedFiles.length === 0) {
+      stream.markdown('_No changed files detected. Specify a branch: `@mem /pr main` or open a file and run `@mem /related`._\n');
+      return;
+    }
+
+    stream.markdown(`_Analysing ${changedFiles.length} changed file(s) in **${branchLabel}**_\n\n`);
+    stream.markdown(`Changed: ${changedFiles.slice(0, 10).map(f => `\`${f}\``).join(', ')}${changedFiles.length > 10 ? ` _+${changedFiles.length - 10} more_` : ''}\n\n`);
+
+    // Find sessions that touched any of these files
+    const all = this.store.getAllSessions();
+    const matchMap = new Map<string, { session: typeof all[0]; matchedFiles: string[] }>();
+
+    for (const s of all) {
+      const matched = s.keyFiles.filter(sf => {
+        const sfl = sf.toLowerCase();
+        return changedFiles.some(cf => {
+          const cfl = cf.toLowerCase();
+          return sfl === cfl || sfl.endsWith('/' + cfl) || cfl.endsWith('/' + sfl) || sfl.split('/').pop() === cfl.split('/').pop();
+        });
+      });
+      if (matched.length > 0) {
+        matchMap.set(s.id, { session: s, matchedFiles: matched });
+      }
+    }
+
+    const matches = [...matchMap.values()].sort((a, b) => b.session.endTime - a.session.endTime);
+
+    if (matches.length === 0) {
+      stream.markdown(`_No session history found for these files. They may be new files or not yet captured._\n`);
+      return;
+    }
+
+    stream.markdown(`### 📚 ${matches.length} Session(s) with history for these files\n\n`);
+
+    for (const { session: s, matchedFiles } of matches.slice(0, 8)) {
+      const ago = this.formatAgo(s.endTime);
+      const branch = s.branchName ? ` · \`${s.branchName}\`` : '';
+      stream.markdown(`#### [${s.observationType}] ${ago}${branch}\n\n`);
+      stream.markdown(`_Matching files: ${matchedFiles.map(f => `\`${f}\``).join(', ')}_\n\n`);
+      stream.markdown(`${s.summary.substring(0, 250)}\n\n`);
+      if (s.decisions.length) stream.markdown(`**Decisions:** ${s.decisions.slice(0, 3).join(' · ')}\n\n`);
+      if (s.problemsSolved.length) stream.markdown(`**Solved:** ${s.problemsSolved.slice(0, 2).join(' · ')}\n\n`);
+      stream.markdown(`\`${s.id.substring(0, 8)}\` · _\`@mem /detail ${s.id.substring(0, 8)}\` for full context_\n\n---\n\n`);
+    }
+
+    // AI reviewer briefing
+    if (matches.length > 0) {
+      stream.markdown('### 🤖 Reviewer Briefing\n\n');
+      const historyContext = matches.slice(0, 5).map(({ session: s, matchedFiles }) =>
+        `Files: ${matchedFiles.join(', ')}\n[${s.observationType}] ${s.summary}\nDecisions: ${s.decisions.slice(0, 3).join('; ')}`
+      ).join('\n\n');
+
+      const prompt = [
+        `A developer is reviewing a PR that changes: ${changedFiles.slice(0, 10).join(', ')}.`,
+        'Based on the session history for these files below, write a reviewer briefing (3-5 sentences) covering:',
+        '1. What purpose these files serve based on history',
+        '2. Known past issues or fragility the reviewer should watch for',
+        '3. Key decisions that were made about these files',
+        'Be concise and focused on what helps the reviewer.',
+        '',
+        'Session history:',
+        historyContext,
+      ].join('\n');
+
+      await this.streamLm(prompt, stream, request, token);
+    }
+
+    stream.markdown(`\n\n---\n_Use \`@mem /pr <branch>\` for a different branch or \`@mem /decisions\` for architectural context._\n`);
+  }
+
+  // ── Pre-commit Architectural Consistency Check ──
+
+  /**
+   * `/precommit` — check staged diff against past architectural decisions.
+   * Flags potential regressions before they land in the codebase.
+   */
+  private async precommit(
+    stream: vscode.ChatResponseStream,
+    request: vscode.ChatRequest,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    stream.markdown(`## 🔎 Pre-commit Architectural Check\n\n`);
+
+    // Get staged diff
+    let stagedDiff = '';
+    let stagedFiles: string[] = [];
+
+    try {
+      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!cwd) throw new Error('No workspace open');
+
+      const { stdout: filesOut } = await execAsync('git diff --cached --name-only 2>/dev/null || echo ""', { cwd });
+      stagedFiles = filesOut.split('\n').map(f => f.trim()).filter(Boolean);
+
+      if (stagedFiles.length === 0) {
+        stream.markdown('_No staged changes found. Run `git add <files>` first, then `@mem /precommit`._\n');
+        return;
+      }
+
+      const { stdout: diffOut } = await execAsync('git diff --cached --stat 2>/dev/null || echo ""', { cwd });
+      stagedDiff = diffOut.substring(0, 2000); // Keep it manageable
+    } catch (err) {
+      stream.markdown('_Could not read staged diff. Ensure you are in a git repository with staged changes._\n');
+      return;
+    }
+
+    stream.markdown(`_Checking ${stagedFiles.length} staged file(s): ${stagedFiles.slice(0, 5).map(f => `\`${f}\``).join(', ')}${stagedFiles.length > 5 ? ` +${stagedFiles.length - 5} more` : ''}_\n\n`);
+
+    // Find sessions related to staged files
+    const all = this.store.getAllSessions();
+    const relatedSessions = all.filter(s =>
+      s.keyFiles.some(sf => stagedFiles.some(pf => {
+        const sfl = sf.toLowerCase();
+        const pfl = pf.toLowerCase();
+        return sfl === pfl || sfl.endsWith('/' + pfl) || pfl.endsWith('/' + sfl)
+          || sfl.split('/').pop() === pfl.split('/').pop();
+      }))
+    ).sort((a, b) => b.endTime - a.endTime);
+
+    // Collect all decisions from related sessions
+    const relevantDecisions = relatedSessions.flatMap(s => s.decisions).slice(0, 20);
+    const allDecisions = all.filter(s => s.decisions.length > 0).flatMap(s => s.decisions).slice(0, 30);
+
+    if (relevantDecisions.length === 0 && allDecisions.length === 0) {
+      stream.markdown('_No architectural decisions found in session history to check against. Keep capturing sessions to build up the decision history._\n');
+      return;
+    }
+
+    const decisionsContext = relevantDecisions.length > 0
+      ? `Decisions about these specific files:\n${relevantDecisions.map(d => `- ${d}`).join('\n')}`
+      : `General architectural decisions:\n${allDecisions.slice(0, 15).map(d => `- ${d}`).join('\n')}`;
+
+    stream.markdown('### 🤖 Consistency Analysis\n\n');
+
+    const prompt = [
+      'A developer is about to commit the following changes. Check if they are consistent with past architectural decisions.',
+      '',
+      `Staged files: ${stagedFiles.slice(0, 10).join(', ')}`,
+      '',
+      `Diff summary:\n${stagedDiff}`,
+      '',
+      decisionsContext,
+      '',
+      'Provide a structured review with:',
+      '1. **✅ Consistent with:** decisions this commit aligns with',
+      '2. **⚠️ Potential conflicts:** any decisions this might contradict (be specific)',
+      '3. **💡 Recommendation:** one-line verdict — Safe to commit / Review these concerns / Reconsider approach',
+      '',
+      'If no conflicts found, say so clearly and confidently. Be direct and concise.',
+    ].join('\n');
+
+    await this.streamLm(prompt, stream, request, token);
+
+    stream.markdown(`\n\n---\n_Run \`@mem /commit\` to generate a conventional commit message for these changes._\n`);
+  }
+
+
 
   // ── Related files ──
 

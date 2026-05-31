@@ -132,3 +132,32 @@ test('redactor — Azure subscription GUID with context keyword', () => {
   const r = redact('subscriptionId: 11111111-2222-3333-4444-555555555555', OPTS);
   assert.match(r.text, /\[REDACTED:azure-guid\]/);
 });
+
+test('custom redaction rules compose after built-in rules', () => {
+  const input = 'AWS key: AKIA1234567890ABCDEF and CUSTOM_SECRET_XYZ12345678901234567890';
+  const customRules = [
+    { name: 'custom-secret', pattern: 'CUSTOM_SECRET_[A-Za-z0-9]{20,}', replacement: '[REDACTED:custom]', flags: 'g' },
+  ];
+  const result = redact(input, {
+    redactSecrets: true,
+    honorPrivateTags: true,
+    customRules,
+  });
+  assert(result.text.includes('[REDACTED:aws-access-key]'), 'AWS key should be redacted');
+  assert(result.text.includes('[REDACTED:custom]'), 'Custom rule should be applied');
+  assert(result.redactionCount === 2, 'Two redactions should occur');
+});
+
+test('custom redaction rules skip silently on invalid regex', () => {
+  const input = 'test content';
+  const customRules = [
+    { name: 'bad-regex', pattern: '(?P<invalid>pattern)', replacement: '[REDACTED]', flags: 'g' }, // invalid regex
+  ];
+  // Should not throw
+  const result = redact(input, {
+    redactSecrets: false,
+    honorPrivateTags: false,
+    customRules,
+  });
+  assert(result.text === input, 'Invalid regex should be silently skipped');
+});

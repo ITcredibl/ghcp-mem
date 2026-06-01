@@ -6,6 +6,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.2] — 2026-06-01
+
+Follow-up to v1.6.1's release-trail fix. v1.6.1 unblocked CI's `npm test` step (Node-20 glob bug), but the Release workflow then immediately tripped on a *second* latent bug: the strict release-consistency gate (run as `vsce package`'s `vscode:prepublish` hook) checks `git rev-parse origin/main`, and `actions/checkout@v4`'s default shallow checkout doesn't carry that ref. So the gate failed instantly on the v1.6.1 tag push, before the build could produce any artifacts. v1.6.2 is the actual first release with a green end-to-end CI Release run — no behaviour changes in the extension itself.
+
+### Fixed — CI release plumbing
+- **`fetch-depth: 0` on the workflow checkouts** (`.github/workflows/release.yml`, `.github/workflows/ci.yml`). Full history so `origin/main` is resolvable when the strict gate runs on a tag push.
+- **Explicit `git fetch origin main` step** added right after checkout in both workflows — belt-and-suspenders so `origin/main` is always present even if a future checkout-action upgrade changes the default fetch behavior.
+- **Self-healing fallback in the gate script** (`scripts/check-release-consistency.mjs:184`). If the initial `git rev-parse origin/main` fails (the canonical "shallow CI checkout" symptom), the script now retries with a single targeted `git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main` before reporting failure. Keeps the gate usable in any shallow environment without requiring every workflow to remember the explicit fetch step.
+
+### Why a separate release
+v1.6.1's commit message and CHANGELOG promised "the first successful end-to-end Release run since v1.4.9" — but the workflow then failed on a bug the v1.6.1 changes hadn't fixed. Force-updating the v1.6.1 tag would have masked that, so we shipped v1.6.2 instead. Five-minute gap between tags; no Marketplace publish or GitHub Release exists for v1.6.1.
+
+### Test count
+323 tests still passing. No extension code touched.
+
+---
+
 ## [1.6.1] — 2026-06-01
 
 Targeted response to the external v1.6.0 review. The reviewer's #1 concern was **release integrity**: Marketplace said v1.6.0, GitHub Releases still showed v1.4.0 as "latest." For a memory extension that captures coding activity, that gap is a trust problem — buyers can't answer "what source commit produced the Marketplace artifact?" This release fixes the root cause, backfills the missing release trail, and tightens the smaller items the same review flagged.

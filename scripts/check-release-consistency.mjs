@@ -181,7 +181,16 @@ if (STRICT) {
 
   // 5b. HEAD pushed to origin/main
   const head = git('rev-parse', 'HEAD');
-  const originMain = git('rev-parse', 'origin/main');
+  let originMain = git('rev-parse', 'origin/main');
+  // CI checkouts default to `fetch-depth: 1`, which leaves us without an
+  // `origin/main` ref. Self-heal once before failing so the script works
+  // in both clean local dev and shallow CI environments. We use a narrow
+  // `git fetch` (single branch, no tags) to keep the network footprint
+  // small. The workflows also do this explicitly belt-and-suspenders.
+  if (typeof originMain === 'object') {
+    git('fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main');
+    originMain = git('rev-parse', 'origin/main');
+  }
   if (typeof head === 'object' || typeof originMain === 'object') {
     fail('git refs', 'HEAD + origin/main resolvable', 'git error', 'run: git fetch origin');
   } else if (head !== originMain) {

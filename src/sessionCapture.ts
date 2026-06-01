@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { createHash } from 'crypto';
 import {
   SessionEvent,
   FileEditData,
@@ -11,7 +12,7 @@ import {
   getConfig,
   isPathExcluded,
 } from './types';
-import { redact, looksSensitive } from './redactor';
+import { redact } from './redactor';
 import { classifyFile, classifyCommand, AzureSubsystem } from './azureDetect';
 
 /**
@@ -24,6 +25,8 @@ import { classifyFile, classifyCommand, AzureSubsystem } from './azureDetect';
  */
 export class SessionCapture implements vscode.Disposable {
   private events: SessionEvent[] = [];
+  private eventSizes: number[] = [];
+  private volatileBytes = 0;
   private disposables: vscode.Disposable[] = [];
   private sessionStartTime: number;
   private editBatch = new Map<string, { added: number; removed: number; count: number; lastSnippet: string; lang: string }>();
@@ -31,6 +34,7 @@ export class SessionCapture implements vscode.Disposable {
   private totalRedactions = 0;
   private azureSubsystems = new Set<AzureSubsystem>();
   private azureTags = new Set<string>();
+  private semanticSignatures = new Map<string, string>();
   /**
    * Timestamp after which file_open events are allowed. Set to 3 s in the
    * future at start() to suppress the flood of re-open events that VS Code
@@ -51,7 +55,7 @@ export class SessionCapture implements vscode.Disposable {
     this.registerFileLifecycleCapture();
     if (config.captureDiagnostics) this.registerDiagnosticsCapture();
     if (config.captureGitOps) this.registerGitCapture();
-    if (config.captureTerminalCommands) this.registerTerminalCapture();
+    if (config.captureTerminalCommands && !config.enterpriseMode) this.registerTerminalCapture();
     this.registerDebugCapture();
     this.registerTaskCapture();
   }
@@ -63,10 +67,23 @@ export class SessionCapture implements vscode.Disposable {
     const azureSubsystems = [...this.azureSubsystems];
     const azureTags = [...this.azureTags];
     this.events = [];
+    this.eventSizes = [];
+    this.volatileBytes = 0;
     this.totalRedactions = 0;
     this.azureSubsystems.clear();
     this.azureTags.clear();
     return { events: drained, redactionCount, azureSubsystems, azureTags };
+  }
+
+  clearPending(): void {
+    this.events = [];
+    this.eventSizes = [];
+    this.volatileBytes = 0;
+    this.totalRedactions = 0;
+    this.editBatch.clear();
+    this.semanticSignatures.clear();
+    this.azureSubsystems.clear();
+    this.azureTags.clear();
   }
 
   get eventCount(): number {
@@ -94,6 +111,11 @@ export class SessionCapture implements vscode.Disposable {
 
         if (isPathExcluded(filePath, config.excludeGlobs)) return;
 
+        const nextSignature = semanticTextSignature(e.document.getText());
+        const prevSignature = this.semanticSignatures.get(filePath);
+        this.semanticSignatures.set(filePath, nextSignature);
+        if (prevSignature === nextSignature) return;
+
         const az = classifyFile(filePath);
         if (az.isAzure) {
           az.subsystems.forEach(s => this.azureSubsystems.add(s));
@@ -118,7 +140,7 @@ export class SessionCapture implements vscode.Disposable {
               honorPrivateTags: config.honorPrivateTags,
             });
             this.totalRedactions += result.redactionCount;
-            existing.lastSnippet = result.text;
+            existing.lastSnippet = config.captureCodeSnippets ? result.text : '[REDACTED:snippet-disabled]';
           }
         }
 
@@ -164,6 +186,7 @@ export class SessionCapture implements vscode.Disposable {
         if (doc.uri.scheme !== 'file' || shouldSkip(doc.uri)) return;
         // Ignore the startup re-open flood (VS Code restores all prior editors).
         if (Date.now() < this.fileOpenAllowedAt) return;
+        this.semanticSignatures.set(vscode.workspace.asRelativePath(doc.uri), semanticTextSignature(doc.getText()));
         this.pushEvent('file_open', {
           filePath: vscode.workspace.asRelativePath(doc.uri),
           languageId: doc.languageId,
@@ -189,6 +212,7 @@ export class SessionCapture implements vscode.Disposable {
       vscode.workspace.onDidDeleteFiles((e) => {
         for (const file of e.files) {
           if (shouldSkip(file)) continue;
+          this.semanticSignatures.delete(vscode.workspace.asRelativePath(file));
           this.pushEvent('file_delete', {
             filePath: vscode.workspace.asRelativePath(file),
           } as FileLifecycleData);
@@ -198,9 +222,16 @@ export class SessionCapture implements vscode.Disposable {
       vscode.workspace.onDidRenameFiles((e) => {
         for (const file of e.files) {
           if (shouldSkip(file.newUri) && shouldSkip(file.oldUri)) continue;
+          const oldPath = vscode.workspace.asRelativePath(file.oldUri);
+          const newPath = vscode.workspace.asRelativePath(file.newUri);
+          const sig = this.semanticSignatures.get(oldPath);
+          if (sig) {
+            this.semanticSignatures.set(newPath, sig);
+            this.semanticSignatures.delete(oldPath);
+          }
           this.pushEvent('file_rename', {
-            filePath: vscode.workspace.asRelativePath(file.newUri),
-            oldPath: vscode.workspace.asRelativePath(file.oldUri),
+            filePath: newPath,
+            oldPath,
           } as FileLifecycleData);
         }
       })
@@ -355,7 +386,7 @@ export class SessionCapture implements vscode.Disposable {
           }
 
           this.pushEvent('terminal_command', {
-            command: redacted.text,
+            command: config.enterpriseMode ? '[REDACTED:enterprise-terminal]' : redacted.text,
           } as TerminalData);
         })
       );
@@ -366,20 +397,36 @@ export class SessionCapture implements vscode.Disposable {
 
   // ── Helpers ────────────────────────────────────────────────
 
-  /** Cap event buffer at MAX_EVENTS, discarding the oldest (HEAD) entries. */
+  /** Cap event buffer at MAX_EVENTS and MAX_VOLATILE_BYTES, discarding oldest entries. */
   private static readonly MAX_EVENTS = 5000;
-  private static readonly TRIM_TARGET = 3000;
+  private static readonly MAX_VOLATILE_BYTES = 5 * 1024 * 1024;
+
+  private static eventSize(e: SessionEvent): number {
+    return Buffer.byteLength(JSON.stringify(e), 'utf8');
+  }
 
   private trimEvents(): void {
-    // splice(0, n) removes in-place — avoids allocating a second array copy
-    // that this.events.slice(-TRIM_TARGET) would create on every overflow.
-    if (this.events.length > SessionCapture.MAX_EVENTS) {
-      this.events.splice(0, this.events.length - SessionCapture.TRIM_TARGET);
+    let removeCount = 0;
+    let bytes = this.volatileBytes;
+    while (
+      (this.events.length - removeCount > SessionCapture.MAX_EVENTS || bytes > SessionCapture.MAX_VOLATILE_BYTES) &&
+      removeCount < this.eventSizes.length
+    ) {
+      bytes -= this.eventSizes[removeCount];
+      removeCount++;
+    }
+    if (removeCount > 0) {
+      this.events.splice(0, removeCount);
+      this.eventSizes.splice(0, removeCount);
+      this.volatileBytes = bytes;
     }
   }
 
   private pushEvent(type: SessionEvent['type'], data: SessionEvent['data']): void {
-    this.events.push({ timestamp: Date.now(), type, data });
+    const e = { timestamp: Date.now(), type, data };
+    this.events.push(e);
+    this.eventSizes.push(SessionCapture.eventSize(e));
+    this.volatileBytes += this.eventSizes[this.eventSizes.length - 1];
     this.trimEvents();
   }
 
@@ -390,6 +437,8 @@ export class SessionCapture implements vscode.Disposable {
    */
   pushExistingEvent(e: SessionEvent): void {
     this.events.push(e);
+    this.eventSizes.push(SessionCapture.eventSize(e));
+    this.volatileBytes += this.eventSizes[this.eventSizes.length - 1];
     this.trimEvents();
   }
 
@@ -398,4 +447,13 @@ export class SessionCapture implements vscode.Disposable {
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
   }
+}
+
+export function semanticTextSignature(text: string): string {
+  const normalized = text
+    .split(/\r?\n/)
+    .map(line => line.trimEnd())
+    .filter(line => line.length > 0)
+    .join('\n');
+  return createHash('sha256').update(normalized).digest('hex');
 }

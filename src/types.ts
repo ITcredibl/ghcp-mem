@@ -194,6 +194,18 @@ export interface PluginConfig {
   freshnessFloor: number;
   /** GitHub agentic-memory-compatible mode: force retentionDays=28 + repo scope. */
   githubCompatibleMode: boolean;
+  /** Lock down capture and export to a redacted-only, read-mostly enterprise posture. */
+  enterpriseMode: boolean;
+  /** Persist raw code snippets in captured edits. Disabled in enterprise mode. */
+  captureCodeSnippets: boolean;
+  /** Allow the extension-side MCP tools that mutate or export memory. */
+  allowMcpWriteAccess: boolean;
+  /** Allow team export and pack export flows. */
+  allowTeamExport: boolean;
+  /** Require an explicit preview before a compressed session is persisted. */
+  previewBeforePersist: boolean;
+  /** Remote policy URL whose JSON redaction rules are appended after built-ins. */
+  policySource?: string;
   /**
    * How many seconds of editor inactivity must pass before an idle-triggered
    * compression fires. Set to 0 to rely only on the interval timer.
@@ -233,7 +245,7 @@ export function getConfig(): PluginConfig {
     // GitHub-compatible mode pins retention to 28 days like Copilot agentic memory.
     retentionDays: githubCompatibleMode ? 28 : cfg.get('retentionDays', 90),
     captureFileEdits: cfg.get('captureFileEdits', true),
-    captureTerminalCommands: cfg.get('captureTerminalCommands', true),
+    captureTerminalCommands: cfg.get('captureTerminalCommands', true) && !cfg.get('enterpriseMode', false),
     captureDiagnostics: cfg.get('captureDiagnostics', true),
     captureGitOps: cfg.get('captureGitOps', true),
     contextRetrievalCount: cfg.get('contextRetrievalCount', 5),
@@ -248,9 +260,20 @@ export function getConfig(): PluginConfig {
     // package.json declares min/max for the UI, but raw JSON edits can bypass that.
     freshnessFloor: clampNum(cfg.get('freshnessFloor', 0.25), 0, 1, 0.25),
     githubCompatibleMode,
+    enterpriseMode: cfg.get('enterpriseMode', false),
+    captureCodeSnippets: cfg.get('captureCodeSnippets', true) && !cfg.get('enterpriseMode', false),
+    allowMcpWriteAccess: cfg.get('allowMcpWriteAccess', true) && !cfg.get('enterpriseMode', false),
+    allowTeamExport: cfg.get('allowTeamExport', true) && !cfg.get('enterpriseMode', false),
+    previewBeforePersist: cfg.get('previewBeforePersist', false) || cfg.get('enterpriseMode', false),
+    policySource: normalizeOptionalString(cfg.get<string | undefined>('policySource', undefined)),
     idleTimeoutSeconds: clampNum(cfg.get('idleTimeoutSeconds', 30), 0, 300, 30),
     customRedactionRules: cfg.get<CustomRedactionRule[]>('customRedactionRules', []),
   };
+}
+
+function normalizeOptionalString(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 /** Minimal glob matcher for excludeGlobs. */

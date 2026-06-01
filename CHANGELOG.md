@@ -6,6 +6,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.9] — 2026-05-31
+
+### Added — Enterprise controls
+- **`ghcpMem.enterpriseMode`** — Strict privacy posture that disables terminal capture, raw snippets, MCP write tools, and team export.
+- **`ghcpMem.captureCodeSnippets`**, **`ghcpMem.allowMcpWriteAccess`**, **`ghcpMem.allowTeamExport`**, **`ghcpMem.previewBeforePersist`** — New control surface for privacy-by-default workflows.
+- **`ghcpMem.runPrivacyWizard`**, **`ghcpMem.auditMemory`**, **`ghcpMem.purgeMemory`** — Onboarding, audit, and purge commands for enterprise users.
+- **Security and release docs** — Added threat model, enterprise guide, benchmark outline, dependency automation, and release workflow scaffolding.
+
+### Changed
+- **`package.json`**, **`README.md`**, **`docs/COMPARISON.md`**, **`docs/DEMO.md`** — Version references updated to `1.4.9`.
+- **`src/extension.ts`**, **`src/sessionCapture.ts`**, **`src/types.ts`** — Privacy wizard, preview-before-persist, enterprise gating, and audit/purge paths added.
+
+---
+
 ## [1.4.8] — 2026-05-31
 
 ### Added — Enterprise features

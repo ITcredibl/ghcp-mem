@@ -7,6 +7,7 @@ const OPTS: RedactOptions = { redactSecrets: true, honorPrivateTags: true };
 test('redactor — AWS access key id', () => {
   const r = redact('aws_id: AKIAIOSFODNN7EXAMPLE is here', OPTS);
   assert.match(r.text, /\[REDACTED:aws-access-key\]/);
+  assert.match(r.text, /\[REDACTED:aws-access-key\]#[a-f0-9]{16}/);
   assert.ok(r.redactionCount >= 1);
 });
 

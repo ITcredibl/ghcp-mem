@@ -33,6 +33,8 @@ import { extractTerms, keywordScore, computeAvgDocLen } from './searchCore';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'ghcp-mem';
+const MCP_WRITE_ENABLED = process.env.GHCP_MEM_ALLOW_MCP_WRITE !== 'false'
+  && process.env.GHCP_MEM_READONLY !== 'true';
 // Read the package version at module load so we never drift from package.json.
 // Falls back to 'unknown' if the bundled package.json can't be located
 // (e.g. when this file is imported from out-test/ during the test compile).
@@ -336,6 +338,7 @@ async function handleCall(name: string, args: any): Promise<any> {
       });
     }
     case 'ghcpMem_store': {
+      if (!MCP_WRITE_ENABLED) throw new Error('MCP write tools are disabled by policy');
       const now = Date.now();
       const session: StoredSession = {
         id: randomUUID(),
@@ -359,6 +362,7 @@ async function handleCall(name: string, args: any): Promise<any> {
       return textContent({ stored: true, id: session.id, shortId: session.id.substring(0, 8) });
     }
     case 'ghcpMem_delete': {
+      if (!MCP_WRITE_ENABLED) throw new Error('MCP write tools are disabled by policy');
       const delId = String(args?.id ?? '');
       const delDb = await loadDatabase();
       const before = delDb.sessions.length;

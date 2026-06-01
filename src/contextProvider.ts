@@ -5,6 +5,7 @@ import { ContextStore } from './contextStore';
 import { CompressedSession, ObservationType, getConfig } from './types';
 import { computeHealth } from './health';
 import { exportSessionMarkdown } from './markdownExport';
+import { estimateSessionTokenSavings, estimateTokenSavingsUsd } from './savings';
 
 const execAsync = promisify(exec);
 
@@ -1282,27 +1283,9 @@ export class ContextProvider implements vscode.Disposable {
       return;
     }
 
-    // GPT-4o input pricing (May 2025): $5 / 1M tokens = $0.000005 per token
-    const PRICE_PER_TOKEN = 0.000005;
-    const usd = (tokens: number) => `$${(tokens * PRICE_PER_TOKEN).toFixed(2)}`;
+    const usd = (tokens: number) => `$${estimateTokenSavingsUsd(tokens).toFixed(4)}`;
     const fmt = (n: number) => n.toLocaleString();
-
-    const RAW_OVERHEAD = 800;
-    const sessionRow = (s: { summary?: string; keyFiles?: string[]; keyTopics?: string[]; decisions?: string[]; problemsSolved?: string[] }) => {
-      const summaryChars = (s.summary ?? '').length;
-      const rawChars = [
-        s.summary ?? '',
-        ...(s.keyFiles ?? []),
-        ...(s.keyTopics ?? []),
-        ...(s.decisions ?? []),
-        ...(s.problemsSolved ?? []),
-      ].join(' ').length + RAW_OVERHEAD;
-      const rawTok = Math.round(rawChars / 4);
-      const compactTok = Math.round(summaryChars / 4);
-      const saved = Math.max(0, rawTok - compactTok);
-      const ratio = compactTok > 0 ? (rawTok / compactTok).toFixed(1) : '—';
-      return { rawTok, compactTok, saved, ratio };
-    };
+    const sessionRow = (s: { summary?: string; keyFiles?: string[]; keyTopics?: string[]; decisions?: string[]; problemsSolved?: string[] }) => estimateSessionTokenSavings(s);
 
     // Today's sessions
     const todaySessions = this.store.getAllSessions().filter(s => {
@@ -1320,14 +1303,15 @@ export class ContextProvider implements vscode.Disposable {
     if (todaySessions.length === 0) {
       stream.markdown('_No sessions captured today yet._\n\n');
     } else {
-      stream.markdown('| Session | Raw tokens | Compact | Saved | Ratio |\n');
-      stream.markdown('|---------|-----------|---------|-------|-------|\n');
+      stream.markdown('| Session | Raw | Compact | Saved | Ratio |\n');
+      stream.markdown('|---------|----:|--------:|------:|------:|\n');
       for (const s of todaySessions.slice(-10)) {
         const r = sessionRow(s);
         const label = (s.summary ?? 'Session').substring(0, 35).replace(/\|/g, '/');
-        stream.markdown(`| ${label}… | ${fmt(r.rawTok)} | ${fmt(r.compactTok)} | **${fmt(r.saved)}** | ${r.ratio}× |\n`);
+        stream.markdown(`| ${label}… | ${fmt(r.rawTokens)} | ${fmt(r.compactTokens)} | **${fmt(r.tokensSaved)}** | ${r.compressionRatio}× |\n`);
       }
-      stream.markdown(`\n**Today total saved: ${fmt(stats.todayEstimatedTokensSaved)} tokens** ≈ ${usd(stats.todayEstimatedTokensSaved)} (GPT-4o pricing)\n\n`);
+      stream.markdown(`\n**Today total saved:** ${fmt(stats.todayEstimatedTokensSaved)} tokens ≈ ${usd(stats.todayEstimatedTokensSaved)} (GPT-4o pricing)\n`);
+      stream.markdown(`**Today raw vs compact:** ${fmt(stats.todayEstimatedRawTokens)} raw tokens → ${fmt(stats.todayEstimatedCompactTokens)} compact tokens\n\n`);
     }
 
     // ── Lifetime ──
@@ -1335,6 +1319,8 @@ export class ContextProvider implements vscode.Disposable {
     stream.markdown(`| Metric | Value |\n`);
     stream.markdown(`|--------|-------|\n`);
     stream.markdown(`| Total tokens saved | **${fmt(stats.lifetimeEstimatedTokensSaved)}** |\n`);
+    stream.markdown(`| Raw tokens represented | **${fmt(stats.lifetimeEstimatedRawTokens)}** |\n`);
+    stream.markdown(`| Compact tokens retained | **${fmt(stats.lifetimeEstimatedCompactTokens)}** |\n`);
     stream.markdown(`| Dollar equivalent | **${usd(stats.lifetimeEstimatedTokensSaved)}** (GPT-4o) |\n`);
     stream.markdown(`| Avg compression ratio | **${stats.avgCompressionRatio}×** |\n`);
     stream.markdown(`| Compact knowledge in memory | **${fmt(stats.totalCompactTokens)} tokens** |\n`);
@@ -1385,15 +1371,30 @@ export class ContextProvider implements vscode.Disposable {
     const date = new Date(s.startTime).toLocaleString();
     const tags = s.userTags.length ? ` · 🏷️ ${s.userTags.join(',')}` : '';
     const branch = s.branchName ? ` · \`${s.branchName}\`` : '';
-    stream.markdown(`- **[${s.observationType}]** \`${s.id.substring(0, 8)}\` · ${date}${branch}${tags}  \n  ${s.summary.substring(0, 180)}\n`);
+    const confidence = this.memoryConfidence(s);
+    stream.markdown(`- **[${s.observationType}]** \`${s.id.substring(0, 8)}\` · ${date}${branch}${tags} · ${confidence.label}  \n  ${s.summary.substring(0, 180)}\n`);
   }
 
   private renderCompact(s: CompressedSession, stream: vscode.ChatResponseStream): void {
     const start = new Date(s.startTime).toLocaleString();
     const dur = Math.round((s.endTime - s.startTime) / 60000);
-    stream.markdown(`### [${s.observationType}] ${start} (${dur} min) · \`${s.id.substring(0, 8)}\`\n\n${s.summary}\n\n`);
+    const confidence = this.memoryConfidence(s);
+    stream.markdown(`### [${s.observationType}] ${start} (${dur} min) · \`${s.id.substring(0, 8)}\` · ${confidence.label}\n\n${s.summary}\n\n`);
     if (s.keyFiles.length) stream.markdown(`**Files:** ${s.keyFiles.slice(0, 5).map(f => `\`${f}\``).join(', ')}\n\n`);
     if (s.keyTopics.length) stream.markdown(`**Topics:** ${s.keyTopics.join(', ')}\n\n`);
+  }
+
+  private memoryConfidence(s: CompressedSession): { label: string; reason: string } {
+    const score =
+      (s.userTags.length ? 2 : 0) +
+      (s.decisions.length ? 2 : 0) +
+      (s.problemsSolved.length ? 1 : 0) +
+      (s.keyTopics.length ? 1 : 0) +
+      (s.keyFiles.length ? 1 : 0) +
+      (s.observationType !== 'unknown' ? 1 : 0);
+    if (score >= 6) return { label: 'high confidence', reason: 'tagged, typed, and decision-bearing' };
+    if (score >= 4) return { label: 'medium confidence', reason: 'multi-signal match' };
+    return { label: 'low confidence', reason: 'lightly supported context' };
   }
 
   private renderFull(s: CompressedSession, stream: vscode.ChatResponseStream): void {
@@ -1406,6 +1407,8 @@ export class ContextProvider implements vscode.Disposable {
     if (s.branchName) stream.markdown(`- **Branch:** \`${s.branchName}\`\n`);
     stream.markdown(`- **Started:** ${start}\n- **Ended:** ${end} (${dur} min)\n`);
     stream.markdown(`- **Events captured:** ${s.rawEventCount} · **Redactions:** ${s.redactionCount}\n`);
+    const savings = estimateSessionTokenSavings(s);
+    stream.markdown(`- **Estimated token savings:** ${savings.tokensSaved} tokens (${savings.rawTokens} raw → ${savings.compactTokens} compact, ${savings.compressionRatio}×)\n`);
     if (s.userTags.length) stream.markdown(`- **User tags:** ${s.userTags.join(', ')}\n`);
     if (s.azureContext) {
       const ac = s.azureContext;

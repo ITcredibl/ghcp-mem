@@ -18,6 +18,7 @@ import { buildPack, parsePack, importPack, uninstallPack, listInstalledPacks, PA
 import { AutosaveTrigger } from './autosave';
 import { MemoryTimelinePanel } from './timelinePanel';
 import { SessionCodeLensProvider } from './sessionCodeLens';
+import { refreshPolicyRedactionRules } from './policySource';
 
 let capture: SessionCapture;
 let compressor: ContextCompressor;
@@ -79,6 +80,9 @@ export async function activate(context: vscode.ExtensionContext) {
   provider = new ContextProvider(store);
   tree = new SessionsTreeProvider(store);
 
+  await syncPolicySource();
+  await maybeShowPrivacyWizard(context);
+
   capture.start();
   provider.register();
 
@@ -91,10 +95,13 @@ export async function activate(context: vscode.ExtensionContext) {
   vscode.window.registerTreeDataProvider('ghcpMem.sessionsView', tree);
 
   // Register the Language Model Tools so Copilot agent mode can auto-invoke memory search + store.
-  context.subscriptions.push(
+  const toolDisposables: vscode.Disposable[] = [
     vscode.lm.registerTool('ghcpMem_search', new MemorySearchTool(store)),
-    vscode.lm.registerTool('ghcpMem_store', new MemoryStoreTool(store)),
-  );
+  ];
+  if (!config.enterpriseMode && config.allowMcpWriteAccess) {
+    toolDisposables.push(vscode.lm.registerTool('ghcpMem_store', new MemoryStoreTool(store)));
+  }
+  context.subscriptions.push(...toolDisposables);
 
   // Auto-register the MCP server so other tools can access GHCP-MEM sessions over the MCP protocol.
   const lmAny = vscode.lm as any;
@@ -163,6 +170,46 @@ export async function activate(context: vscode.ExtensionContext) {
         language: 'markdown',
       });
       await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.runPrivacyWizard', async () => {
+      await runPrivacyWizard(context);
+      updateStatusBar();
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.auditMemory', async () => {
+      const doc = await vscode.workspace.openTextDocument({
+        content: buildAuditReport(store),
+        language: 'markdown',
+      });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.purgeMemory', async () => {
+      const choice = await vscode.window.showQuickPick(
+        [
+          { label: 'Current buffer', description: 'Discard uncompressed events and pending snippets', value: 'buffer' as const },
+          { label: 'Workspace memory', description: 'Delete sessions captured in this workspace', value: 'workspace' as const },
+          { label: 'All memory', description: 'Delete every stored session', value: 'all' as const },
+        ],
+        { title: 'Purge GHCP-MEM data', ignoreFocusOut: true },
+      );
+      if (!choice) return;
+      const confirm = await vscode.window.showWarningMessage(
+        `Purge ${choice.label.toLowerCase()}? This cannot be undone.`,
+        { modal: true },
+        'Purge',
+      );
+      if (confirm !== 'Purge') return;
+      if (choice.value === 'buffer') {
+        capture.clearPending();
+      } else if (choice.value === 'workspace') {
+        await store.clearWorkspace();
+      } else {
+        await store.clear();
+      }
+      updateStatusBar();
+      vscode.window.showInformationMessage(`GHCP-MEM: ${choice.label} purged.`);
     }),
 
     vscode.commands.registerCommand('ghcpMem.clearMemory', async () => {
@@ -476,6 +523,11 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('ghcpMem.exportPack', async () => {
+      const cfg = getConfig();
+      if (cfg.enterpriseMode || !cfg.allowTeamExport) {
+        vscode.window.showWarningMessage('GHCP-MEM: Pack export is disabled by enterprise policy.');
+        return;
+      }
       const name = await vscode.window.showInputBox({
         prompt: 'Pack name (short, no spaces)',
         placeHolder: 'e.g. payments-onboarding',
@@ -558,6 +610,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('ghcpMem.showMcpInfo', async () => {
+      const cfg = getConfig();
       const storePath = path.join(os.homedir(), '.ghcp-mem', 'sessions.json');
       // Locate the installed mcpServer.js (relative to this extension's out/).
       const extUri = vscode.extensions.getExtension('itcredibl.ghcp-mem')?.extensionUri;
@@ -566,7 +619,7 @@ export async function activate(context: vscode.ExtensionContext) {
         '# Connect External MCP Clients to GHCP-MEM',
         '',
         'GHCP-MEM mirrors its memory to `~/.ghcp-mem/sessions.json` so that any',
-        'MCP-compatible client (Cursor, Cline, Windsurf, Claude Desktop, ...) can',
+        'MCP-compatible client (Cursor, Cline, Windsurf, Claude Desktop, GitHub Copilot CLI, ...) can',
         'read the same store via the bundled stdio server.',
         '',
         `- Store file: \`${storePath}\``,
@@ -578,6 +631,22 @@ export async function activate(context: vscode.ExtensionContext) {
         '{',
         '  "mcpServers": {',
         '    "ghcp-mem": {',
+        '      "command": "node",',
+        `      "args": ["${mcpJs.replace(/\\/g, '\\\\')}"]`,
+        '    }',
+        '  }',
+        '}',
+        '```',
+        '',
+        '## GitHub Copilot CLI (/mcp)',
+        '',
+        'Use `/mcp add` in GitHub Copilot CLI, choose a local/stdio server, and point it at the same Node command shown above.',
+        '',
+        '```json',
+        '{',
+        '  "mcpServers": {',
+        '    "ghcp-mem": {',
+        '      "type": "stdio",',
         '      "command": "node",',
         `      "args": ["${mcpJs.replace(/\\/g, '\\\\')}"]`,
         '    }',
@@ -604,6 +673,9 @@ export async function activate(context: vscode.ExtensionContext) {
         '- `ghcpMem_recent(limit?)` — most recent sessions.',
         '- `ghcpMem_timeline(days?, limit?)` — chronological within a window.',
         '- `ghcpMem_get(id)` — full detail by ID or prefix.',
+        cfg.enterpriseMode || !cfg.allowMcpWriteAccess
+          ? '- Write tools are disabled by policy in this environment.'
+          : '- `ghcpMem_store(...)` and `ghcpMem_delete(...)` are available in the MCP server.',
       ].join('\n');
       const doc = await vscode.workspace.openTextDocument({ content: snippet, language: 'markdown' });
       await vscode.window.showTextDocument(doc, { preview: true });
@@ -666,6 +738,11 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── Team Memory Export ──
   context.subscriptions.push(
     vscode.commands.registerCommand('ghcpMem.exportTeamMemory', async () => {
+      const cfg = getConfig();
+      if (cfg.enterpriseMode || !cfg.allowTeamExport) {
+        vscode.window.showWarningMessage('GHCP-MEM: Team export is disabled by enterprise policy.');
+        return;
+      }
       const wsF = vscode.workspace.workspaceFolders?.[0];
       if (!wsF) { vscode.window.showWarningMessage('GHCP-MEM: No workspace open.'); return; }
 
@@ -805,6 +882,7 @@ export async function activate(context: vscode.ExtensionContext) {
         if (compressionTimer) clearInterval(compressionTimer);
         if (idleCheckTimer) clearInterval(idleCheckTimer);
         startCompressionTimer(c.compressionIntervalMinutes, c.idleTimeoutSeconds);
+        void syncPolicySource();
       }
     })
   );
@@ -848,6 +926,22 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand('ghcpMem.showHealth');
       }
     });
+  }
+}
+
+async function syncPolicySource(): Promise<void> {
+  const source = getConfig().policySource;
+  if (!source) {
+    await refreshPolicyRedactionRules(undefined);
+    return;
+  }
+
+  try {
+    const count = await refreshPolicyRedactionRules(source);
+    log('INFO', `Loaded ${count} policy redaction rule(s) from ${source}.`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log('WARN', `Policy source load failed for ${source}: ${message}`);
   }
 }
 
@@ -967,6 +1061,10 @@ async function compressAndStore(): Promise<void> {
       azureTags,
     });
     if (session) {
+      if (!(await confirmPersistSession(session))) {
+        setStatusBarState('idle');
+        return;
+      }
       await store.addSession(session);
       capture.resetStartTime();
       setStatusBarState('idle');
@@ -984,6 +1082,22 @@ async function compressAndStore(): Promise<void> {
     log('ERROR', `compressAndStore failed: ${err instanceof Error ? err.message : String(err)}`);
     throw err;
   }
+}
+
+async function confirmPersistSession(session: CompressedSession): Promise<boolean> {
+  const config = getConfig();
+  if (!config.previewBeforePersist && !config.enterpriseMode) return true;
+
+  const preview = buildSessionPreview(session);
+  const doc = await vscode.workspace.openTextDocument({ content: preview, language: 'markdown' });
+  await vscode.window.showTextDocument(doc, { preview: true });
+  const choice = await vscode.window.showInformationMessage(
+    'Persist this compressed memory snapshot?',
+    { modal: true },
+    'Persist',
+    'Discard',
+  );
+  return choice === 'Persist';
 }
 
 function startCompressionTimer(intervalMinutes: number, idleSeconds = 30): void {
@@ -1025,15 +1139,117 @@ function updateStatusBar(): void {
   const cfg = getConfig();
   const glyph = fillGlyph(stats.totalSessions, cfg.maxStoredSessions);
   const health = computeHealth(store.getAllSessions());
-  statusBarItem.text = `$(history) MEM ${glyph} ${health.score}`;
+  const captureState = capture?.eventCount > 0 ? '●' : '○';
+  const scope = cfg.enterpriseMode ? 'enterprise' : cfg.scope;
+  statusBarItem.text = `$(history) MEM ${captureState} ${glyph} ${health.score}`;
   statusBarItem.tooltip = [
     'GHCP-MEM',
     `${stats.workspaceSessions} session(s) in this workspace, ${stats.totalSessions} total`,
     `Memory health: ${health.score}/100`,
+    `Scope: ${scope}`,
+    `Capture: ${captureState === '●' ? 'active' : 'idle'}`,
     `Pending events: ${capture.eventCount}`,
     `Total redactions: ${stats.totalRedactions}`,
     'Click to capture a snapshot',
   ].join('\n');
+}
+
+async function maybeShowPrivacyWizard(context: vscode.ExtensionContext): Promise<void> {
+  const key = 'ghcpMem.privacyWizardCompleted';
+  if (context.globalState.get<boolean>(key)) return;
+  const choice = await vscode.window.showInformationMessage(
+    'GHCP-MEM privacy setup can lock down capture, snippets, terminal commands, and exports before you start.',
+    'Run Privacy Wizard',
+    'Later',
+  );
+  if (choice === 'Run Privacy Wizard') {
+    await runPrivacyWizard(context);
+  }
+  await context.globalState.update(key, true);
+}
+
+async function runPrivacyWizard(context: vscode.ExtensionContext): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration('ghcpMem');
+  const updates: Record<string, boolean> = {};
+  const questions: Array<[string, string, boolean]> = [
+    ['captureFileEdits', 'Capture file edits?', cfg.get('captureFileEdits', true)],
+    ['captureDiagnostics', 'Capture diagnostics?', cfg.get('captureDiagnostics', true)],
+    ['captureTerminalCommands', 'Capture terminal commands?', cfg.get('captureTerminalCommands', true)],
+    ['captureCodeSnippets', 'Store code snippets from edits?', cfg.get('captureCodeSnippets', true)],
+    ['allowMcpWriteAccess', 'Allow MCP write tools?', cfg.get('allowMcpWriteAccess', true)],
+    ['allowTeamExport', 'Allow team export?', cfg.get('allowTeamExport', true)],
+    ['previewBeforePersist', 'Preview each memory before it is persisted?', cfg.get('previewBeforePersist', false)],
+  ];
+
+  for (const [key, label, current] of questions) {
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: 'Yes', value: true },
+        { label: 'No', value: false },
+      ],
+      { title: label, placeHolder: current ? 'Currently enabled' : 'Currently disabled', ignoreFocusOut: true },
+    );
+    if (!pick) continue;
+    updates[key] = pick.value;
+  }
+
+  const enterprise = await vscode.window.showQuickPick(
+    [
+      { label: 'Enable enterprise mode', value: true },
+      { label: 'Keep standard mode', value: false },
+    ],
+    { title: 'Enable strict enterprise mode?', placeHolder: cfg.get('enterpriseMode', false) ? 'Currently enabled' : 'Currently disabled', ignoreFocusOut: true },
+  );
+  if (enterprise) updates.enterpriseMode = enterprise.value;
+
+  for (const [key, value] of Object.entries(updates)) {
+    await cfg.update(key, value, vscode.ConfigurationTarget.Workspace);
+  }
+  await context.globalState.update('ghcpMem.privacyWizardCompleted', true);
+  vscode.window.showInformationMessage('GHCP-MEM: Privacy settings updated.');
+}
+
+function buildSessionPreview(session: CompressedSession): string {
+  const lines = [
+    '# GHCP-MEM Preview',
+    '',
+    `- Session: \`${session.id}\``,
+    `- Workspace: ${session.workspaceName}`,
+    `- Type: ${session.observationType}`,
+    `- Redactions: ${session.redactionCount}`,
+    `- Events captured: ${session.rawEventCount}`,
+    '',
+    '## Summary',
+    session.summary || '_No summary available_',
+    '',
+    '## Files',
+    ...(session.keyFiles.length ? session.keyFiles.map(f => `- ${f}`) : ['- _None_']),
+    '',
+    '## Decisions',
+    ...(session.decisions.length ? session.decisions.map(d => `- ${d}`) : ['- _None_']),
+  ];
+  return lines.join('\n');
+}
+
+function buildAuditReport(store: ContextStore): string {
+  const sessions = store.getAllSessions().slice().sort((a, b) => b.endTime - a.endTime);
+  const lines = [
+    '# GHCP-MEM Memory Audit',
+    '',
+    '| Session | Workspace | Captured | Redactions | Retention reason |',
+    '|---|---|---:|---:|---|',
+  ];
+  for (const s of sessions.slice(0, 100)) {
+    const reason = s.userTags.includes('pinned')
+      ? 'Pinned'
+      : s.decisions.length > 0
+        ? 'Decision-bearing'
+        : s.keyTopics.length > 0
+          ? 'Topic-bearing'
+          : 'Recent activity';
+    lines.push(`| \`${s.id.substring(0, 8)}\` | ${s.workspaceName} | ${s.rawEventCount} | ${s.redactionCount} | ${reason} |`);
+  }
+  return lines.join('\n');
 }
 
 async function recordSuccessAndMaybePromptForRating(): Promise<void> {

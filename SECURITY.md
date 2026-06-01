@@ -1,12 +1,12 @@
-# Security Policy
+# GHCP-MEM Security
 
 ## Supported versions
 
 | Version | Supported |
 |---|---|
-| 1.3.x (current) | ✅ |
-| 1.2.x | Security fixes only |
-| < 1.2.0 | ❌ |
+| 1.4.x (current) | ✅ |
+| 1.3.x | Security fixes only |
+| < 1.3.0 | ❌ |
 
 ## Reporting a vulnerability
 
@@ -37,6 +37,9 @@ GHCP-MEM is designed with privacy and least-privilege in mind:
 - **No native binaries** — zero compiled dependencies, zero supply-chain attack surface from native code
 - **Workspace artifact is gitignored** — `.github/instructions/session-memory.instructions.md` is never committed unless you explicitly remove it from `.gitignore`
 - **`<private>...</private>` blocks** are stripped before any persistence
+- **Enterprise mode** — disables terminal capture, raw code snippets, MCP write tools, and team export
+- **Preview-before-persist** — lets users inspect a compressed memory snapshot before storage
+- **Policy sources** — remote redaction rules are treated as trusted admin inputs only
 
 ## Known limitations
 

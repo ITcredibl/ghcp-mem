@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run bundle:prod
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          test "$version" = "$tag"
+      - run: npx --yes @vscode/vsce package --out ghcp-mem.vsix --no-dependencies
+      - run: sha256sum ghcp-mem.vsix > ghcp-mem.vsix.sha256
+      - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.json
+      - name: Generate release manifest
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const files = ['ghcp-mem.vsix', 'ghcp-mem.vsix.sha256', 'sbom.json'];
+          const manifest = {
+            version: require('./package.json').version,
+            ref: process.env.GITHUB_REF_NAME,
+            generatedAt: new Date().toISOString(),
+            artifacts: files.map((file) => {
+              const bytes = fs.readFileSync(file);
+              return {
+                file,
+                bytes: bytes.length,
+                sha256: crypto.createHash('sha256').update(bytes).digest('hex')
+              };
+            })
+          };
+          fs.writeFileSync('release-manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          NODE
+          sha256sum release-manifest.json > release-manifest.json.sha256
+      - name: Attest release manifest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: release-manifest.json
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          generate_release_notes: true
+          files: |
+            ghcp-mem.vsix
+            ghcp-mem.vsix.sha256
+            sbom.json
+            release-manifest.json
+            release-manifest.json.sha256
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        with:
+          name: ghcp-mem-release-assets
+          path: |
+            ghcp-mem.vsix
+            ghcp-mem.vsix.sha256
+            sbom.json
+            release-manifest.json
+            release-manifest.json.sha256

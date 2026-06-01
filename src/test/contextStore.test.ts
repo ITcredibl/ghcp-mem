@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { InMemoryMemento } from './__mocks__/vscode';
 import { ContextStore } from '../contextStore';
 import { CompressedSession, computeContentHash } from '../types';
+import { aggregateTokenSavings, estimateSessionTokenSavings } from '../savings';
 
 function makeSession(overrides: Partial<CompressedSession> = {}): CompressedSession {
   const summary = overrides.summary ?? 'sess summary';
@@ -250,4 +251,28 @@ test('ContextStore — getStats excludes non-today sessions from today metrics',
   const stats = store.getStats();
   assert.equal(stats.todaySessions, 0);
   assert.equal(stats.todayEstimatedTokensSaved, 0);
+});
+
+test('Savings estimator — session and overall totals are calculatable', () => {
+  const s1 = makeSession({
+    summary: 'plan release workflow',
+    keyFiles: ['.github/workflows/release.yml', 'package.json'],
+    keyTopics: ['release', 'checksum', 'sbom'],
+    decisions: ['verify package version against tag'],
+    problemsSolved: ['signed release manifest'],
+  });
+  const s2 = makeSession({
+    summary: 'add benchmark report',
+    keyFiles: ['docs/BENCHMARKS.md', 'scripts/bench-search.js'],
+    keyTopics: ['recall@5', 'MRR', 'latency'],
+    decisions: ['report raw and compact tokens'],
+    problemsSolved: ['public benchmark claims'],
+  });
+  const single = estimateSessionTokenSavings(s1);
+  const total = aggregateTokenSavings([s1, s2]);
+  assert.ok(single.rawTokens >= single.compactTokens);
+  assert.ok(single.tokensSaved >= 0);
+  assert.equal(total.sessionCount, 2);
+  assert.ok(total.rawTokens >= total.compactTokens);
+  assert.ok(total.tokensSaved >= single.tokensSaved);
 });

@@ -1,14 +1,12 @@
 # 🧠 GHCP-MEM
 
-### Stop burning tokens on code your AI already read
+### A local, auditable memory layer for Copilot workflows
 
-> **Every time you start a new Copilot chat, the AI re-reads your files, re-learns your architecture, and re-discovers every decision you made — burning tokens just to understand what you wrote, how it works, and why you built it that way.**
+> **GHCP-MEM captures local session context so you can reuse prior decisions, files, and troubleshooting history without rebuilding it from scratch every time.**
 >
-> **That token waste is silent, constant, and completely avoidable.**
->
-> GHCP-MEM gives Copilot a persistent memory layer so it can recall what it already knew instead of starting from zero. Tokens go to moving forward — not catching up.
+> GHCP-MEM gives Copilot a persistent memory layer so it can reuse prior context instead of starting from zero. Tokens go to moving forward — not catching up.
 
-**Zero dependencies · Zero network ports · Native Copilot + MCP · Secret-redacted by default**
+**Local-first · Copilot chat participant · MCP stdio · Redaction-first**
 
 [![VS Code Extension](https://img.shields.io/badge/VS_Code-1.93+-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![GitHub Copilot](https://img.shields.io/badge/GitHub_Copilot-Native-24292e?style=for-the-badge&logo=github&logoColor=white)](https://github.com/features/copilot)
@@ -64,9 +62,9 @@ You can also query explicitly with `@mem` commands, `#ghcpMemSearch`, and MCP.
 
 It surfaces memory through:
 
-- the **`@mem`** chat participant (20 commands including `/savings` to see estimated tokens recovered)
+- the **`@mem`** chat participant (20 commands including `/savings` to see per-session and lifetime token savings)
 - native Copilot **agent tools** (`#ghcpMemSearch`, `#ghcpMemStore`)
-- a bundled **stdio MCP server** for Cursor, Cline, Windsurf, and Claude Desktop
+- a bundled **stdio MCP server** for Cursor, Cline, Windsurf, Claude Desktop, and GitHub Copilot CLI
 
 Why engineers trust it:
 
@@ -77,6 +75,8 @@ Why engineers trust it:
 | **Opens zero network ports** | No GHCP-MEM backend or telemetry. LM compression uses your existing Copilot subscription only |
 | **Stores data locally** | Memory stays on your machine under your control |
 | **Redacts secrets by default** | 26-rule dual-pass redaction + custom regex rules + `<private>...</private>` stripping |
+| **Enterprise privacy controls** | Strict mode disables terminal capture, raw snippets, team export, and MCP write tools |
+| **Supports enterprise policy injection** | Optional remote policy URL appends centrally managed redaction rules on startup |
 | **Idle-triggered compression** | Auto-flush sessions when editor is inactive (configurable 0–300s timeout) |
 | **Enterprise compliance modes** | User-defined regex redaction rules for FinTech (PCI-DSS), Healthcare (HIPAA), or custom compliance |
 | **Understands Azure workflows** | Azure subsystem tagging, live `az` snapshotting, Azure-specific redaction |
@@ -130,7 +130,7 @@ Use:
 - `#ghcpMemSearch`
 - `#ghcpMemStore`
 
-Or connect the bundled MCP server from clients like Cursor, Cline, Windsurf, or Claude Desktop.
+Or connect the bundled MCP server from clients like Cursor, Cline, Windsurf, Claude Desktop, or GitHub Copilot CLI.
 
 ---
 
@@ -142,7 +142,7 @@ Stop burning tokens on catch-up. Install GHCP-MEM and capture your first snapsho
 2. Open any workspace
 3. Run **`GHCP-MEM: Capture Session Snapshot Now`**
 4. Open Copilot Chat and try **`@mem /recent`**
-5. Run **`@mem /savings`** after a few sessions to see exactly how many tokens you've recovered
+5. Run **`@mem /savings`** after a few sessions to see session-by-session and lifetime token savings
 
 <details>
 <summary><b>📺 Watch the install in 5 seconds</b></summary>
@@ -186,7 +186,7 @@ With GHCP-MEM, the catch-up tax disappears:
 - you resume work in seconds instead of spending the first 10 minutes re-explaining
 - enterprise machines stay compliant — no ports, no cloud, no native binaries
 - Azure-heavy teams get memory that understands their stack natively
-- **`@mem /savings` shows an estimated token recovery** and GPT-4o dollar-equivalent — labeled as an estimate based on session compression ratios
+- **`@mem /savings` shows an estimated token recovery** and GPT-4o dollar-equivalent — broken down by session and lifetime totals
 
 That is the outcome: **tokens go to building, not catching up.**
 
@@ -285,7 +285,7 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 | `@mem /recap [7d\|30d\|90d]` | Narrative engineering recap for sprint retros |
 | `@mem /related` | Sessions that touched the active file, grouped by recency |
 | `@mem /decisions [keyword]` | ADR-style decision log deduped across all sessions |
-| `@mem /savings` | Lifetime token savings and GPT-4o dollar-equivalent |
+| `@mem /savings` | Session and lifetime token savings plus GPT-4o dollar-equivalent |
 | `@mem /whereami` | Interruption-recovery brief: what you were doing, where you left off, your next step |
 | `@mem /debt` | Technical debt ledger — TODO/FIXME/HACK signals grouped by age and file |
 | `@mem /adr [topic]` | Formal Architecture Decision Record auto-generated from session history |
@@ -374,7 +374,7 @@ Copilot agent mode can call these without a separate MCP setup:
 | `/export` | `@mem /export a1b2c3d4` |
 | `/azure` | `@mem /azure key-vault` |
 | `/health` | `@mem /health` |
-| `/savings` | `@mem /savings` — token savings breakdown with dollar-equivalent |
+| `/savings` | `@mem /savings` — per-session and lifetime token-savings breakdown with dollar-equivalent |
 | `/related` | `@mem /related` — sessions touching the currently open file |
 | `/decisions` | `@mem /decisions` or `@mem /decisions auth` — ADR-style decision log |
 | `/standup` | `@mem /standup` or `@mem /standup yesterday` — AI daily standup note |
@@ -585,4 +585,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](docs/DEMO.md) · [Compare memory tools](docs/COMPARISON.md) · [Uninstall guide](docs/UNINSTALL.md) · [Configuration reference](docs/CONFIGURATION.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
-<sub>**v1.4.8** · zero native deps · zero ports · local-first memory for Copilot</sub>
+<sub>**v1.4.9** · local-first memory for Copilot</sub>

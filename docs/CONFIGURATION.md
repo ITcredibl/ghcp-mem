@@ -63,6 +63,7 @@ All settings live under the `ghcpMem` namespace and can be edited in VS Code Set
 |---|---|---|---|
 | `ghcpMem.redactSecrets` | boolean | `true` | Run dual-pass redaction (24 patterns) on all captured text before storage. Strongly recommended. |
 | `ghcpMem.honorPrivateTags` | boolean | `true` | Exclude content wrapped in `<private>...</private>` markers from persistence. |
+| `ghcpMem.policySource` | string | `""` | Optional remote URL to a validated JSON array of redaction rules. Loaded on startup and after settings changes, then appended to the built-in policy set. |
 
 ---
 
@@ -109,6 +110,10 @@ All settings live under the `ghcpMem` namespace and can be edited in VS Code Set
 ```
 
 Forces 28-day retention and repo-scoped retrieval to match GitHub's hosted Copilot Memory behaviour.
+
+### GitHub Copilot CLI + MCP
+
+GitHub Copilot CLI can attach to the bundled stdio MCP server with its `/mcp` command. Use the extension command **GHCP-MEM: Show External MCP Client Config** to copy the current server path, then add the same `node <extension>/out/mcpServer.js` command in Copilot CLI's MCP configuration.
 
 ### Repo-scoped team setup
 

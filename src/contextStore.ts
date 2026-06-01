@@ -5,6 +5,7 @@ import { redact } from './redactor';
 import { extractTerms as sharedExtractTerms, keywordScore as sharedKeywordScore, computeAvgDocLen } from './searchCore';
 import { validateSessions } from './validator';
 import { getRepoScopeSync } from './repoScope';
+import { aggregateTokenSavings } from './savings';
 
 const DB_KEY = 'ghcpMem.contextDatabase';
 const DB_VERSION = 2;
@@ -480,6 +481,25 @@ export class ContextStore implements vscode.Disposable {
     await this.persist();
   }
 
+  async clearWorkspace(): Promise<number> {
+    const wsId = vscode.workspace.workspaceFolders?.[0]?.uri.toString();
+    if (!wsId) return 0;
+    const before = this.db.sessions.length;
+    const toRemove = this.db.sessions.filter(s => s.workspaceId === wsId);
+    for (const s of toRemove) this.removeFromIndex(s);
+    this.db.sessions = this.db.sessions.filter(s => s.workspaceId !== wsId);
+    const removed = before - this.db.sessions.length;
+    if (removed > 0) {
+      this.db.lastUpdated = Date.now();
+      await this.persist();
+    }
+    return removed;
+  }
+
+  async purgeSession(id: string): Promise<boolean> {
+    return this.deleteSession(id);
+  }
+
   async exportToJson(): Promise<string> {
     return JSON.stringify(this.db, null, 2);
   }
@@ -529,64 +549,27 @@ export class ContextStore implements vscode.Disposable {
         && d.getDate() === today.getDate();
     };
 
-    /**
-     * Estimate tokens from character count (GPT-4 / Claude average: ~4 chars/token).
-     * We compare two views of each session:
-     *
-     *   rawChars    — what you'd have to paste manually without GHCP-MEM:
-     *                 all structured fields concatenated. We also add a constant
-     *                 per-session overhead (~800 chars) that represents the raw
-     *                 VS Code activity events that were captured and compressed
-     *                 into this session (file edits, terminal cmds, diagnostics).
-     *
-     *   compactChars — what GHCP-MEM actually injects: just the summary string.
-     *
-     * The difference is the per-session "injection savings" — context you got for
-     * free because GHCP-MEM already had it memorised.
-     */
-    const RAW_EVENT_OVERHEAD_CHARS = 800; // conservative estimate per session
-    const estimateTokens = (chars: number) => Math.round(chars / 4);
-
-    const sessionSavings = (s: { summary?: string; keyFiles?: string[]; keyTopics?: string[]; decisions?: string[]; problemsSolved?: string[] }) => {
-      const summaryChars = (s.summary ?? '').length;
-      const rawChars = [
-        s.summary ?? '',
-        ...(s.keyFiles ?? []),
-        ...(s.keyTopics ?? []),
-        ...(s.decisions ?? []),
-        ...(s.problemsSolved ?? []),
-      ].join(' ').length + RAW_EVENT_OVERHEAD_CHARS;
-      const ratio = summaryChars > 0 ? rawChars / summaryChars : 1;
-      return {
-        tokensSaved: Math.max(0, estimateTokens(rawChars) - estimateTokens(summaryChars)),
-        rawTokens: estimateTokens(rawChars),
-        compactTokens: estimateTokens(summaryChars),
-        compressionRatio: Math.round(ratio * 10) / 10,
-      };
-    };
-
     const todaySessions = this.db.sessions.filter(s => isSameLocalDay(s.endTime));
-    const todayEstimatedTokensSaved = todaySessions.reduce((acc, s) => acc + sessionSavings(s).tokensSaved, 0);
-    const lifetimeEstimatedTokensSaved = this.db.sessions.reduce((acc, s) => acc + sessionSavings(s).tokensSaved, 0);
+    const todaySavings = aggregateTokenSavings(todaySessions);
+    const lifetimeSavings = aggregateTokenSavings(this.db.sessions);
 
-    const ratios = this.db.sessions.map(s => sessionSavings(s).compressionRatio).filter(r => r > 1);
+    const ratios = this.db.sessions.map(s => aggregateTokenSavings([s]).compressionRatio).filter(r => r > 1);
     const avgCompressionRatio = ratios.length
       ? Math.round((ratios.reduce((a, b) => a + b, 0) / ratios.length) * 10) / 10
       : 1;
-
-    // Total tokens currently held in compact form (what GHCP-MEM injects)
-    const totalCompactTokens = this.db.sessions.reduce(
-      (acc, s) => acc + estimateTokens((s.summary ?? '').length), 0
-    );
 
     return {
       totalSessions: this.db.sessions.length,
       workspaceSessions: ws.length,
       todaySessions: todaySessions.length,
-      todayEstimatedTokensSaved: Math.round(todayEstimatedTokensSaved),
-      lifetimeEstimatedTokensSaved: Math.round(lifetimeEstimatedTokensSaved),
+      todayEstimatedTokensSaved: Math.round(todaySavings.tokensSaved),
+      todayEstimatedRawTokens: Math.round(todaySavings.rawTokens),
+      todayEstimatedCompactTokens: Math.round(todaySavings.compactTokens),
+      lifetimeEstimatedTokensSaved: Math.round(lifetimeSavings.tokensSaved),
+      lifetimeEstimatedRawTokens: Math.round(lifetimeSavings.rawTokens),
+      lifetimeEstimatedCompactTokens: Math.round(lifetimeSavings.compactTokens),
       avgCompressionRatio,
-      totalCompactTokens,
+      totalCompactTokens: Math.round(lifetimeSavings.compactTokens),
       oldestSession: this.db.sessions.length ? this.db.sessions[0].startTime : null,
       newestSession: this.db.sessions.length ? this.db.sessions[this.db.sessions.length - 1].endTime : null,
       totalRedactions: this.db.sessions.reduce((a, s) => a + (s.redactionCount ?? 0), 0),

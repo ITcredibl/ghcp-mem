@@ -1,8 +1,8 @@
 {
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
-  "description": "Stops Copilot burning tokens re-reading code it already knew. Persistent session memory with zero dependencies, zero ports, local-first storage, and built-in secret redaction.",
-  "version": "1.4.8",
+  "description": "A local, auditable session-memory layer for VS Code and GitHub Copilot, built for engineers who need persistent project context without relying on a cloud memory backend.",
+  "version": "1.4.9",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -57,6 +57,18 @@
       {
         "command": "ghcpMem.showContext",
         "title": "GHCP-MEM: Show Stored Context"
+      },
+      {
+        "command": "ghcpMem.runPrivacyWizard",
+        "title": "GHCP-MEM: Run Privacy Wizard"
+      },
+      {
+        "command": "ghcpMem.auditMemory",
+        "title": "GHCP-MEM: Audit Memory"
+      },
+      {
+        "command": "ghcpMem.purgeMemory",
+        "title": "GHCP-MEM: Purge Memory..."
       },
       {
         "command": "ghcpMem.clearMemory",
@@ -531,6 +543,31 @@
           "default": true,
           "description": "Capture git operations"
         },
+        "ghcpMem.enterpriseMode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Strict mode for regulated environments. Disables terminal capture, raw snippets, team export, and MCP write tools, and stores only redacted summaries."
+        },
+        "ghcpMem.captureCodeSnippets": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Store a short redacted snippet for file edits. Disabled automatically in enterprise mode."
+        },
+        "ghcpMem.allowMcpWriteAccess": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Allow MCP write tools such as memory-store. Disabled automatically in enterprise mode."
+        },
+        "ghcpMem.allowTeamExport": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Allow team export and memory-pack export flows. Disabled automatically in enterprise mode."
+        },
+        "ghcpMem.previewBeforePersist": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show a preview before a compressed memory snapshot is persisted."
+        },
         "ghcpMem.contextRetrievalCount": {
           "type": "number",
           "default": 5,
@@ -586,12 +623,27 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string", "description": "Rule label (e.g., 'PII-SSN')" },
-              "pattern": { "type": "string", "description": "JavaScript regex (without delimiters), e.g., '\\d{3}-\\d{2}-\\d{4}'" },
-              "replacement": { "type": "string", "description": "Replacement text. Defaults to '[REDACTED:custom]'" },
-              "flags": { "type": "string", "description": "Regex flags (g, i, m, etc.). Defaults to 'g'" }
+              "name": {
+                "type": "string",
+                "description": "Rule label (e.g., 'PII-SSN')"
+              },
+              "pattern": {
+                "type": "string",
+                "description": "JavaScript regex (without delimiters), e.g., '\\d{3}-\\d{2}-\\d{4}'"
+              },
+              "replacement": {
+                "type": "string",
+                "description": "Replacement text. Defaults to '[REDACTED:custom]'"
+              },
+              "flags": {
+                "type": "string",
+                "description": "Regex flags (g, i, m, etc.). Defaults to 'g'"
+              }
             },
-            "required": ["name", "pattern"]
+            "required": [
+              "name",
+              "pattern"
+            ]
           },
           "default": [],
           "description": "User-defined regex redaction rules applied after the built-in 26-rule set (enterprise compliance modes)"
@@ -648,6 +700,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Mirror GitHub Copilot's agentic-memory contract: 28-day retention and repo-scoped retrieval. When enabled, overrides `#ghcpMem.retentionDays#` and `#ghcpMem.scope#`."
+        },
+        "ghcpMem.policySource": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional remote URL to a validated JSON array of redaction rules. Loaded on startup and after settings changes, then appended to the built-in policy set."
         }
       }
     },
@@ -655,8 +712,16 @@
       {
         "id": "ghcpMem.getStarted",
         "title": "Get started with GHCP-MEM",
-        "description": "Persistent, redacted session memory for GitHub Copilot — set up in three steps.",
+        "description": "Persistent, redacted session memory for GitHub Copilot — set up in four steps.",
         "steps": [
+          {
+            "id": "privacy-wizard",
+            "title": "Choose your privacy posture",
+            "description": "Run the privacy wizard to lock down capture, snippets, terminal commands, and exports before your first session.\n[Run privacy wizard](command:ghcpMem.runPrivacyWizard)",
+            "completionEvents": [
+              "onCommand:ghcpMem.runPrivacyWizard"
+            ]
+          },
           {
             "id": "open-view",
             "title": "Open the Sessions view",

@@ -1,6 +1,6 @@
 # GHCP-MEM Threat Model
 
-> Status: **v1.5.0**, May 2026 · maintained alongside [SECURITY.md](../SECURITY.md)
+> Status: **v1.6.0**, June 2026 · maintained alongside [SECURITY.md](../SECURITY.md)
 >
 > This document complements `SECURITY.md` (which is the reporting / disclosure / security-model summary) with a formal threat enumeration. The goal is to make every attack surface and every mitigation explicit, so enterprise reviewers can map our controls onto their own risk register without guessing.
 

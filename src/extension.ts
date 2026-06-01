@@ -6,7 +6,8 @@ import * as fsSync from 'fs';
 import { SessionCapture } from './sessionCapture';
 import { ContextCompressor } from './contextCompressor';
 import { ContextStore } from './contextStore';
-import { ContextProvider } from './contextProvider';
+import { ContextProvider, renderClaimList } from './contextProvider';
+import { effectiveConfidence } from './decay';
 import { SessionsTreeProvider, TreeNode } from './sessionsView';
 import { MemorySearchTool, MemoryStoreTool, MemoryAuditTool } from './memoryTool';
 import { getEmbedder } from './embeddings';
@@ -595,8 +596,11 @@ export async function activate(context: vscode.ExtensionContext) {
         if (confirm !== 'Import') return;
         const res = await importPack(store, pack);
         updateStatusBar();
+        const conflictsTail = res.conflictsRaised
+          ? ` ⚠️ ${res.conflictsRaised} potential conflict(s) raised — run \`@mem /conflicts\` to review.`
+          : '';
         vscode.window.showInformationMessage(
-          `GHCP-MEM: Imported ${res.imported} session(s) from pack "${pack.name}"${res.skipped ? ` (${res.skipped} already present)` : ''}.`
+          `GHCP-MEM: Imported ${res.imported} session(s) from pack "${pack.name}"${res.skipped ? ` (${res.skipped} already present)` : ''}.${conflictsTail}`
         );
       } catch (err) {
         vscode.window.showErrorMessage(`GHCP-MEM: Pack import failed — ${err instanceof Error ? err.message : String(err)}`);
@@ -1490,10 +1494,24 @@ function formatSessionDetail(s: CompressedSession): string {
     s.summary,
     '',
   ];
+  if (typeof s.confidence === 'number') {
+    const eff = effectiveConfidence(s) ?? s.confidence;
+    const emoji = eff >= 0.75 ? '🟢' : eff >= 0.5 ? '🟡' : '🔴';
+    const mode = s.compressorMode ? ` (${s.compressorMode})` : '';
+    const trunc = s.eventLogTruncated ? ', event log truncated' : '';
+    const decayHint = Math.abs(eff - s.confidence) > 0.02
+      ? ` — original ${s.confidence.toFixed(2)}, decayed to ${eff.toFixed(2)}`
+      : '';
+    lines.push(`**Trust:** ${emoji} confidence ${eff.toFixed(2)}${mode}${trunc}${decayHint}`);
+  }
   if (s.keyFiles.length) lines.push(`**Files:** ${s.keyFiles.join(', ')}`);
   if (s.keyTopics.length) lines.push(`**Topics:** ${s.keyTopics.join(', ')}`);
-  if (s.decisions.length) lines.push(`**Decisions:** ${s.decisions.join('; ')}`);
-  if (s.problemsSolved.length) lines.push(`**Solved:** ${s.problemsSolved.join('; ')}`);
+  if (s.decisions.length) {
+    lines.push(`**Decisions:** ${renderClaimList(s.decisions, s.decisionEvidence)}`);
+  }
+  if (s.problemsSolved.length) {
+    lines.push(`**Solved:** ${renderClaimList(s.problemsSolved, s.problemEvidence)}`);
+  }
   if (s.userTags.length) lines.push(`**Tags:** ${s.userTags.join(', ')}`);
   if (s.azureContext) {
     const ac = s.azureContext;

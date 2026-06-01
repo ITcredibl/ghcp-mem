@@ -6,6 +6,93 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.0] — 2026-06-01
+
+**Production-grade memory upgrade.** Seven incremental phases that take GHCP-MEM from "a session summarization tool" to a memory system developers can trust: every claim is grounded in evidence, every ranking is provenance-aware, every memory has a confidence that decays over time, and every search hop carries the full decision narrative. 136 new tests (153 → 289), 0 native deps, 0 schema migrations, fully backward-compatible with stores captured under 1.5.x.
+
+### Added — Phase 1: grounding layer
+- **Evidence-citation gate** (`src/contextCompressor.ts`, `src/types.ts`). The compressor prompt now generates a numbered `EVIDENCE TABLE` from the event log and requires the LM to cite IDs (`E1`, `E5`, …) for every `decision` and `problemsSolved` entry. Claims with zero valid citations are dropped at write time — the mechanism that eliminates the hallucinated-decision failure mode. Legacy `string[]` decisions are also dropped (no grounding possible).
+- **SHA-anchored validator** (`src/validator.ts`, `src/sessionCapture.ts`). Each `file_edit` now captures the post-edit `contentHash` via `semanticTextSignature`. The validator re-hashes the file on retrieval and classifies it `verified` / `drifted` / `missing` / `neutral`; a new `groundedFreshness` field weights drift at 0.5 so a session whose files have moved away from capture-time content no longer scores 1.0. The store's `filterByFreshness` consumes `groundedFreshness` in preference to the legacy `freshness`.
+- **Soft candidate union** (`src/contextStore.ts:search`). Replaced the hard inverted-index intersection with a union: a single rare-term miss no longer zeroes recall. Added `matchedTermsRatio * 0.25` as a fusion signal so the soft-union recall lift doesn't let a 1-of-4 match outrank a 4-of-4.
+- **Reservoir sampling** (`src/contextCompressor.ts:buildEventLog`). Replaced head-30 / tail-70 middle-truncation with importance-weighted retention: diagnostics, terminals, git ops, debug, tasks, and file lifecycle events survive first; file edits are kept by impact (changeCount desc); `file_open`/`file_close` drop first under pressure. Sessions whose log overflows the budget get `eventLogTruncated: true` and a confidence haircut.
+- **Per-session `confidence` ∈ [0, 1]** (`computeConfidence` in `contextCompressor.ts`). Derived from evidence breadth (≥2 distinct files +0.2), compressor mode (+0.1 for lm), rule classifier agreement (+0.1), redaction noise (−0.2 if >5 hits), and event-log truncation (−0.1). Surfaced as 🟢/🟡/🔴 emoji in injected markdown and detail views.
+
+### Added — Phase 2: trust + correction mechanics
+- **Symbol-anchored evidence** (`src/sessionCapture.ts:findEnclosingSymbol`). When an edit batch flushes, the dominant edit range is resolved via `vscode.executeDocumentSymbolProvider` to `<filePath>#<symbolName>` (e.g. `src/auth.ts#hashPassword`) and stored on `FileEditData.symbolId`, propagating to `Evidence.symbolId`. Async + best-effort — never blocks capture.
+- **Query intent + co-occurrence expansion** (new `src/queryIntent.ts` + `src/queryExpansion.ts`). Queries are bucketed `decision` / `problem` / `entity` / `recent` / `general` via regex; each intent gets a per-component weight multiplier. Expansion walks the inverted index for co-occurring terms (filtered by `maxGlobalFrequency` to skip stopword-like terms) to recover matches when the user phrases the query differently from capture.
+- **Six new trust commands** (`src/contextProvider.ts`, `package.json`):
+  - `/verify <id>` — per-file `verified` / `drifted` / `missing` breakdown
+  - `/correct <id> <text>` — creates a linked correction session at `confidence: 1.0` and supersedes the original
+  - `/supersede <newer> <older>` — manual supersession; auto-acknowledges matching conflict warnings
+  - `/retract <id> [reason]` / `/retract undo <id>` — excludes from retrieval/injection; reversible
+  - `/accept <id>` and `/reject <id>` — reinforcement signal pumped into the ranker
+- **Local reinforcement telemetry** on every `CompressedSession.usage`: `retrieved`, `lastRetrievedAt`, `accepted`, `rejected`, `lastInteractionAt`. `search()` bumps `retrieved` on returned IDs (throttled 5 s persist via `flushTelemetry`); ranker adds `log(1+retrieved)*0.1` reinforcement and `(accepted − rejected)*0.05` feedback.
+- **Memory Inspector** (`src/timelinePanel.ts`). Cards now show trust badge, supersession/retraction/correction status chips, usage counters, clickable 📎 file-evidence chips per decision (jump to file), and 🔍 Verify · ✏️ Correct · 🚫 Retract action buttons on hover. Retracted cards dim; superseded cards desaturate.
+
+### Added — Phase 3: entity layer + lineage + decay + eval
+- **Entity aggregation** (new `src/entity.ts`). `buildEntityRecord(key, sessions)` rolls up every session touching a file or LSP symbol into a single record: decisions, problems, topics, observation-type breakdown, recent-sessions list, supersession lineage chain, and an `allSupersededOrRetracted` flag. `/entity <path>` (or `<path>#<symbol>`) chat command renders it; falls back to the active editor's file when called with no args.
+- **Multi-hop retrieval** (`src/contextStore.ts:getLineage` + `enrichWithMultiHop`). `/search` results now show inline `🧭 Lineage: A → B → C` and `🔗 See also: @mem /entity X` hints — one retrieval hop carries the full narrative + entity pointers instead of forcing follow-up queries.
+- **Time-based confidence decay** (new `src/decay.ts`). Pure `effectiveConfidence(session, now)` with 60-day half-life, capped at 30% haircut. Recent retrieval / accept resets the decay clock. Integrated into `search()` ranking and the trust badge renderer; the original `confidence` is preserved on disk so we never destroy provenance.
+- **nDCG@K + gold-corpus eval gate** (`src/eval.ts`, `scripts/eval-check.js`, new `scripts/eval-gold.json`). New `ndcgAtK()` and `runGoldEval(store, queries)`. `scripts/eval-check.js --gold <path>` runs the gate against a hand-curated 12-query corpus; baseline gains an `ndcg` floor. Regression on any of recall@5 / MRR / nDCG@5 fails the gate.
+
+### Added — Phase 4: snippet layer + conflicts + causal graph
+- **Snippet-level retrieval** (new `src/snippets.ts`). `snippetsFromSession` decomposes each session into typed `{summary, decision, problem, topic}` snippets (derived, not stored — no schema migration). `ContextStore.searchSnippets` ranks via BM25 + recency + decayed confidence + supersession penalty. `/snippet <query>` returns chunk-level results with their source session ID so the developer can drill in with `/detail`. Closes the "session-only granularity" weakness from the original architectural critique.
+- **Heuristic conflict detection** (new `src/conflicts.ts`). `addSession` scans new decisions for 12 contradiction markers (`instead of`, `no longer`, `switched from`, `deprecated`, `replaced`, `abandoned`, `rolling back`, `reverted from`, `moved away from`, …) and matches against older sessions sharing files or topics. Warnings surface via `/conflicts`; `/supersede` auto-acknowledges; `/conflicts dismiss <id> [reason]` for manual ignore. Detection is best-effort — failures never block capture.
+- **Cross-session causal graph** (new `src/causalGraph.ts`). `getCausalNeighbors(id, sessions)` returns predecessors + successors sharing key files within ±30 days. Semantic edge labels include `introduced_issue_fixed_by` (feature→bugfix), `extends` (feature→refactor), `tests` (feature→test), `continues_work_from` (fallback). `/lineage <id>` renders the chronological chain with shared-files chips.
+
+### Added — Phase 5: adaptive ranking + federated packs + NER-lite
+- **Adaptive ranking weights** (new `src/adaptiveWeights.ts`). Per-signal multipliers (`keyword`, `recency`, `confidence`, `reinforcement`, `feedback`) learned from accept/reject telemetry via avg-of-accepted vs avg-of-rejected delta. Bounded `[0.75, 1.25]`, capped at ±5% per round, requires ≥10 samples before kicking in. Persisted under its own `ghcpMem.adaptiveWeights` `globalState` key. `ContextStore` snapshots per-signal values at search time and feeds them back on accept/reject; new `getAdaptiveWeights`, `getAdaptiveSampleCount`, `resetAdaptiveWeights` accessors.
+- **Federated pack lineage merge** (`src/packs.ts`). `importPack` now returns `conflictsRaised` count; supersession links (`supersedes` / `supersededBy` / `correctionOf`) and `retractedReason` propagate across the import boundary. The import status-bar message surfaces conflict count with `@mem /conflicts` pointer for follow-up review.
+- **Custom-entity redaction (NER-lite, no ML)** (`src/redactor.ts`, `src/types.ts`, new `ghcpMem.customSensitiveEntities` config). Each entry compiles to a literal, case-insensitive, word-boundary-anchored regex. Multi-word entries handled via `\s+` substitution; respects identifier boundaries (won't mis-match `"Project Hydra"` inside `ProjectHydraService`). Use for organisation, project, or codename terms that don't match a built-in pattern.
+
+### Added — Phase 6: explainability + visualisation
+- **`/why <query> :: <id>` — score-decomposition explainer** (new `src/explain.ts`). Re-runs the exact fusion math used by `search()` but emits a per-component report: keyword rank, recency+decay, workspace boost, match ratio, confidence, decision/problem intent boosts, supersession penalty, reinforcement, feedback — each with sign, magnitude, and learned-weight delta. Contributions sorted by magnitude so the dominant signals are at the top. The single highest-leverage trust UX in the release: when a ranking is wrong, developers can finally see why.
+- **`/graph [file:<path>]` — Mermaid decision-graph export** (new `src/graphExport.ts`). Fenced ` ```mermaid ` block ready to paste into a PR/ADR/docs. One node per session (color-styled by observation type, dimmed if retracted); supersession (solid `-->`), correction (dashed `-.->`), and bugfix-after-feature causal (dotted `==>`) edges.
+- **Memory Inspector — learned-ranker surface** (`src/timelinePanel.ts`). New "🎚 Learned ranker" header card shows per-signal multipliers with color-coded delta from 1.00 and running 👍/👎 sample count; hidden during cold-start (defaults all 1.0) so it doesn't clutter the UI before learning kicks in.
+
+### Added — Phase 7: MCP parity + compliance
+- **Six new MCP tools** (`src/mcpServer.ts`) — every chat command above now has an MCP-tool equivalent so Cursor, Cline, Windsurf, Claude Desktop, and the Copilot CLI all get the full surface: `ghcpMem_entity`, `ghcpMem_snippets`, `ghcpMem_conflicts`, `ghcpMem_lineage`, `ghcpMem_explain`, `ghcpMem_graph`. All reuse the same pure-function helpers as the chat path — single source of truth.
+- **Compliance / audit report** (new `src/compliance.ts`, `/compliance` chat command). One-shot security posture: total/active/retracted/superseded/correction counts, evidence coverage %, sessions with SHA-anchored hashes, compressor-mode breakdown, truncated-event-log count, mean stored vs effective confidence, 🟢/🟡/🔴 confidence buckets, reinforcement signal usage, pending heuristic conflicts, oldest/newest spread, custom sensitive entities in effect. Ideal for enterprise security reviews.
+
+### Schema changes (all additive, all optional)
+Backward-compatible across every storage surface. `CompressedSession` gained these optional fields:
+- `decisionEvidence?: Evidence[][]`, `problemEvidence?: Evidence[][]` — parallel-array citation provenance
+- `keyFileHashes?: Record<string, string>` — SHA-grounded validation snapshot
+- `confidence?: number`, `compressorMode?: 'lm' | 'fallback'`, `eventLogTruncated?: boolean` — trust telemetry
+- `supersedes?: string`, `supersededBy?: string`, `retracted?: boolean`, `retractedReason?: string`, `correctionOf?: string` — supersession + correction graph
+- `usage?: { retrieved, lastRetrievedAt, accepted, rejected, lastInteractionAt }` — reinforcement telemetry
+
+`FileEditData` gained `contentHash?: string` and `symbolId?: string`. `Evidence` (new) carries `kind`, `filePath`, `fileHash`, `symbolId`, `eventIndex`, `capturedAt`.
+
+`PluginConfig` gained `customSensitiveEntities: string[]` (default `[]`).
+
+No DB version bump required — every new field is optional and absent on legacy rows.
+
+### Tests
++136 tests (153 → 289). Six new suites added: `groundingPhase1` (compressor + render), `groundingPhase1.store` (ContextStore + renderer), `groundingPhase2`, `groundingPhase3`, `groundingPhase4`, `groundingPhase5`, `groundingPhase6`, `groundingPhase7`. Plus updated `mcpServer.test.ts`, `validator.test.ts`, and `contextCompressor.test.ts` to cover the new behaviour.
+
+### Closed weaknesses
+All ten weaknesses from the upstream architectural critique are now addressed: hallucinated decisions (evidence gate), session-only granularity (snippet layer), stat-only validation (SHA grounding), hard term intersection (soft union), no conflict detection (heuristic + pack-aware), middle-truncation (reservoir), rule-only redaction ceiling (custom entities), no reinforcement loop (telemetry + adaptive), dual-path drift (single scorer — pre-existing), binary/implicit confidence (per-session + decay + adaptive).
+
+### Bundle
+`out/extension.js` 162 KB → 208 KB (+46 KB for nine new modules + UI). `out/mcpServer.js` 30 KB → 38 KB (+8 KB for six new tools). Zero native dependencies — `npm install` does no compilation step.
+
+### Added — Phase 9: auto-routing primer + cost recommender
+- **Routing primer in the auto-injected memory file** (`src/contextProvider.ts:buildStartupContext`). Every new Copilot session now opens with a short stanza that teaches the agent: prefer GHCP-MEM MCP/chat tools for history questions ("why / what / how / who / when") and only open files when the task is a MODIFY. The primer cites the concrete tools (`@mem /entity`, `@mem /snippet`, `@mem /search`, `@mem /lineage`, `@mem /why`, `@mem /route`) with approximate token costs so the agent can self-route from message one — no extra round-trip required.
+- **`/route <query>` chat command + `ghcpMem_route` MCP tool** (new `src/router.ts`). Classifies a request as `lookup` / `modify` / `investigate` / `mixed` / `unknown`, estimates the token cost of every action, and returns the cheapest plan. The chat surface auto-resolves file sizes from the workspace so estimates reflect reality. The MCP tool lets non-Copilot agents (Cursor, Cline, Windsurf, Claude Desktop, Copilot CLI) self-route at any time.
+- **Strengthened MCP tool descriptions** (`src/mcpServer.ts:TOOLS`). The descriptions for `ghcpMem_search`, `ghcpMem_entity`, and `ghcpMem_snippets` now explicitly state the typical token saving vs file open, with concrete numbers — so agents reading the catalog learn the routing rule from the catalog itself.
+
+### Schema changes (Phase 9)
+None — Phase 9 is purely additive (one new module, one new chat command, one new MCP tool, one prepended block in the injected memory file).
+
+### Tests (Phase 9)
++18 tests in `groundingPhase9.test.ts` covering: intent classifier (lookup / modify / investigate / mixed / unknown), path extraction, attach-token estimator, recommendation correctness per intent, MCP-unavailable degradation, large-file savings ratio, MCP catalog wiring (including the new `ghcpMem_route` entry), routing-primer presence/absence in startup context. Total suite is now 307/307 (was 289 in 1.6.0).
+
+### Still deferred
+Three remaining items genuinely require external dependencies or design decisions before they can ship: vector embeddings (needs `hnswlib-node` native dep), single SQLite source of truth (needs `better-sqlite3` native dep), and true ML-based NER (needs a model or external service). All three are queued for a future major bump with an explicit decision.
+
+---
+
 ## [1.5.3] — 2026-06-01
 
 UX fix in response to user feedback: the "Persist this compressed memory snapshot?" modal was firing on every compression cycle and became disruptive. The prompt now has a third button so users can silence it for good — without having to dig into Settings or learn a hidden config key.

@@ -102,12 +102,30 @@ export interface RedactOptions {
   honorPrivateTags: boolean;
   /** User-defined regex rules appended after the built-in 26-rule set. */
   customRules?: CustomRedactionRule[];
+  /**
+   * Phase 5 NER-lite: plain-string entity names to redact verbatim
+   * (case-insensitive, word-boundary anchored). Use for organisation-,
+   * project-, or codename-specific terms that don't match any built-in
+   * pattern — e.g. ["AcmeCorp internal", "Project Hydra"]. No ML needed:
+   * each entry compiles to a literal-escape regex and runs after the
+   * rule-based redaction pass.
+   */
+  customSensitiveEntities?: string[];
 }
 
 export interface RedactionResult {
   text: string;
   redactionCount: number;
   categories: string[];
+}
+
+/**
+ * Escape regex metacharacters in a literal string so it can be safely
+ * compiled into a RegExp. Used by the customSensitiveEntities NER-lite
+ * path to compile every entity name into a literal pattern.
+ */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function redact(input: string, opts: RedactOptions): RedactionResult {
@@ -166,6 +184,33 @@ export function redact(input: string, opts: RedactOptions): RedactionResult {
           }
         } catch {
           // Invalid regex — skip this rule silently rather than crashing capture.
+        }
+      }
+    }
+
+    // Phase 5 NER-lite: redact each declared entity name as a literal,
+    // word-boundary-anchored, case-insensitive substring. Runs LAST so
+    // built-in rules can match more specific patterns first.
+    if (opts.customSensitiveEntities && opts.customSensitiveEntities.length > 0) {
+      for (const raw of opts.customSensitiveEntities) {
+        const term = (raw ?? '').trim();
+        if (!term) continue;
+        try {
+          // For multi-word entities, replace internal spaces with `\s+` so
+          // line breaks / tabs / multiple spaces don't escape the filter.
+          const pattern = escapeRegex(term).replace(/\\ /g, '\\s+');
+          // Word-boundary on alphanumeric edges only — required so entities
+          // like "Project Hydra" match in prose without false positives
+          // inside identifiers like "ProjectHydraService".
+          const re = new RegExp(`(?<![\\w])${pattern}(?![\\w])`, 'gi');
+          const before = text;
+          text = text.replace(re, '[REDACTED:entity]');
+          if (text !== before) {
+            count++;
+            categories.add('custom-entity');
+          }
+        } catch {
+          // Invalid regex from unexpected unicode → skip silently.
         }
       }
     }

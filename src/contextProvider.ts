@@ -1,13 +1,51 @@
 import * as vscode from 'vscode';
-import { exec } from 'child_process';
+import * as crypto from 'crypto';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import { ContextStore } from './contextStore';
-import { CompressedSession, ObservationType, getConfig } from './types';
+import { CompressedSession, ObservationType, computeContentHash, getConfig } from './types';
 import { computeHealth } from './health';
 import { exportSessionMarkdown } from './markdownExport';
 import { estimateSessionTokenSavings, estimateTokenSavingsUsd } from './savings';
+import { validateSession } from './validator';
+import { redact } from './redactor';
+import { getRepoScope } from './repoScope';
+import { buildEntityRecord, renderEntityMarkdown } from './entity';
+import { effectiveConfidence } from './decay';
+import { renderConflictWarning } from './conflicts';
+import { getCausalNeighbors, renderCausalNeighbors } from './causalGraph';
+import { explainScore, renderExplanation } from './explain';
+import { buildMermaidGraph } from './graphExport';
+import { buildComplianceReport, renderComplianceReport } from './compliance';
+import { recommend, renderRecommendation, extractMentionedPaths } from './router';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * Whitelist-validate a git ref / branch name supplied by the user via chat.
+ *
+ * Used by `/pr <branch>` to ensure the value cannot break out of the
+ * argument vector and execute an arbitrary shell command. The pattern
+ * permits the characters git itself accepts (letters, digits, slashes,
+ * `_-.`, plus `~` and `^` for `HEAD~1` / `HEAD^2`) and nothing else —
+ * so meta characters like `;`, `|`, `` ` ``, `$()`, newlines, spaces,
+ * and backslashes are all rejected before they ever reach the shell or
+ * the spawn syscall.
+ *
+ * Length-capped at 200 to avoid degenerate inputs.
+ */
+function isSafeGitRef(input: string): boolean {
+  return /^[A-Za-z0-9._/\-~^@]{1,200}$/.test(input);
+}
+
+/**
+ * Whitelist-validate a numeric PR identifier. PRs are always positive
+ * integers — anything else means the user typed something we should refuse.
+ */
+function isSafePrNumber(input: string): boolean {
+  return /^[0-9]{1,8}$/.test(input);
+}
 
 /**
  * Chat participant implementing progressive disclosure (claude-mem style
@@ -132,6 +170,20 @@ export class ContextProvider implements vscode.Disposable {
       case 'pr':        return this.pr(query, stream, request, token);
       case 'precommit': return this.precommit(stream, request, token);
       case 'audit':     return this.audit(stream);
+      case 'verify':    return this.verify(query, stream);
+      case 'correct':   return this.correct(query, stream);
+      case 'supersede': return this.supersede(query, stream);
+      case 'retract':   return this.retract(query, stream);
+      case 'accept':    return this.accept(query, stream);
+      case 'reject':    return this.reject(query, stream);
+      case 'entity':    return this.entity(query, stream);
+      case 'snippet':   return this.snippet(query, stream);
+      case 'conflicts': return this.conflicts(query, stream);
+      case 'lineage':   return this.lineage(query, stream);
+      case 'why':       return this.why(query, stream);
+      case 'graph':     return this.graph(query, stream);
+      case 'compliance':return this.compliance(stream);
+      case 'route':     return this.route(query, stream);
       default:
         if (!query || query.toLowerCase() === 'status') return this.status(stream);
         if (query.toLowerCase() === 'recent') return this.recent(stream);
@@ -244,7 +296,26 @@ export class ContextProvider implements vscode.Disposable {
 
     stream.markdown(`## Search Results (${results.length})\n\n`);
     stream.markdown(`_Token-efficient index. Use \`@mem /detail <id>\` for full content._\n\n`);
-    for (const s of results) this.renderIndexRow(s, stream);
+    // Phase 3 multi-hop: render each row with its supersession lineage and
+    // related entities so a single search hop carries the full narrative.
+    const enriched = this.store.enrichWithMultiHop(results);
+    for (const e of enriched) {
+      this.renderIndexRow(e.session, stream);
+      // Lineage (≥2 entries means there's a real chain worth showing).
+      if (e.lineage.length >= 2) {
+        const chain = e.lineage.map(s => `\`${s.id.substring(0, 8)}\``).join(' → ');
+        stream.markdown(`  > 🧭 Lineage: ${chain} *(oldest → current)*\n\n`);
+      }
+      // "See also" pointers to related entities (max 2 each to keep tokens down).
+      const seeAlso: string[] = [];
+      for (const sym of e.relatedSymbols.slice(0, 2)) seeAlso.push(`\`@mem /entity ${sym}\``);
+      for (const f of e.relatedFiles.slice(0, 2)) {
+        if (!e.relatedSymbols.some(sym => sym.startsWith(f + '#'))) seeAlso.push(`\`@mem /entity ${f}\``);
+      }
+      if (seeAlso.length) {
+        stream.markdown(`  > 🔗 See also: ${seeAlso.slice(0, 3).join(' · ')}\n\n`);
+      }
+    }
 
     stream.markdown(`\n---\n### Synthesized Context\n\n${synthesize(results, query)}`);
   }
@@ -343,25 +414,522 @@ export class ContextProvider implements vscode.Disposable {
     stream.markdown(`\n_Use \`@mem /detail <id>\` to expand one. Tip: \`#ghcpMemSearch\` in agent mode filters by Azure too._\n`);
   }
 
+  // ── Phase 2 Slice A: trust + correction commands ────────────────────────
+
+  /**
+   * `/verify <id>` — re-run grounding validation on a session and surface a
+   * per-file breakdown. Lets developers spot-check whether a memory is still
+   * supported by the current code or has drifted/broken.
+   */
+  private async verify(idPrefix: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const session = idPrefix ? this.store.getById(idPrefix.trim()) : this.store.getRecentSessions(1)[0];
+    if (!session) {
+      stream.markdown(`No session found${idPrefix ? ` for ID "${idPrefix}"` : ''}.\n`);
+      return;
+    }
+    const result = await validateSession(session);
+    stream.markdown(`## 🔍 Verification — \`${session.id.substring(0, 8)}\`\n\n`);
+    stream.markdown(`**Summary:** ${session.summary}\n\n`);
+    if (typeof session.confidence === 'number') {
+      const emoji = session.confidence >= 0.75 ? '🟢' : session.confidence >= 0.5 ? '🟡' : '🔴';
+      stream.markdown(`**Confidence (at capture):** ${emoji} ${session.confidence.toFixed(2)} (${session.compressorMode ?? '?'} mode)\n\n`);
+    }
+    if (result.emptyKeyFiles) {
+      stream.markdown(`_No key files to verify._\n`);
+      return;
+    }
+    stream.markdown(`**Grounded freshness:** ${(result.groundedFreshness * 100).toFixed(0)}%\n\n`);
+    const groups = {
+      verified: result.verifiedFiles,
+      drifted: result.driftedFiles,
+      missing: result.missing,
+    };
+    const neutral = Object.entries(result.verification)
+      .filter(([, v]) => v === 'neutral')
+      .map(([k]) => k);
+
+    if (groups.verified.length) {
+      stream.markdown(`### ✅ Verified (${groups.verified.length})\n`);
+      for (const f of groups.verified) stream.markdown(`- \`${f}\` — content matches capture-time hash\n`);
+      stream.markdown('\n');
+    }
+    if (groups.drifted.length) {
+      stream.markdown(`### 🟡 Drifted (${groups.drifted.length})\n`);
+      for (const f of groups.drifted) stream.markdown(`- \`${f}\` — file exists but content has changed since capture\n`);
+      stream.markdown('\n');
+    }
+    if (groups.missing.length) {
+      stream.markdown(`### 🔴 Missing (${groups.missing.length})\n`);
+      for (const f of groups.missing) stream.markdown(`- \`${f}\` — file no longer present in workspace\n`);
+      stream.markdown('\n');
+    }
+    if (neutral.length) {
+      stream.markdown(`### ◌ Unverifiable (${neutral.length})\n`);
+      for (const f of neutral) stream.markdown(`- \`${f}\` — no stored hash to compare against (legacy session)\n`);
+      stream.markdown('\n');
+    }
+    if (session.supersededBy) {
+      stream.markdown(`> ⚠️ This session has been superseded by \`${session.supersededBy.substring(0, 8)}\` — \`@mem /detail ${session.supersededBy.substring(0, 8)}\` to view it.\n`);
+    }
+    if (session.retracted) {
+      stream.markdown(`> 🚫 This session is retracted${session.retractedReason ? `: _${session.retractedReason}_` : ''}.\n`);
+    }
+  }
+
+  /**
+   * `/correct <id> <text>` — capture a correction note as a new session,
+   * link it to the original, and supersede the original. Both rows are
+   * kept on disk so the audit trail survives.
+   */
+  private async correct(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const { idPrefix, text } = splitIdAndText(query);
+    if (!idPrefix || !text) {
+      stream.markdown(`Usage: \`/correct <session-id-prefix> <corrected text>\`\n`);
+      return;
+    }
+    const original = this.store.getById(idPrefix);
+    if (!original) {
+      stream.markdown(`No session found for ID "${idPrefix}".\n`);
+      return;
+    }
+    const cfg = getConfig();
+    const customRules = cfg.customRedactionRules;
+    const customSensitiveEntities = cfg.customSensitiveEntities;
+    const cleanedText = redact(text, {
+      redactSecrets: true,
+      honorPrivateTags: true,
+      customRules,
+      customSensitiveEntities,
+    }).text;
+    const now = Date.now();
+    const newId = crypto.randomUUID();
+    const summary = `Correction of ${original.id.substring(0, 8)}: ${cleanedText}`;
+    const correction: CompressedSession = {
+      id: newId,
+      workspaceId: original.workspaceId,
+      workspaceName: original.workspaceName,
+      startTime: now,
+      endTime: now,
+      summary,
+      observationType: original.observationType,
+      keyFiles: [...original.keyFiles],
+      keyTopics: [...original.keyTopics, 'correction'],
+      decisions: [cleanedText],
+      problemsSolved: [],
+      rawEventCount: 0,
+      userTags: ['correction'],
+      redactionCount: 0,
+      contentHash: computeContentHash({
+        summary, keyFiles: original.keyFiles, keyTopics: [...original.keyTopics, 'correction'],
+        decisions: [cleanedText], problemsSolved: [],
+      }),
+      // Correction is a user-pinned source of truth — top confidence.
+      confidence: 1.0,
+      compressorMode: 'lm',
+      correctionOf: original.id,
+      repoScope: original.repoScope,
+      repoScopeLabel: original.repoScopeLabel,
+      branchName: original.branchName,
+    };
+    // Stamp the current repo scope if we still have it (handles workspace
+    // moves between capture and correction).
+    try {
+      const scope = await getRepoScope();
+      if (scope?.id) {
+        correction.repoScope = scope.id;
+        correction.repoScopeLabel = scope.label;
+      }
+    } catch { /* keep inherited values */ }
+
+    await this.store.addSession(correction);
+    await this.store.addCorrection(original.id, newId);
+    stream.markdown(
+      `✅ Recorded correction \`${newId.substring(0, 8)}\` superseding \`${original.id.substring(0, 8)}\`.\n\n` +
+      `> ${cleanedText}\n`,
+    );
+  }
+
+  /**
+   * `/supersede <newerId> <olderId>` — mark one existing session as
+   * superseding another. Both rows are retained.
+   */
+  private async supersede(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const parts = query.trim().split(/\s+/);
+    if (parts.length < 2) {
+      stream.markdown(`Usage: \`/supersede <newerId> <olderId>\`\n`);
+      return;
+    }
+    const [newerPrefix, olderPrefix] = parts;
+    const newer = this.store.getById(newerPrefix);
+    const older = this.store.getById(olderPrefix);
+    if (!newer || !older) {
+      stream.markdown(`Could not resolve one of the IDs (newer=${newer ? '✓' : '✗'}, older=${older ? '✓' : '✗'}).\n`);
+      return;
+    }
+    if (newer.id === older.id) {
+      stream.markdown(`Cannot supersede a session with itself.\n`);
+      return;
+    }
+    await this.store.setSupersedes(newer.id, older.id);
+    stream.markdown(
+      `✅ \`${newer.id.substring(0, 8)}\` now supersedes \`${older.id.substring(0, 8)}\`. ` +
+      `The older session stays on disk for audit but is excluded from injection and down-ranked in retrieval.\n`,
+    );
+  }
+
+  /**
+   * `/retract <id> [reason]` — exclude a session from retrieval and
+   * injection. `/retract undo <id>` reverses the action.
+   */
+  private async retract(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      stream.markdown(`Usage: \`/retract <session-id-prefix> [reason]\` or \`/retract undo <session-id-prefix>\`\n`);
+      return;
+    }
+    const parts = trimmed.split(/\s+/);
+    if (parts[0]?.toLowerCase() === 'undo') {
+      const target = this.store.getById(parts[1] ?? '');
+      if (!target) { stream.markdown(`No session found for ID "${parts[1] ?? ''}".\n`); return; }
+      await this.store.undoRetract(target.id);
+      stream.markdown(`✅ Restored \`${target.id.substring(0, 8)}\` — back in retrieval pool.\n`);
+      return;
+    }
+    const { idPrefix, text } = splitIdAndText(trimmed);
+    const target = this.store.getById(idPrefix);
+    if (!target) {
+      stream.markdown(`No session found for ID "${idPrefix}".\n`);
+      return;
+    }
+    await this.store.setRetracted(target.id, text || undefined);
+    stream.markdown(
+      `🚫 Retracted \`${target.id.substring(0, 8)}\`. It will not appear in retrieval, injection, or exports. ` +
+      `Run \`/retract undo ${target.id.substring(0, 8)}\` to restore.\n`,
+    );
+  }
+
+  /**
+   * `/accept <id>` — strengthen a session's reinforcement signal so
+   * subsequent searches rank it higher. Surfaced to developers as the
+   * "I actually used this memory" handshake.
+   */
+  private async accept(idPrefix: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const target = this.store.getById(idPrefix.trim());
+    if (!target) {
+      stream.markdown(`Usage: \`/accept <session-id-prefix>\`\n`);
+      return;
+    }
+    await this.store.recordAcceptance(target.id);
+    const a = target.usage?.accepted ?? 1;
+    const r = target.usage?.rejected ?? 0;
+    stream.markdown(`👍 Marked \`${target.id.substring(0, 8)}\` as useful. Score: ${a} accept / ${r} reject.\n`);
+  }
+
+  /**
+   * `/reject <id>` — weaken a session's reinforcement signal. Use when a
+   * retrieved memory was wrong or stale.
+   */
+  private async reject(idPrefix: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const target = this.store.getById(idPrefix.trim());
+    if (!target) {
+      stream.markdown(`Usage: \`/reject <session-id-prefix>\`\n`);
+      return;
+    }
+    await this.store.recordRejection(target.id);
+    const a = target.usage?.accepted ?? 0;
+    const r = target.usage?.rejected ?? 1;
+    stream.markdown(`👎 Marked \`${target.id.substring(0, 8)}\` as unhelpful. Score: ${a} accept / ${r} reject.\n`);
+  }
+
+  /**
+   * `/entity <key>` — aggregate every session that touched a file path or
+   * LSP symbol into a single focused summary. Key auto-detects:
+   *   - "src/auth.ts"            → file entity
+   *   - "src/auth.ts#hashPassword" → symbol entity (anything containing '#')
+   * When no key is supplied, falls back to the file currently open in the
+   * active editor so `@mem /entity` "just works" mid-coding.
+   */
+  private async entity(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    let key = query.trim();
+    if (!key) {
+      const active = vscode.window.activeTextEditor?.document.uri;
+      if (active) key = vscode.workspace.asRelativePath(active);
+    }
+    if (!key) {
+      stream.markdown(`Usage: \`/entity <file-path>\` or \`/entity <file-path>#<symbolName>\`. ` +
+        `Open a file in the editor to use \`/entity\` without an argument.\n`);
+      return;
+    }
+    const all = this.store.getAllSessions();
+    const rec = buildEntityRecord(key, all);
+    if (!rec) {
+      stream.markdown(`_No memory of \`${key}\` yet — try a different path or symbol._\n`);
+      return;
+    }
+    stream.markdown(renderEntityMarkdown(rec));
+  }
+
+  /**
+   * `/snippet <query>` — chunk-level retrieval. Returns the top decisions,
+   * problems, summaries, or topics matching the query — each with its
+   * source session ID so the developer can drill in with `/detail`.
+   *
+   * Useful when you want the exact decision text ("we use bcrypt cost 12")
+   * rather than a session-card blob that buries the answer.
+   */
+  private async snippet(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    if (!query.trim()) {
+      stream.markdown(`Usage: \`/snippet <keywords>\` — returns the top matching decisions, problems, summaries, and topics across all sessions.\n`);
+      return;
+    }
+    const cfg = getConfig();
+    const filters: import('./contextStore').SearchFilters = {};
+    if (cfg.scope === 'workspace') filters.workspaceOnly = true;
+    const hits = this.store.searchSnippets(query, filters, 10);
+    if (hits.length === 0) {
+      stream.markdown(`No snippets found for: "${query}"\n`);
+      return;
+    }
+    stream.markdown(`## 🧩 Snippet Results (${hits.length})\n\n`);
+    stream.markdown(`_Chunk-level recall over all sessions. Click an ID for the full session._\n\n`);
+    const kindIcon: Record<string, string> = {
+      decision: '🧠', problem: '🛠', summary: '📝', topic: '🏷',
+    };
+    for (const sn of hits) {
+      const icon = kindIcon[sn.kind] ?? '·';
+      const conf = typeof sn.confidence === 'number' ? ` · conf:${sn.confidence.toFixed(2)}` : '';
+      const ts = new Date(sn.emittedAt).toLocaleDateString();
+      const sessionLink = `\`${sn.sessionId.substring(0, 8)}\``;
+      const files = (sn.evidence ?? [])
+        .map(e => e.filePath)
+        .filter((f): f is string => !!f)
+        .slice(0, 2);
+      const fileTail = files.length ? ` [📎 ${files.join(', ')}]` : '';
+      stream.markdown(`- ${icon} **${sn.kind}** · ${sessionLink} · ${ts}${conf}\n  ${sn.text}${fileTail}\n\n`);
+    }
+  }
+
+  /** `/conflicts [dismiss <id> [reason]]` — list or dismiss pending conflict warnings. */
+  private async conflicts(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const trimmed = (query ?? '').trim();
+    // Subcommand: dismiss <id> [reason]
+    if (trimmed.toLowerCase().startsWith('dismiss')) {
+      const rest = trimmed.slice('dismiss'.length).trim();
+      const [idPrefix, ...reasonParts] = rest.split(/\s+/);
+      if (!idPrefix) {
+        stream.markdown(`Usage: \`/conflicts dismiss <session-id-prefix> [reason]\`\n`);
+        return;
+      }
+      const target = this.store.getById(idPrefix);
+      if (!target) {
+        stream.markdown(`No session found for ID "${idPrefix}".\n`);
+        return;
+      }
+      const reason = reasonParts.length ? reasonParts.join(' ') : 'Manually dismissed';
+      const ok = this.store.acknowledgeConflict(target.id, reason);
+      if (!ok) {
+        stream.markdown(`No pending conflict for \`${target.id.substring(0, 8)}\`.\n`);
+        return;
+      }
+      stream.markdown(`✅ Dismissed conflict for \`${target.id.substring(0, 8)}\` — reason: _${reason}_\n`);
+      return;
+    }
+
+    const warnings = this.store.getPendingConflicts();
+    if (warnings.length === 0) {
+      stream.markdown(`✅ No pending conflicts.\n`);
+      return;
+    }
+    stream.markdown(`## ⚠️ Pending Conflicts (${warnings.length})\n\n`);
+    stream.markdown(`_Decisions that contained contradiction markers and overlap with older sessions. Review and \`/supersede\` (auto-acknowledges) or \`/conflicts dismiss <id> [reason]\` to ignore._\n\n`);
+    for (const w of warnings) {
+      stream.markdown(renderConflictWarning(w));
+    }
+  }
+
+  /** `/lineage <id>` — render the cross-session causal chain for a session. */
+  private async lineage(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const idPrefix = query.trim();
+    if (!idPrefix) {
+      stream.markdown(`Usage: \`/lineage <session-id-prefix>\` — shows predecessors and successors (sessions sharing files within ±30 days).\n`);
+      return;
+    }
+    const target = this.store.getById(idPrefix);
+    if (!target) {
+      stream.markdown(`No session found for ID "${idPrefix}".\n`);
+      return;
+    }
+    const neighbors = getCausalNeighbors(target.id, this.store.getAllSessions());
+    if (!neighbors) {
+      stream.markdown(`Could not compute lineage for "${idPrefix}".\n`);
+      return;
+    }
+    stream.markdown(renderCausalNeighbors(neighbors));
+  }
+
+  /**
+   * `/why <query> :: <session-id-prefix>` — score-decomposition explainer.
+   *
+   * Format: `/why <query terms> :: <id>` (separator is ` :: ` to keep IDs
+   * with hyphens parseable). When no `::` is provided we treat the whole
+   * string as an ID and use the most-recent retrieved session's query if
+   * available.
+   */
+  private async why(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const trimmed = (query ?? '').trim();
+    if (!trimmed) {
+      stream.markdown(`Usage: \`/why <query terms> :: <session-id-prefix>\` — breaks down why a session ranked where it did.\n`);
+      return;
+    }
+    let q: string;
+    let idPart: string;
+    const sepIdx = trimmed.indexOf('::');
+    if (sepIdx === -1) {
+      // ID-only form: use the session's most prominent topic as the query.
+      idPart = trimmed;
+      const found = this.store.getById(idPart);
+      q = (found?.keyTopics[0] ?? found?.summary ?? '').slice(0, 80);
+    } else {
+      q = trimmed.slice(0, sepIdx).trim();
+      idPart = trimmed.slice(sepIdx + 2).trim();
+    }
+    const target = this.store.getById(idPart);
+    if (!target) {
+      stream.markdown(`No session found for ID "${idPart}".\n`);
+      return;
+    }
+    const wsId = vscode.workspace.workspaceFolders?.[0]?.uri.toString();
+    const explanation = explainScore(target, q, {
+      allSessions: this.store.getAllSessions(),
+      learnedWeights: this.store.getAdaptiveWeights(),
+      activeWorkspaceId: wsId,
+    });
+    stream.markdown(renderExplanation(explanation));
+  }
+
+  /**
+   * `/graph` — emit the full decision graph as a Mermaid flowchart.
+   *
+   * Optional filter: `/graph file:src/auth.ts` restricts to sessions that
+   * touch the file. Output is a fenced ```mermaid block ready to paste
+   * into a PR, ADR, or docs page.
+   */
+  private async graph(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const trimmed = (query ?? '').trim();
+    const fileFilter = trimmed.startsWith('file:') ? trimmed.slice(5).trim() : undefined;
+    let sessions = this.store.getAllSessions();
+    if (fileFilter) {
+      const want = fileFilter.toLowerCase();
+      sessions = sessions.filter(s => s.keyFiles.some(f => f.toLowerCase().includes(want)));
+    }
+    if (sessions.length === 0) {
+      stream.markdown(`_No sessions to graph${fileFilter ? ` for filter "${fileFilter}"` : ''}._\n`);
+      return;
+    }
+    const mermaid = buildMermaidGraph(sessions);
+    stream.markdown(`## 🕸 Decision Graph${fileFilter ? ` — \`${fileFilter}\`` : ''}\n\n`);
+    stream.markdown(`\`\`\`mermaid\n${mermaid}\n\`\`\`\n`);
+    stream.markdown(`\n_${sessions.length} session(s). Solid arrows = supersession, dashed = correction, dotted = causal (bugfix follows feature)._\n`);
+  }
+
+  /**
+   * `/compliance` — print an audit-friendly posture report: grounding
+   * coverage, trust distribution, conflict counts, redaction stats,
+   * custom-entity inventory. Ideal for enterprise security reviews.
+   */
+  private async compliance(stream: vscode.ChatResponseStream): Promise<void> {
+    const cfg = getConfig();
+    const report = buildComplianceReport(this.store.getAllSessions(), {
+      customSensitiveEntities: cfg.customSensitiveEntities,
+    });
+    stream.markdown(renderComplianceReport(report));
+  }
+
+  /**
+   * `/route <query>` — context-acquisition recommender. Tells you (or the
+   * calling agent) whether a question is cheapest answered via MCP tools
+   * or via a file open, and estimates the token cost of each option.
+   *
+   * Auto-resolves the byte size of any file path mentioned in the query so
+   * the per-action estimate reflects the actual workspace, not a guess.
+   */
+  private async route(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const q = (query ?? '').trim();
+    if (!q) {
+      stream.markdown(`Usage: \`/route <your question>\` — returns the cheapest way to satisfy it (MCP vs file open).\n`);
+      return;
+    }
+    // Look up file sizes for any path the query mentions so the cost
+    // estimate reflects the actual workspace instead of the default.
+    const mentioned = extractMentionedPaths(q);
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const fileSizes: Record<string, number> = {};
+    if (ws) {
+      for (const rawPath of mentioned) {
+        const path = rawPath.replace(/#.*$/, '');
+        try {
+          const uri = vscode.Uri.joinPath(ws, path);
+          const stat = await vscode.workspace.fs.stat(uri);
+          fileSizes[path] = stat.size;
+        } catch { /* file may not exist; default kicks in */ }
+      }
+    }
+    const rec = recommend(q, { fileSizes, mcpAvailable: true });
+    stream.markdown(renderRecommendation(rec));
+  }
+
   buildStartupContext(): string {
     const config = getConfig();
     const recent = this.store.getStartupCandidates(config.startupContextSessionCount);
     if (recent.length === 0) return '';
-    const lines = ['## Previous Session Context (auto-injected by GHCP-MEM)', ''];
+    // Phase 9 routing primer: teaches the agent to prefer GHCP-MEM MCP/chat
+    // tools over file open for lookup-style questions. Prepended once per
+    // injection so every new Copilot session starts with the routing rule
+    // in scope — zero extra round-trips required for "auto" routing.
+    const lines = [
+      '## Previous Session Context (auto-injected by GHCP-MEM)',
+      '',
+      '### How to gather context cheaply',
+      'Before reading source files, check whether the question is about',
+      'project HISTORY (what was decided / fixed / why) vs CODE (need to',
+      'modify or read current state). Prefer GHCP-MEM tools for history:',
+      '',
+      '- "why did we / what was decided / how does X work" →',
+      '  `@mem /entity <path>`, `@mem /snippet <q>`, or MCP `ghcpMem_entity` / `ghcpMem_snippets` (~200–500 tokens vs typically 2000–10000 for a file).',
+      '- "find where X is used / show me past errors / who touched Y" →',
+      '  `@mem /search <q>` or MCP `ghcpMem_search` (~250 tokens).',
+      '- "what is the supersession chain / lineage for X" →',
+      '  `@mem /lineage <id>` or MCP `ghcpMem_lineage` (~350 tokens).',
+      '- "explain why this session ranked above that one" →',
+      '  `@mem /why <q> :: <id>` or MCP `ghcpMem_explain`.',
+      '- Unsure which is cheaper? Call `@mem /route <question>` or MCP',
+      '  `ghcpMem_route` first — it returns a token-cost estimate per option.',
+      '',
+      'Only open / attach files when you need to MODIFY or read current',
+      'source. For "what / why / when / who" questions about project',
+      'history, the memory tools are typically 5–20× cheaper.',
+      '',
+    ];
     for (const s of recent) {
       const when = formatInjectTimestamp(s.startTime);
       const branch = s.branchName ? ` · branch:\`${s.branchName}\`` : '';
       const workspace = s.workspaceName ? ` · workspace:\`${s.workspaceName}\`` : '';
-      lines.push(`### ${when} · ${s.observationType} · id:\`${s.id.substring(0, 8)}\`${branch}${workspace}`);
+      const trust = renderTrustBadge(s);
+      lines.push(`### ${when} · ${s.observationType} · id:\`${s.id.substring(0, 8)}\`${trust}${branch}${workspace}`);
       lines.push(s.summary);
       if (s.keyFiles.length) {
         const shown = s.keyFiles.slice(0, 8);
         const extra = s.keyFiles.length > shown.length ? ` (+${s.keyFiles.length - shown.length} more)` : '';
-        lines.push(`Files: ${shown.join(', ')}${extra}`);
+        lines.push(`Files: ${shown.join(', ')}`);
+        if (extra) lines[lines.length - 1] += extra;
       }
       if (s.keyTopics.length) lines.push(`Topics: ${s.keyTopics.join(', ')}`);
-      if (s.decisions.length) lines.push(`Decisions: ${s.decisions.join('; ')}`);
-      if (s.problemsSolved.length) lines.push(`Resolved: ${s.problemsSolved.join('; ')}`);
+      if (s.decisions.length) {
+        lines.push(`Decisions: ${renderClaimList(s.decisions, s.decisionEvidence)}`);
+      }
+      if (s.problemsSolved.length) {
+        lines.push(`Resolved: ${renderClaimList(s.problemsSolved, s.problemEvidence)}`);
+      }
       if (s.azureContext?.subsystems?.length) {
         lines.push(`Azure: ${s.azureContext.subsystems.join(', ')}`);
       }
@@ -979,15 +1547,50 @@ export class ContextProvider implements vscode.Disposable {
 
       let diffCmd: string;
       if (query && /^\d+$/.test(query.trim())) {
-        // PR number — try to get via gh CLI
-        const { stdout } = await execAsync(`gh pr view ${query.trim()} --json files --jq '.files[].path' 2>/dev/null || echo ''`, { cwd });
-        changedFiles = stdout.split('\n').map(f => f.trim()).filter(Boolean);
-        branchLabel = `PR #${query.trim()}`;
+        // PR number — try to get via gh CLI.
+        // Defensive validation: even though the regex above narrows to digits,
+        // we re-check via the dedicated whitelist before any spawn — so
+        // future edits to the branching logic don't accidentally re-open the
+        // shell-injection surface (see security audit findings).
+        const prNum = query.trim();
+        if (!isSafePrNumber(prNum)) {
+          stream.markdown(`PR identifier must be a positive integer.\n`);
+          return;
+        }
+        try {
+          // execFile (no shell) with args as an array — `prNum` cannot
+          // break out of the arg vector to inject extra commands.
+          const { stdout } = await execFileAsync('gh',
+            ['pr', 'view', prNum, '--json', 'files', '--jq', '.files[].path'],
+            { cwd });
+          changedFiles = stdout.split('\n').map(f => f.trim()).filter(Boolean);
+        } catch {
+          // gh CLI missing / not authenticated / network error — fall through to active-file fallback below.
+        }
+        branchLabel = `PR #${prNum}`;
       } else {
-        // Branch name or default: diff against main/master/HEAD~1
-        const base = query.trim() || 'HEAD~1';
-        const { stdout } = await execAsync(`git diff --name-only ${base} 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo ''`, { cwd });
-        changedFiles = stdout.split('\n').map(f => f.trim()).filter(Boolean);
+        // Branch name or default: diff against the user-supplied ref or HEAD~1.
+        const base = (query.trim() || 'HEAD~1');
+        if (!isSafeGitRef(base)) {
+          stream.markdown(`Branch / ref contains disallowed characters. Use letters, digits, \`._/-~^@\` only.\n`);
+          return;
+        }
+        try {
+          // execFile (no shell) with args as an array — `base` cannot
+          // break out of the arg vector to inject extra commands. We try
+          // the user-supplied ref first; if that fails (e.g. unknown ref)
+          // we fall back to HEAD~1 in a separate spawn rather than via
+          // shell `||` chaining.
+          const { stdout } = await execFileAsync('git',
+            ['diff', '--name-only', base], { cwd });
+          changedFiles = stdout.split('\n').map(f => f.trim()).filter(Boolean);
+        } catch {
+          try {
+            const { stdout } = await execFileAsync('git',
+              ['diff', '--name-only', 'HEAD~1'], { cwd });
+            changedFiles = stdout.split('\n').map(f => f.trim()).filter(Boolean);
+          } catch { /* nothing to show */ }
+        }
         if (query) branchLabel = query;
       }
     } catch {
@@ -1489,6 +2092,61 @@ export function formatInjectTimestamp(ts: number): string {
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${date} ${hh}:${mm}`;
+}
+
+/**
+ * Render the trust badge appended to each injected session header.
+ *  🟢 confidence ≥ 0.75
+ *  🟡 0.50 ≤ confidence < 0.75
+ *  🔴 confidence < 0.50
+ * Legacy sessions (no confidence stored) are rendered without a badge so
+ * existing snapshots keep their compact header format.
+ *
+ * Uses the time-decayed `effectiveConfidence` so untouched memories also
+ * fade — keeps the displayed trust in sync with the ranking signal.
+ */
+export function renderTrustBadge(s: CompressedSession): string {
+  const c = effectiveConfidence(s);
+  if (typeof c !== 'number') return '';
+  const emoji = c >= 0.75 ? '🟢' : c >= 0.5 ? '🟡' : '🔴';
+  return ` · ${emoji} conf:${c.toFixed(2)}`;
+}
+
+/**
+ * Render a parallel list of claim texts and their evidence arrays.
+ *
+ * Each claim is rendered as `text [📎file1, file2]` so the LLM consumer
+ * (and a human reading the injected file) sees the provenance inline
+ * without ballooning the token cost. Legacy sessions whose evidence
+ * arrays are missing fall back to the plain `text` form.
+ */
+export function renderClaimList(
+  texts: string[],
+  evidence?: import('./types').Evidence[][],
+): string {
+  return texts.map((text, i) => {
+    const ev = evidence?.[i];
+    if (!ev || ev.length === 0) return text;
+    const files = Array.from(new Set(
+      ev.map(e => e.filePath).filter((f): f is string => !!f),
+    )).slice(0, 3);
+    if (files.length === 0) return text;
+    return `${text} [📎 ${files.join(', ')}]`;
+  }).join('; ');
+}
+
+/**
+ * Split a `<idPrefix> <rest of text>` chat-command argument into its two
+ * parts. Used by `/correct` and `/retract` to peel the session ID off the
+ * front of the user's input without forcing an awkward quoting syntax.
+ *
+ * Whitespace around the boundary is collapsed. When the input contains
+ * only one token, `text` is the empty string.
+ */
+export function splitIdAndText(input: string): { idPrefix: string; text: string } {
+  const m = (input ?? '').trim().match(/^(\S+)(\s+([\s\S]*))?$/);
+  if (!m) return { idPrefix: '', text: '' };
+  return { idPrefix: m[1], text: (m[3] ?? '').trim() };
 }
 
 /**

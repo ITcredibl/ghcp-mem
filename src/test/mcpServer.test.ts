@@ -21,9 +21,23 @@ function mkSession(o: any = {}) {
   };
 }
 
-test('mcpServer — TOOLS catalog exposes 6 tools', () => {
+test('mcpServer — TOOLS catalog exposes the full surface', () => {
   const names = TOOLS.map(t => t.name).sort();
-  assert.deepEqual(names, ['ghcpMem_delete', 'ghcpMem_get', 'ghcpMem_recent', 'ghcpMem_search', 'ghcpMem_store', 'ghcpMem_timeline']);
+  assert.deepEqual(names, [
+    'ghcpMem_conflicts',
+    'ghcpMem_delete',
+    'ghcpMem_entity',
+    'ghcpMem_explain',
+    'ghcpMem_get',
+    'ghcpMem_graph',
+    'ghcpMem_lineage',
+    'ghcpMem_recent',
+    'ghcpMem_route',
+    'ghcpMem_search',
+    'ghcpMem_snippets',
+    'ghcpMem_store',
+    'ghcpMem_timeline',
+  ]);
 });
 
 test('mcpServer — searchSessions ranks exact topic match above noise', () => {

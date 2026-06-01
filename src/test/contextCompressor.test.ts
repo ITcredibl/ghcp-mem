@@ -117,8 +117,12 @@ test('ContextCompressor — LM happy path produces session with correct fields',
     observationType: 'refactor',
     keyFiles: ['src/auth.ts', 'src/middleware.ts'],
     keyTopics: ['jwt', 'authentication'],
-    decisions: ['Use short-lived access tokens (15 min)'],
-    problemsSolved: ['Session expiry not handled'],
+    decisions: [
+      { text: 'Use short-lived access tokens (15 min)', evidence: ['E1', 'E2'] },
+    ],
+    problemsSolved: [
+      { text: 'Session expiry not handled', evidence: ['E1'] },
+    ],
   }));
   const c = new ContextCompressor();
   const session = await c.compress(makeInput());
@@ -127,7 +131,10 @@ test('ContextCompressor — LM happy path produces session with correct fields',
   assert.ok(session!.summary.includes('JWT'));
   assert.ok(session!.keyFiles.includes('src/auth.ts'));
   assert.ok(session!.decisions.length > 0);
+  assert.ok(session!.decisionEvidence && session!.decisionEvidence[0].length > 0);
   assert.ok(session!.contentHash, 'contentHash should be set');
+  assert.equal(session!.compressorMode, 'lm');
+  assert.ok(typeof session!.confidence === 'number');
 });
 
 test('ContextCompressor — falls back when LM returns invalid JSON', async () => {

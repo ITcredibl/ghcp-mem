@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "A local, auditable session-memory layer for VS Code and GitHub Copilot, built for engineers who need persistent project context without relying on a cloud memory backend.",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -353,6 +353,62 @@
           {
             "name": "audit",
             "description": "Workspace integrity audit — catch version drift and cross-file inconsistencies (e.g. README footer vs package.json)"
+          },
+          {
+            "name": "verify",
+            "description": "Re-run grounding validation on a session by ID prefix — shows verified / drifted / missing files"
+          },
+          {
+            "name": "correct",
+            "description": "Correct a session by ID prefix — captures a new corrected note, links it to the original, and supersedes it"
+          },
+          {
+            "name": "supersede",
+            "description": "Mark one session as superseding another (usage: /supersede <newerId> <olderId>)"
+          },
+          {
+            "name": "retract",
+            "description": "Retract a session by ID prefix — excludes it from retrieval and injection (use 'undo' to reverse)"
+          },
+          {
+            "name": "accept",
+            "description": "Mark a retrieved session as useful — strengthens its retrieval reinforcement signal"
+          },
+          {
+            "name": "reject",
+            "description": "Mark a retrieved session as unhelpful — weakens its retrieval reinforcement signal"
+          },
+          {
+            "name": "entity",
+            "description": "Aggregate every session that touched a file or symbol (usage: /entity <path> or /entity <path>#<symbol>)"
+          },
+          {
+            "name": "snippet",
+            "description": "Chunk-level retrieval — returns matching decisions/problems/summaries/topics across all sessions"
+          },
+          {
+            "name": "conflicts",
+            "description": "List pending conflict warnings — sessions whose new decisions may contradict older ones"
+          },
+          {
+            "name": "lineage",
+            "description": "Show cross-session causal chain (predecessors + successors) for a session by ID prefix"
+          },
+          {
+            "name": "why",
+            "description": "Score-decomposition explainer — break down why a session ranked where it did (usage: /why <query> :: <id>)"
+          },
+          {
+            "name": "graph",
+            "description": "Emit a Mermaid flowchart of the decision graph (supersession + correction + causal edges); optional file: filter"
+          },
+          {
+            "name": "compliance",
+            "description": "Audit-friendly posture report: grounding coverage, trust distribution, conflict counts, redaction stats, custom-entity inventory"
+          },
+          {
+            "name": "route",
+            "description": "Context-acquisition recommender — given a question, returns whether MCP tools or file open is cheaper and estimates token cost for each path"
           }
         ]
       }
@@ -682,6 +738,14 @@
           },
           "default": [],
           "description": "User-defined regex redaction rules applied after the built-in 26-rule set (enterprise compliance modes)"
+        },
+        "ghcpMem.customSensitiveEntities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Plain-string entity names (organisations, products, codenames, customer aliases) to redact verbatim. Each entry is treated as a case-insensitive, word-boundary-anchored literal — no regex syntax needed. Example: [\"AcmeCorp internal\", \"Project Hydra\", \"Deal-2026-Q3\"]."
         },
         "ghcpMem.autosave.enabled": {
           "type": "boolean",

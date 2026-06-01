@@ -29,7 +29,17 @@ export class SessionCapture implements vscode.Disposable {
   private volatileBytes = 0;
   private disposables: vscode.Disposable[] = [];
   private sessionStartTime: number;
-  private editBatch = new Map<string, { added: number; removed: number; count: number; lastSnippet: string; lang: string }>();
+  private editBatch = new Map<string, {
+    added: number;
+    removed: number;
+    count: number;
+    lastSnippet: string;
+    lang: string;
+    contentHash?: string;
+    /** Last edit's range — used to resolve a stable LSP symbol at flush time. */
+    lastRange?: vscode.Range;
+    uri?: vscode.Uri;
+  }>();
   private editFlushTimer: NodeJS.Timeout | undefined;
   private totalRedactions = 0;
   private azureSubsystems = new Set<AzureSubsystem>();
@@ -124,6 +134,9 @@ export class SessionCapture implements vscode.Disposable {
 
         const existing = this.editBatch.get(filePath) ?? {
           added: 0, removed: 0, count: 0, lastSnippet: '', lang: e.document.languageId,
+          contentHash: undefined as string | undefined,
+          lastRange: undefined as vscode.Range | undefined,
+          uri: undefined as vscode.Uri | undefined,
         };
 
         for (const change of e.contentChanges) {
@@ -132,6 +145,8 @@ export class SessionCapture implements vscode.Disposable {
           existing.added += addedLines;
           existing.removed += removedLines;
           existing.count++;
+          existing.lastRange = change.range;
+          existing.uri = e.document.uri;
 
           if (change.text.length > 0 && change.text.length < 500) {
             // Redact before storing
@@ -143,6 +158,11 @@ export class SessionCapture implements vscode.Disposable {
             existing.lastSnippet = config.captureCodeSnippets ? result.text : '[REDACTED:snippet-disabled]';
           }
         }
+
+        // Stamp the post-edit content hash so the grounding validator can
+        // detect drift later. We reuse the semantic signature we already
+        // computed for change-skipping above — no extra hash call.
+        existing.contentHash = nextSignature;
 
         this.editBatch.set(filePath, existing);
 
@@ -166,10 +186,46 @@ export class SessionCapture implements vscode.Disposable {
         linesAdded: batch.added,
         linesRemoved: batch.removed,
         snippet: batch.lastSnippet,
+        contentHash: batch.contentHash,
       };
       this.pushEvent('file_edit', data);
+
+      // Best-effort LSP symbol resolution. Runs async after the event has
+      // been pushed; if it succeeds before drain(), the symbolId is set on
+      // the (still-buffered) event. If drain happens first, symbolId stays
+      // undefined and the validator/compressor degrade gracefully.
+      if (batch.uri && batch.lastRange) {
+        void this.resolveAndAttachSymbol(data, batch.uri, batch.lastRange);
+      }
     }
     this.editBatch.clear();
+  }
+
+  /**
+   * Resolve the dominant symbol at the given range using VS Code's built-in
+   * document symbol provider. Updates `data.symbolId` in place on success.
+   *
+   * Deliberately non-blocking — VS Code's DocumentSymbolProvider can take
+   * 50–500 ms to warm up for large files and we never want to delay event
+   * persistence behind it. Failures are swallowed: a missing symbolId is
+   * always preferable to a stalled flush.
+   */
+  private async resolveAndAttachSymbol(
+    data: FileEditData,
+    uri: vscode.Uri,
+    range: vscode.Range,
+  ): Promise<void> {
+    try {
+      const symbols = await vscode.commands.executeCommand<
+        Array<vscode.DocumentSymbol | vscode.SymbolInformation>
+      >('vscode.executeDocumentSymbolProvider', uri);
+      if (!symbols || symbols.length === 0) return;
+      const found = findEnclosingSymbol(symbols, range);
+      if (found) data.symbolId = `${data.filePath}#${found}`;
+    } catch {
+      // LSP unavailable, language without symbol provider, doc closed —
+      // any of these are fine, the field just stays undefined.
+    }
   }
 
   // ── File Lifecycle Capture ─────────────────────────────────
@@ -456,4 +512,34 @@ export function semanticTextSignature(text: string): string {
     .filter(line => line.length > 0)
     .join('\n');
   return createHash('sha256').update(normalized).digest('hex');
+}
+
+/**
+ * Walk a DocumentSymbol tree (or flat SymbolInformation array) and return
+ * the name of the deepest symbol whose range contains `target`. Used by
+ * sessionCapture to anchor an edit to its enclosing class/function so the
+ * Evidence layer can survive line-number drift.
+ *
+ * Returns `undefined` when the range falls outside every symbol — typically
+ * top-of-file edits (imports, comments) which have no enclosing scope.
+ */
+export function findEnclosingSymbol(
+  symbols: Array<vscode.DocumentSymbol | vscode.SymbolInformation>,
+  target: vscode.Range,
+): string | undefined {
+  let best: { name: string; depth: number } | undefined;
+  const visit = (s: vscode.DocumentSymbol | vscode.SymbolInformation, depth: number) => {
+    const range = (s as vscode.DocumentSymbol).range
+      ?? (s as vscode.SymbolInformation).location?.range;
+    if (!range) return;
+    // Cheap containment check: target.start.line within [range.start.line, range.end.line].
+    if (target.start.line < range.start.line || target.start.line > range.end.line) return;
+    if (!best || depth > best.depth) best = { name: s.name, depth };
+    const children = (s as vscode.DocumentSymbol).children;
+    if (Array.isArray(children)) {
+      for (const c of children) visit(c, depth + 1);
+    }
+  };
+  for (const s of symbols) visit(s, 0);
+  return best?.name;
 }

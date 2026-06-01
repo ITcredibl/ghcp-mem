@@ -69,6 +69,32 @@ export class MemoryTimelinePanel {
     this.panel.webview.html = this.buildHtml(sessions);
   }
 
+  /**
+   * Render a single horizontal "learned ranker" card showing the current
+   * adaptive weights and feedback sample counts. Empty string when the
+   * learner is still in cold-start (defaults all 1.0).
+   */
+  private buildAdaptiveCard(): string {
+    const weights = this.store.getAdaptiveWeights();
+    const samples = this.store.getAdaptiveSampleCount();
+    const hasDelta = Object.values(weights).some(v => Math.abs(v - 1) > 0.001);
+    if (!hasDelta && samples.accepted + samples.rejected === 0) return '';
+    const cells = Object.entries(weights).map(([name, w]) => {
+      const delta = w - 1;
+      const color = delta > 0.02 ? '#3fb950' : delta < -0.02 ? '#ff7b72' : '#8b949e';
+      const sign = delta > 0 ? '+' : '';
+      return `<span class="weight-chip" title="${name} multiplier">${name}: <strong style="color:${color}">${w.toFixed(2)} (${sign}${(delta * 100).toFixed(0)}%)</strong></span>`;
+    }).join('');
+    const samplesText = `${samples.accepted} 👍 / ${samples.rejected} 👎`;
+    const note = (samples.accepted + samples.rejected) < 10
+      ? ' <em>(cold-start — defaults active until 10+ samples)</em>'
+      : '';
+    return `<div class="adaptive-row" title="Adaptive ranking weights learned from your accept/reject feedback (Phase 5)">
+      <strong>🎚 Learned ranker:</strong> ${cells}
+      <span class="samples">${samplesText}${note}</span>
+    </div>`;
+  }
+
   private handleMessage(msg: { type: string; id?: string; query?: string; tag?: string }): void {
     if (msg.type === 'openDetail' && msg.id) {
       vscode.commands.executeCommand('workbench.action.chat.open', {
@@ -82,8 +108,6 @@ export class MemoryTimelinePanel {
         query: `@mem /search ${msg.query}`,
       });
     } else if (msg.type === 'togglePin' && msg.id) {
-      // Same semantics as the ghcpMem.togglePin command in extension.ts:
-      // 'pinned' is just a userTag, idempotent on toggle.
       void (async () => {
         const s = this.store.getById(msg.id!);
         if (!s) return;
@@ -94,7 +118,6 @@ export class MemoryTimelinePanel {
           await this.store.addTag(msg.id!, 'pinned');
           vscode.window.setStatusBarMessage('GHCP-MEM: session pinned', 2000);
         }
-        // store.onChange fires → refresh() re-renders the panel.
       })();
     } else if (msg.type === 'addTag' && msg.id) {
       void (async () => {
@@ -121,6 +144,67 @@ export class MemoryTimelinePanel {
         await this.store.deleteSession(msg.id!);
         vscode.window.setStatusBarMessage('GHCP-MEM: session pruned', 2000);
       })();
+    } else if (msg.type === 'verify' && msg.id) {
+      // Surface verification through the chat participant so the UX stays
+      // consistent with @mem /verify and we don't duplicate the renderer.
+      vscode.commands.executeCommand('workbench.action.chat.open', {
+        query: `@mem /verify ${msg.id}`,
+      });
+    } else if (msg.type === 'correct' && msg.id) {
+      void (async () => {
+        const text = (await vscode.window.showInputBox({
+          prompt: 'Correction text (a new linked session will be recorded; the original is superseded)',
+          placeHolder: 'e.g. "The actual decision was to use Redis Sentinel, not Cluster"',
+          validateInput: v => (v.trim() ? null : 'Correction cannot be empty'),
+        }))?.trim();
+        if (!text) return;
+        vscode.commands.executeCommand('workbench.action.chat.open', {
+          query: `@mem /correct ${msg.id} ${text}`,
+        });
+      })();
+    } else if (msg.type === 'retract' && msg.id) {
+      void (async () => {
+        const s = this.store.getById(msg.id!);
+        if (!s) return;
+        if (s.retracted) {
+          await this.store.undoRetract(s.id);
+          vscode.window.setStatusBarMessage('GHCP-MEM: retraction undone', 2500);
+          return;
+        }
+        const reason = await vscode.window.showInputBox({
+          prompt: `Retract session ${s.id.substring(0, 8)} (reason optional)`,
+          placeHolder: 'e.g. "Decision was wrong — see ADR-014"',
+        });
+        if (reason === undefined) return; // user pressed Esc
+        await this.store.setRetracted(s.id, reason.trim() || undefined);
+        vscode.window.setStatusBarMessage('GHCP-MEM: session retracted', 2500);
+      })();
+    } else if (msg.type === 'gotoFile' && msg.id) {
+      // msg.id encodes "<sessionId>::<workspaceRelativePath>" so the renderer
+      // doesn't need a separate field. Defensive parsing — refuse anything
+      // that doesn't split cleanly OR carries an unsafe path. The path
+      // check mirrors `packs.ts:isUnsafeRelPath` so a malicious imported
+      // pack cannot use a click on a file chip to open an arbitrary path
+      // outside the workspace root.
+      const idx = msg.id.indexOf('::');
+      if (idx === -1) return;
+      const relPath = msg.id.slice(idx + 2).trim();
+      if (!relPath) return;
+      if (
+        relPath.startsWith('/') ||
+        /^[a-zA-Z]:[\\/]/.test(relPath) ||
+        relPath.startsWith('file://') ||
+        relPath.split(/[\\/]/).includes('..')
+      ) {
+        vscode.window.setStatusBarMessage(`GHCP-MEM: refused unsafe path "${relPath.substring(0, 60)}"`, 4000);
+        return;
+      }
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) return;
+      const target = vscode.Uri.joinPath(ws.uri, relPath);
+      void vscode.window.showTextDocument(target).then(undefined, () => {
+        vscode.window.setStatusBarMessage(`GHCP-MEM: cannot open ${relPath}`, 3000);
+      });
     }
   }
 
@@ -227,6 +311,18 @@ export class MemoryTimelinePanel {
     border: 1px solid var(--border); cursor: pointer; font-size: 12px;
   }
   .clear-btn:hover { color: var(--fg); }
+  .adaptive-row {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 6px 0 0 0; font-size: 11px; color: var(--muted);
+    border-top: 1px dashed var(--border); margin-top: 6px;
+  }
+  .weight-chip {
+    padding: 1px 8px; border-radius: 10px;
+    background: rgba(255,255,255,0.04); color: var(--fg);
+    border: 1px solid var(--border); font-family: var(--vscode-editor-font-family, monospace);
+  }
+  .samples { color: var(--muted); margin-left: auto; }
+  .samples em { color: var(--muted); opacity: 0.8; }
   .timeline { padding: 20px; max-width: 1400px; margin: 0 auto; }
   .day-group { margin-bottom: 32px; }
   .day-group.hidden { display: none; }
@@ -292,6 +388,31 @@ export class MemoryTimelinePanel {
   .meta-chip.topic { color: #d2a8ff; }
   .meta-chip.tag { color: #e3b341; }
   .meta-chip.branch { color: #7ee787; font-style: italic; }
+  .status-row {
+    display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;
+  }
+  .trust-chip, .status-chip, .usage-chip {
+    font-size: 10px; padding: 1px 6px; border-radius: 10px;
+    background: rgba(255,255,255,0.05); color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  .status-chip.superseded { color: #ffa657; border-color: #ffa657; }
+  .status-chip.retracted { color: #ff7b72; border-color: #ff7b72; }
+  .status-chip.correction { color: #d2a8ff; border-color: #d2a8ff; }
+  .usage-chip { color: var(--muted); }
+  .decisions {
+    margin: 4px 0 6px 0; padding: 0 0 0 14px;
+    font-size: 11px; color: var(--fg);
+  }
+  .decision-row { margin-bottom: 4px; line-height: 1.45; }
+  .ev-chip {
+    font-size: 10px; padding: 0 4px; margin-left: 4px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: #79c0ff; cursor: pointer; border-radius: 3px;
+  }
+  .ev-chip:hover { background: var(--surface2); }
+  .retracted-card { opacity: 0.55; filter: grayscale(0.4); }
+  .superseded-card { opacity: 0.85; }
   .card-actions {
     position: absolute; top: 8px; right: 8px;
     display: none; gap: 3px;
@@ -327,6 +448,7 @@ export class MemoryTimelinePanel {
     <button class="clear-btn" onclick="clearAll()">✕ Clear</button>
   </div>
   <div class="type-filters" id="typeFilters">${typeFilterPills}</div>
+  ${this.buildAdaptiveCard()}
 </div>
 
 <div class="timeline" id="timeline">
@@ -396,17 +518,26 @@ export class MemoryTimelinePanel {
       setTimeout(() => { idEl.textContent = idEl.dataset.fullId?.substring(0, 8) + '…'; }, 1500);
       return;
     }
+    const evBtn = e.target.closest('.ev-chip');
+    if (evBtn) {
+      e.stopPropagation();
+      vscode.postMessage({ type: evBtn.dataset.action, id: evBtn.dataset.id });
+      return;
+    }
     const btn = e.target.closest('.card-btn');
     if (btn) {
       e.stopPropagation();
       const action = btn.dataset.action || 'open';
       const id = btn.dataset.id;
       switch (action) {
-        case 'pin':    vscode.postMessage({ type: 'togglePin', id }); break;
-        case 'tag':    vscode.postMessage({ type: 'addTag', id }); break;
-        case 'delete': vscode.postMessage({ type: 'deleteSession', id }); break;
+        case 'pin':       vscode.postMessage({ type: 'togglePin', id }); break;
+        case 'tag':       vscode.postMessage({ type: 'addTag', id }); break;
+        case 'delete':    vscode.postMessage({ type: 'deleteSession', id }); break;
+        case 'verify':    vscode.postMessage({ type: 'verify', id }); break;
+        case 'correct':   vscode.postMessage({ type: 'correct', id }); break;
+        case 'retract':   vscode.postMessage({ type: 'retract', id }); break;
         case 'open':
-        default:       vscode.postMessage({ type: 'openDetail', id }); break;
+        default:          vscode.postMessage({ type: 'openDetail', id }); break;
       }
       return;
     }
@@ -435,6 +566,52 @@ export class MemoryTimelinePanel {
       ...s.userTags.filter(t => t !== 'pinned').slice(0, 2).map(t => `<span class="meta-chip tag">#${htmlEscape(t)}</span>`),
     ].join('');
 
+    // Phase 2 inspector chips — trust badge, supersession, retraction.
+    const trustChip = (typeof s.confidence === 'number') ? (() => {
+      const conf = s.confidence!;
+      const emoji = conf >= 0.75 ? '🟢' : conf >= 0.5 ? '🟡' : '🔴';
+      const mode = s.compressorMode ? ` ${s.compressorMode}` : '';
+      const trunc = s.eventLogTruncated ? ' · truncated' : '';
+      return `<span class="trust-chip" title="Trust score${mode}${trunc} — set at compression time">${emoji} ${conf.toFixed(2)}</span>`;
+    })() : '';
+    const supersededChip = s.supersededBy
+      ? `<span class="status-chip superseded" title="Superseded by ${s.supersededBy.substring(0, 8)}">⤴ superseded</span>`
+      : '';
+    const correctionChip = s.correctionOf
+      ? `<span class="status-chip correction" title="Correction of ${s.correctionOf.substring(0, 8)}">✏️ correction</span>`
+      : '';
+    const retractedChip = s.retracted
+      ? `<span class="status-chip retracted" title="Retracted${s.retractedReason ? ': ' + s.retractedReason : ''}">🚫 retracted</span>`
+      : '';
+    const usageChip = (() => {
+      const u = s.usage;
+      if (!u || (u.retrieved + u.accepted + u.rejected) === 0) return '';
+      const parts = [];
+      if (u.retrieved) parts.push(`${u.retrieved}× retrieved`);
+      if (u.accepted) parts.push(`👍${u.accepted}`);
+      if (u.rejected) parts.push(`👎${u.rejected}`);
+      return `<span class="usage-chip" title="Local reinforcement counters">${parts.join(' · ')}</span>`;
+    })();
+    const statusRow = [trustChip, supersededChip, correctionChip, retractedChip, usageChip]
+      .filter(Boolean).join(' ');
+
+    // Per-decision evidence chips — clickable to jump straight to the file.
+    const evidenceRow = (() => {
+      if (!s.decisions.length) return '';
+      const items = s.decisions.slice(0, 3).map((text, i) => {
+        const ev = s.decisionEvidence?.[i];
+        const files = ev
+          ? Array.from(new Set(ev.map(e => e.filePath).filter((f): f is string => !!f))).slice(0, 2)
+          : [];
+        const fileChips = files.map(f =>
+          `<button class="ev-chip" data-action="gotoFile" data-id="${htmlEscape(s.id + '::' + f)}" title="Open ${htmlEscape(f)}">📎 ${htmlEscape(f.split('/').pop() ?? f)}</button>`
+        ).join('');
+        const dec = htmlEscape(text.length > 100 ? text.substring(0, 97) + '…' : text);
+        return `<li class="decision-row">${dec}${fileChips ? ' ' + fileChips : ''}</li>`;
+      }).join('');
+      return `<ul class="decisions">${items}</ul>`;
+    })();
+
     // Build a searchable text blob for client-side filtering
     const searchBlob = [s.summary, ...s.keyFiles, ...s.keyTopics, ...s.decisions, ...s.userTags, s.branchName ?? '']
       .join(' ')
@@ -442,9 +619,13 @@ export class MemoryTimelinePanel {
       .replace(/"/g, '&quot;');
 
     const pinnedClass = isPinned ? ' pinned' : '';
+    const retractedClass = s.retracted ? ' retracted-card' : '';
+    const supersededClass = s.supersededBy ? ' superseded-card' : '';
     const pinIcon = isPinned ? '<span class="pinned-indicator" title="Pinned">📌</span>' : '';
+    const retractLabel = s.retracted ? '↩' : '🚫';
+    const retractTitle = s.retracted ? 'Undo retraction' : 'Retract this session (excluded from retrieval + injection)';
 
-    return `<div class="session-card${pinnedClass}" data-id="${s.id}" data-type="${s.observationType}" data-text="${searchBlob}"
+    return `<div class="session-card${pinnedClass}${retractedClass}${supersededClass}" data-id="${s.id}" data-type="${s.observationType}" data-text="${searchBlob}"
       style="background:${c.bg};border-color:${c.border}">
       <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:${c.border};border-radius:var(--radius) 0 0 var(--radius)"></div>
       <div class="card-header">
@@ -454,12 +635,17 @@ export class MemoryTimelinePanel {
         <span class="session-id" data-full-id="${s.id}" title="Click to copy full ID">${shortId}…</span>
       </div>
       <div class="card-actions">
+        <button class="card-btn" data-action="verify" data-id="${s.id}" title="Re-verify grounding against the current workspace">🔍</button>
+        <button class="card-btn" data-action="correct" data-id="${s.id}" title="Record a correction (linked, supersedes original)">✏️</button>
+        <button class="card-btn" data-action="retract" data-id="${s.id}" title="${retractTitle}">${retractLabel}</button>
         <button class="card-btn" data-action="pin" data-id="${s.id}" title="${isPinned ? 'Unpin session' : 'Pin session (kept on top + boosted in startup brief)'}">${isPinned ? '📌' : '📌'}</button>
         <button class="card-btn" data-action="tag" data-id="${s.id}" title="Add user tag">🏷</button>
         <button class="card-btn" data-action="delete" data-id="${s.id}" title="Prune this session">🗑</button>
         <button class="card-btn" data-action="open" data-id="${s.id}" title="Open detail">→</button>
       </div>
       <div class="session-summary">${htmlEscape(s.summary)}</div>
+      ${statusRow ? `<div class="status-row">${statusRow}</div>` : ''}
+      ${evidenceRow}
       ${metaChips ? `<div class="session-meta">${metaChips}</div>` : ''}
     </div>`;
   }

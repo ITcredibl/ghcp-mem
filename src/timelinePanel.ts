@@ -69,7 +69,7 @@ export class MemoryTimelinePanel {
     this.panel.webview.html = this.buildHtml(sessions);
   }
 
-  private handleMessage(msg: { type: string; id?: string; query?: string }): void {
+  private handleMessage(msg: { type: string; id?: string; query?: string; tag?: string }): void {
     if (msg.type === 'openDetail' && msg.id) {
       vscode.commands.executeCommand('workbench.action.chat.open', {
         query: `@mem /detail ${msg.id}`,
@@ -81,6 +81,46 @@ export class MemoryTimelinePanel {
       vscode.commands.executeCommand('workbench.action.chat.open', {
         query: `@mem /search ${msg.query}`,
       });
+    } else if (msg.type === 'togglePin' && msg.id) {
+      // Same semantics as the ghcpMem.togglePin command in extension.ts:
+      // 'pinned' is just a userTag, idempotent on toggle.
+      void (async () => {
+        const s = this.store.getById(msg.id!);
+        if (!s) return;
+        if (s.userTags.includes('pinned')) {
+          await this.store.removeTag(msg.id!, 'pinned');
+          vscode.window.setStatusBarMessage('GHCP-MEM: session unpinned', 2000);
+        } else {
+          await this.store.addTag(msg.id!, 'pinned');
+          vscode.window.setStatusBarMessage('GHCP-MEM: session pinned', 2000);
+        }
+        // store.onChange fires → refresh() re-renders the panel.
+      })();
+    } else if (msg.type === 'addTag' && msg.id) {
+      void (async () => {
+        const tag = (await vscode.window.showInputBox({
+          prompt: 'Tag this session',
+          placeHolder: 'e.g. wip, reference, debug-rabbit-hole',
+          validateInput: v => (v.trim() ? null : 'Tag cannot be empty'),
+        }))?.trim();
+        if (!tag) return;
+        await this.store.addTag(msg.id!, tag);
+        vscode.window.setStatusBarMessage(`GHCP-MEM: tagged with #${tag}`, 2000);
+      })();
+    } else if (msg.type === 'deleteSession' && msg.id) {
+      void (async () => {
+        const s = this.store.getById(msg.id!);
+        if (!s) return;
+        const summary = s.summary.length > 80 ? s.summary.substring(0, 77) + '…' : s.summary;
+        const choice = await vscode.window.showWarningMessage(
+          `Prune this session from memory?\n\n${summary}`,
+          { modal: true },
+          'Delete',
+        );
+        if (choice !== 'Delete') return;
+        await this.store.deleteSession(msg.id!);
+        vscode.window.setStatusBarMessage('GHCP-MEM: session pruned', 2000);
+      })();
     }
   }
 
@@ -253,16 +293,24 @@ export class MemoryTimelinePanel {
   .meta-chip.tag { color: #e3b341; }
   .meta-chip.branch { color: #7ee787; font-style: italic; }
   .card-actions {
-    position: absolute; top: 10px; right: 10px;
-    display: none; gap: 4px;
+    position: absolute; top: 8px; right: 8px;
+    display: none; gap: 3px;
   }
   .session-card:hover .card-actions { display: flex; }
   .card-btn {
-    font-size: 11px; padding: 2px 7px; border-radius: 4px;
+    font-size: 12px; padding: 2px 6px; border-radius: 4px;
     background: var(--surface); border: 1px solid var(--border);
-    color: var(--fg); cursor: pointer;
+    color: var(--fg); cursor: pointer; line-height: 1.2; min-width: 22px;
   }
-  .card-btn:hover { background: var(--surface2); }
+  .card-btn:hover { background: var(--surface2); transform: scale(1.08); }
+  .card-btn[data-action="delete"]:hover { color: #ff7b72; border-color: #ff7b72; }
+  .card-btn[data-action="pin"]:hover { color: #e3b341; border-color: #e3b341; }
+  .session-card.pinned {
+    box-shadow: inset 0 0 0 2px #e3b341;
+  }
+  .pinned-indicator {
+    font-size: 11px; opacity: 0.9;
+  }
   .empty-state {
     text-align: center; padding: 60px 20px; color: var(--muted);
   }
@@ -351,7 +399,15 @@ export class MemoryTimelinePanel {
     const btn = e.target.closest('.card-btn');
     if (btn) {
       e.stopPropagation();
-      vscode.postMessage({ type: 'openDetail', id: btn.dataset.id });
+      const action = btn.dataset.action || 'open';
+      const id = btn.dataset.id;
+      switch (action) {
+        case 'pin':    vscode.postMessage({ type: 'togglePin', id }); break;
+        case 'tag':    vscode.postMessage({ type: 'addTag', id }); break;
+        case 'delete': vscode.postMessage({ type: 'deleteSession', id }); break;
+        case 'open':
+        default:       vscode.postMessage({ type: 'openDetail', id }); break;
+      }
       return;
     }
     const card = e.target.closest('.session-card');
@@ -368,6 +424,7 @@ export class MemoryTimelinePanel {
     const c = TYPE_COLORS[s.observationType] ?? TYPE_COLORS.unknown;
     const time = new Date(s.startTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     const shortId = s.id.substring(0, 8);
+    const isPinned = s.userTags.includes('pinned');
     const branchChip = s.branchName
       ? `<span class="meta-chip branch" title="git branch">⎇ ${htmlEscape(s.branchName)}</span>`
       : '';
@@ -375,7 +432,7 @@ export class MemoryTimelinePanel {
       branchChip,
       ...s.keyFiles.slice(0, 2).map(f => `<span class="meta-chip file" title="${htmlEscape(f)}">${htmlEscape(f.split('/').pop() ?? f)}</span>`),
       ...s.keyTopics.slice(0, 2).map(t => `<span class="meta-chip topic">${htmlEscape(t)}</span>`),
-      ...s.userTags.slice(0, 2).map(t => `<span class="meta-chip tag">#${htmlEscape(t)}</span>`),
+      ...s.userTags.filter(t => t !== 'pinned').slice(0, 2).map(t => `<span class="meta-chip tag">#${htmlEscape(t)}</span>`),
     ].join('');
 
     // Build a searchable text blob for client-side filtering
@@ -384,16 +441,23 @@ export class MemoryTimelinePanel {
       .toLowerCase()
       .replace(/"/g, '&quot;');
 
-    return `<div class="session-card" data-id="${s.id}" data-type="${s.observationType}" data-text="${searchBlob}"
+    const pinnedClass = isPinned ? ' pinned' : '';
+    const pinIcon = isPinned ? '<span class="pinned-indicator" title="Pinned">📌</span>' : '';
+
+    return `<div class="session-card${pinnedClass}" data-id="${s.id}" data-type="${s.observationType}" data-text="${searchBlob}"
       style="background:${c.bg};border-color:${c.border}">
       <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:${c.border};border-radius:var(--radius) 0 0 var(--radius)"></div>
       <div class="card-header">
         <span class="type-badge" style="color:${c.text};border-color:${c.border}">${s.observationType}</span>
+        ${pinIcon}
         <span class="session-time">${time}</span>
         <span class="session-id" data-full-id="${s.id}" title="Click to copy full ID">${shortId}…</span>
       </div>
       <div class="card-actions">
-        <button class="card-btn" data-id="${s.id}">Open →</button>
+        <button class="card-btn" data-action="pin" data-id="${s.id}" title="${isPinned ? 'Unpin session' : 'Pin session (kept on top + boosted in startup brief)'}">${isPinned ? '📌' : '📌'}</button>
+        <button class="card-btn" data-action="tag" data-id="${s.id}" title="Add user tag">🏷</button>
+        <button class="card-btn" data-action="delete" data-id="${s.id}" title="Prune this session">🗑</button>
+        <button class="card-btn" data-action="open" data-id="${s.id}" title="Open detail">→</button>
       </div>
       <div class="session-summary">${htmlEscape(s.summary)}</div>
       ${metaChips ? `<div class="session-meta">${metaChips}</div>` : ''}

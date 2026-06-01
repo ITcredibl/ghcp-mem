@@ -6,6 +6,45 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.5.0] — 2026-05-31
+
+This release responds to a follow-up external review that recommended five hardening tracks (volatile-cache cap, secret-hash validation, diff-based ingestion, prune-dashboard, corporate policy URL). An audit confirmed **four of the five were already shipped** in 1.4.x; this release adds the fifth — prune-dashboard actions on the visual timeline — plus a formal threat model and reproducible activation-cost benchmark so enterprise reviewers can verify both.
+
+### Added — UX
+- **`src/timelinePanel.ts`** — Per-session **pin / tag / prune** action buttons on every card in the visual Memory Timeline. Hover a card to reveal four buttons (📌 pin · 🏷 tag · 🗑 delete · → open). Pinned sessions get a gold inset border + 📌 indicator. Wired to the same `ContextStore` methods the sidebar already used, with a modal confirmation on delete so an accidental click is recoverable.
+
+### Added — Documentation
+- **`docs/THREAT_MODEL.md`** — Formal STRIDE-style threat model covering six trust boundaries (workspace ↔ host, host ↔ `vscode.lm`, host ↔ local mirror, host ↔ policy URL, host ↔ MCP stdio, host ↔ Memory Pack import). 19 numbered threats (T1–T19), each with its mitigation cited to source-line. Names the three residual risks (R1 plaintext store, R2 policy-URL allow-list, R3 pack signing) with target releases.
+
+### Added — Measurement
+- **`scripts/measure-activation.js`** + **`npm run measure:activation`** — Reproducible activation-cost benchmark. Reports bundle size, parse time, store-load + index-rebuild times at 100 / 1k / 10k sessions, first-query latency, and heap delta. Numbers from current build on darwin arm64 Node 25:
+
+  | Metric | Value |
+  |---|---|
+  | Bundle size — `out/extension.js` | 149 KB |
+  | Bundle size — `out/mcpServer.js` | 28 KB |
+  | Store load + index rebuild @ 100 sessions | ~2 ms |
+  | Store load + index rebuild @ 1 000 sessions | ~3 ms |
+  | Store load + index rebuild @ 10 000 sessions | ~40 ms |
+  | First search @ 10 000 sessions | ~2 ms |
+
+### Acknowledged from the review (already shipped, line refs)
+For anyone tracking the May review verbatim — these were flagged as recommendations but were **already in 1.4.x**:
+
+| Recommendation | Lives at |
+|---|---|
+| 5 MB volatile-cache cap with graceful drop | `src/sessionCapture.ts:401-402` (`MAX_VOLATILE_BYTES = 5 * 1024 * 1024`), `:trimEvents()` runs on every push |
+| SHA-256 hashed redactions (structural correlation without revealing secrets) | `src/redactor.ts:38` (`hashedTag()` → `[REDACTED:label]#<sha256>`) — used by every rule |
+| Whitespace-only diff filter on ingestion | `src/sessionCapture.ts:114-117` (`semanticTextSignature()` short-circuits identical signatures) |
+| Corporate-policy URL with HTTPS validation | `src/policySource.ts` + `ghcpMem.policySource` setting |
+
+### Roadmap (acknowledged residual risks)
+- **R1** Optional encrypted local store via `vscode.SecretStorage` + AES-256-GCM — 1.5.x
+- **R2** Optional allow-list of corporate-policy domains + signature verification — 1.6.x
+- **R3** Optional Sigstore signature verification on Memory Pack imports — 1.6.x
+
+---
+
 ## [1.4.10] — 2026-05-31
 
 ### Fixed

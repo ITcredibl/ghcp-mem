@@ -131,11 +131,54 @@ export class ContextProvider implements vscode.Disposable {
       case 'adr':       return this.adr(query, stream, request, token);
       case 'pr':        return this.pr(query, stream, request, token);
       case 'precommit': return this.precommit(stream, request, token);
+      case 'audit':     return this.audit(stream);
       default:
         if (!query || query.toLowerCase() === 'status') return this.status(stream);
         if (query.toLowerCase() === 'recent') return this.recent(stream);
         return this.search(query, stream);
     }
+  }
+
+  private async audit(stream: vscode.ChatResponseStream): Promise<void> {
+    const { runWorkspaceAudit, hasBlockingIssues } = await import('./integrityChecker');
+    const { issues, rulesRun } = await runWorkspaceAudit();
+    if (rulesRun.length === 0) {
+      stream.markdown('No workspace folder open — nothing to audit.\n');
+      return;
+    }
+    stream.markdown(`## 🩺 Workspace Integrity Audit\n\n`);
+    stream.markdown(`Ran **${rulesRun.length}** rule${rulesRun.length === 1 ? '' : 's'} (\`${rulesRun.join('`, `')}\`).\n\n`);
+
+    if (issues.length === 0) {
+      stream.markdown('✅ **No issues found.** Every checked surface is consistent.\n');
+      return;
+    }
+
+    const errors = issues.filter(i => i.severity === 'error');
+    const warnings = issues.filter(i => i.severity === 'warning');
+    if (errors.length) {
+      stream.markdown(`### ❌ ${errors.length} error${errors.length === 1 ? '' : 's'}\n\n`);
+      for (const i of errors) {
+        const loc = i.line ? `\`${i.file}:${i.line}\`` : `\`${i.file}\``;
+        stream.markdown(`- **${i.rule}** · ${loc} — ${i.message}` + (i.fix ? `\n  > 💡 ${i.fix}` : '') + '\n');
+      }
+      stream.markdown('\n');
+    }
+    if (warnings.length) {
+      stream.markdown(`### ⚠️ ${warnings.length} warning${warnings.length === 1 ? '' : 's'}\n\n`);
+      for (const i of warnings) {
+        const loc = i.line ? `\`${i.file}:${i.line}\`` : `\`${i.file}\``;
+        stream.markdown(`- **${i.rule}** · ${loc} — ${i.message}` + (i.fix ? `\n  > 💡 ${i.fix}` : '') + '\n');
+      }
+      stream.markdown('\n');
+    }
+    if (hasBlockingIssues(issues)) {
+      stream.markdown('> These are blocking issues for the release-consistency gate. Either fix them before `vsce publish`, or run `npm run bump:version -- <version>` to realign every surface.\n');
+    }
+    stream.button({
+      command: 'ghcpMem.runIntegrityAudit',
+      title: 'Open full audit report',
+    });
   }
 
   private async status(stream: vscode.ChatResponseStream): Promise<void> {

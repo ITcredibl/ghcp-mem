@@ -155,3 +155,62 @@ export class MemoryStoreTool implements vscode.LanguageModelTool<StoreToolInput>
     return { invocationMessage: 'Saving a note to GHCP-MEM…' };
   }
 }
+
+/**
+ * Workspace integrity auditor — lets Copilot agent mode spot-check the
+ * workspace for cross-file inconsistencies (e.g. version drift between
+ * package.json, README, DEMO.md, CHANGELOG.md).
+ *
+ * Companion to the release-consistency gate that runs in CI / vscode:prepublish.
+ * The gate blocks vsce publish; this tool surfaces the same checks any time,
+ * for any agent flow.
+ */
+interface AuditToolInput {
+  /** Future: filter to a subset of rules. Currently ignored — runs all. */
+  rules?: string[];
+}
+
+export class MemoryAuditTool implements vscode.LanguageModelTool<AuditToolInput> {
+  async invoke(
+    _options: vscode.LanguageModelToolInvocationOptions<AuditToolInput>,
+    _token: vscode.CancellationToken
+  ): Promise<vscode.LanguageModelToolResult> {
+    const { runWorkspaceAudit } = await import('./integrityChecker');
+    const { issues, rulesRun } = await runWorkspaceAudit();
+
+    if (rulesRun.length === 0) {
+      return new vscode.LanguageModelToolResult([
+        new vscode.LanguageModelTextPart('No workspace folder open — nothing to audit.'),
+      ]);
+    }
+
+    if (issues.length === 0) {
+      return new vscode.LanguageModelToolResult([
+        new vscode.LanguageModelTextPart(
+          `Ran ${rulesRun.length} integrity rule(s) (${rulesRun.join(', ')}). No issues found — every checked surface is consistent.`,
+        ),
+      ]);
+    }
+
+    const lines: string[] = [
+      `Ran ${rulesRun.length} integrity rule(s) (${rulesRun.join(', ')}). Found ${issues.length} issue(s):`,
+      '',
+    ];
+    for (const i of issues) {
+      const sev = i.severity === 'error' ? '❌' : i.severity === 'warning' ? '⚠️' : 'ℹ️';
+      const loc = i.line ? `${i.file}:${i.line}` : i.file;
+      lines.push(`${sev} [${i.rule}] ${loc} — ${i.message}`);
+      if (i.fix) lines.push(`     fix: ${i.fix}`);
+    }
+    return new vscode.LanguageModelToolResult([
+      new vscode.LanguageModelTextPart(lines.join('\n')),
+    ]);
+  }
+
+  async prepareInvocation(
+    _options: vscode.LanguageModelToolInvocationPrepareOptions<AuditToolInput>,
+    _token: vscode.CancellationToken
+  ): Promise<vscode.PreparedToolInvocation> {
+    return { invocationMessage: 'Running GHCP-MEM workspace integrity audit…' };
+  }
+}

@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "A local, auditable session-memory layer for VS Code and GitHub Copilot, built for engineers who need persistent project context without relying on a cloud memory backend.",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -164,6 +164,11 @@
       {
         "command": "ghcpMem.runEval",
         "title": "GHCP-MEM: Run Retrieval Eval"
+      },
+      {
+        "command": "ghcpMem.runIntegrityAudit",
+        "title": "GHCP-MEM: Run Workspace Integrity Audit",
+        "icon": "$(shield)"
       },
       {
         "command": "ghcpMem.openTimeline",
@@ -344,6 +349,10 @@
           {
             "name": "precommit",
             "description": "Pre-commit architectural consistency check — verify staged changes against past decisions before committing"
+          },
+          {
+            "name": "audit",
+            "description": "Workspace integrity audit — catch version drift and cross-file inconsistencies (e.g. README footer vs package.json)"
           }
         ]
       }
@@ -484,6 +493,32 @@
           "required": [
             "summary"
           ]
+        }
+      },
+      {
+        "name": "ghcpMem_audit",
+        "displayName": "Audit Workspace Integrity",
+        "modelDescription": "Run GHCP-MEM's workspace integrity audit. Catches cross-file inconsistencies that erode release trust — most importantly, version drift between package.json, README footer, docs/DEMO.md, and CHANGELOG.md. Returns a list of errors and warnings with the offending file, line, and a suggested fix. Read-only — does not modify any file or memory.",
+        "toolReferenceName": "ghcpMemAudit",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(shield)",
+        "tags": [
+          "integrity",
+          "audit",
+          "release",
+          "consistency"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional subset of rules to run (e.g. ['version-drift']). Empty/omitted = run all."
+            }
+          }
         }
       }
     ],

@@ -6,6 +6,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.5.2] — 2026-06-01
+
+The release-consistency gate in **1.5.1** lives outside the extension — as an npm script + CI gate. A reviewer (correctly) pointed out that **GHCP-MEM itself should be able to catch the same class of bug** at any time, not only at publish. Drift detection now ships as a first-class extension capability surfaced through every interface GHCP-MEM already owns.
+
+### Added — Workspace Integrity Auditor
+- **`src/integrityChecker.ts`** — small rule framework + one built-in rule:
+  - `versionDriftRule` checks `package.json` (source of truth) against `README.md` footer `**vX.Y.Z**`, every `vX.Y.Z` citation in `docs/DEMO.md`, and the top `## [X.Y.Z]` heading in `CHANGELOG.md`. Reports the offending file, line, and a concrete fix (`run: npm run bump:version -- X.Y.Z`).
+  - Returns typed `IntegrityIssue[]` with severities (`error` / `warning` / `info`).
+  - `formatAuditReport()` produces a clickable markdown report grouped by severity.
+- **Three surfaces, same auditor:**
+  - 💬 **`@mem /audit`** — chat slash command, streams a compact issue list with fix-it suggestions and an "Open full audit report" button.
+  - 🤖 **`#ghcpMemAudit`** — `vscode.lm` agent tool (`MemoryAuditTool`). Copilot can spot-check the workspace mid-flow. Always available — read-only, no write surface.
+  - 🎛 **`GHCP-MEM: Run Workspace Integrity Audit`** — command palette entry. Opens the full markdown report as a preview tab. Status bar flashes `$(alert) N integrity error(s)` when blocking issues exist.
+- **`src/test/integrityChecker.test.ts`** — 9 new tests. One of them, "catches README ≠ package.json (the reviewer's exact bug)", asserts the exact pattern the external review flagged (`package.json` at 1.5.1, README footer at 1.5.0) is now caught instantly.
+
+### How it composes with the release-consistency gate
+| When | Surface | What runs |
+|---|---|---|
+| You're editing | `@mem /audit` in chat | the auditor (in-editor) |
+| You're editing | `#ghcpMemAudit` in agent prompt | the auditor (Copilot-driven) |
+| You hit ⌘⇧P | `GHCP-MEM: Run Workspace Integrity Audit` | the auditor (palette) |
+| CI runs on PR | `npm run check:release` | the gate (doc-only mode) |
+| You tag a release | `npm run check:release:strict` (CI) | the gate (full strict) |
+| You run `vsce publish` | `vscode:prepublish` → strict gate | the gate refuses if drifted |
+
+Same drift checks expressed twice — once for live use in the editor (the auditor), once for blocking publish (the gate). They reinforce each other.
+
+### Test count
+153 tests passing (was 144 → +9 from the integrity-audit suite).
+
+---
+
 ## [1.5.1] — 2026-06-01
 
 Triggered by an external reviewer who caught a **real** trust-eroding bug: Marketplace footer said `v1.5.0` while public `package.json`, CHANGELOG top entry, and the GitHub Releases latest were all on different versions. Manual sweep-and-bump worked for most prior releases, then failed once and broke the audit trail. This release builds the mechanism that makes drift impossible going forward.

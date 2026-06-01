@@ -8,7 +8,7 @@ import { ContextCompressor } from './contextCompressor';
 import { ContextStore } from './contextStore';
 import { ContextProvider } from './contextProvider';
 import { SessionsTreeProvider, TreeNode } from './sessionsView';
-import { MemorySearchTool, MemoryStoreTool } from './memoryTool';
+import { MemorySearchTool, MemoryStoreTool, MemoryAuditTool } from './memoryTool';
 import { getEmbedder } from './embeddings';
 import { captureAzureContext } from './azureContext';
 import { AzureSubsystem } from './azureDetect';
@@ -94,9 +94,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
   vscode.window.registerTreeDataProvider('ghcpMem.sessionsView', tree);
 
-  // Register the Language Model Tools so Copilot agent mode can auto-invoke memory search + store.
+  // Register the Language Model Tools so Copilot agent mode can auto-invoke memory search + store + audit.
   const toolDisposables: vscode.Disposable[] = [
     vscode.lm.registerTool('ghcpMem_search', new MemorySearchTool(store)),
+    // Audit is always available — read-only workspace inspection, no write surface.
+    vscode.lm.registerTool('ghcpMem_audit', new MemoryAuditTool()),
   ];
   if (!config.enterpriseMode && config.allowMcpWriteAccess) {
     toolDisposables.push(vscode.lm.registerTool('ghcpMem_store', new MemoryStoreTool(store)));
@@ -400,6 +402,20 @@ export async function activate(context: vscode.ExtensionContext) {
       const md = formatEvalReport(report);
       const doc = await vscode.workspace.openTextDocument({ content: md, language: 'markdown' });
       await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.runIntegrityAudit', async () => {
+      const { runWorkspaceAudit, formatAuditReport, hasBlockingIssues } = await import('./integrityChecker');
+      const { issues, rulesRun } = await runWorkspaceAudit();
+      const md = formatAuditReport(issues, rulesRun);
+      const doc = await vscode.workspace.openTextDocument({ content: md, language: 'markdown' });
+      await vscode.window.showTextDocument(doc, { preview: true });
+      if (hasBlockingIssues(issues)) {
+        vscode.window.setStatusBarMessage(
+          `$(alert) GHCP-MEM: ${issues.filter(i => i.severity === 'error').length} integrity error(s) — see audit report`,
+          5000,
+        );
+      }
     }),
 
     vscode.commands.registerCommand('ghcpMem.restoreBackup', async () => {

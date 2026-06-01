@@ -106,6 +106,30 @@ Why engineers trust it:
 | **Command line** | `code --install-extension ITcredibl.ghcp-mem` |
 | **Offline / air-gapped** | Download a [`.vsix` from Releases](https://github.com/ITcredibl/ghcp-mem/releases) and run `code --install-extension ghcp-mem-<version>.vsix` |
 
+#### Verify the .vsix you installed (security-conscious teams)
+
+Every release uploads `ghcp-mem.vsix` + `ghcp-mem.vsix.sha256` + `sbom.json` + `release-manifest.json.intoto.jsonl` (SLSA provenance) to the corresponding [GitHub Release](https://github.com/ITcredibl/ghcp-mem/releases). To verify the bits you got from the Marketplace match the open-source build:
+
+```bash
+# 1. download the matching version's .vsix and checksum from GitHub Releases
+TAG=v$(code --list-extensions --show-versions | grep ITcredibl.ghcp-mem | cut -d@ -f2)
+curl -sLO "https://github.com/ITcredibl/ghcp-mem/releases/download/${TAG}/ghcp-mem.vsix"
+curl -sLO "https://github.com/ITcredibl/ghcp-mem/releases/download/${TAG}/ghcp-mem.vsix.sha256"
+
+# 2. verify the checksum
+shasum -a 256 -c ghcp-mem.vsix.sha256
+
+# 3. confirm SHA-256 matches the locally-installed extension
+INSTALLED_VSIX="$HOME/.vscode/extensions/itcredibl.ghcp-mem-${TAG#v}/<reconstruct if needed>"
+# (the Marketplace doesn't ship the .vsix to ~/.vscode/extensions/ verbatim;
+#  use `vsce ls itcredibl.ghcp-mem` and compare extension contents instead)
+
+# 4. (optional) verify SLSA provenance
+gh attestation verify ghcp-mem.vsix --owner ITcredibl
+```
+
+Every release also includes a CycloneDX SBOM (`sbom.json`) so you can audit npm dependencies before installing.
+
 ### Step 2: Let it capture your work
 
 GHCP-MEM records the signals that matter in a coding session:
@@ -585,4 +609,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](docs/DEMO.md) · [Compare memory tools](docs/COMPARISON.md) · [Uninstall guide](docs/UNINSTALL.md) · [Configuration reference](docs/CONFIGURATION.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
-<sub>**v1.5.0** · local-first memory for Copilot</sub>
+<sub>**v1.5.1** · local-first memory for Copilot</sub>

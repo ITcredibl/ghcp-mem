@@ -6,6 +6,42 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.5.1] — 2026-06-01
+
+Triggered by an external reviewer who caught a **real** trust-eroding bug: Marketplace footer said `v1.5.0` while public `package.json`, CHANGELOG top entry, and the GitHub Releases latest were all on different versions. Manual sweep-and-bump worked for most prior releases, then failed once and broke the audit trail. This release builds the mechanism that makes drift impossible going forward.
+
+### Added — Release-consistency gate (the prevention mechanism)
+- **`scripts/check-release-consistency.mjs`** — Single-source-of-truth gate. Treats `package.json .version` as the only ground truth and verifies every other surface against it:
+  - README footer `**vX.Y.Z**`
+  - `docs/DEMO.md` version refs (all occurrences must match)
+  - `CHANGELOG.md` top entry `## [X.Y.Z]`
+  - **strict mode adds:** working tree clean, HEAD pushed to `origin/main`, `git tag vX.Y.Z` exists locally, `git tag vX.Y.Z` pushed to origin
+  - Exit code 1 with an actionable hint for every failure (e.g. `run: npm run bump:version -- 1.5.1`)
+- **`scripts/bump-version.mjs <X.Y.Z>`** — Atomic version bump. One command updates package.json + README footer + DEMO.md + prepends a CHANGELOG stub. Runs the gate after to confirm consistency. Idempotent.
+- **`npm run check:release`** (doc-only) and **`npm run check:release:strict`** (publish-time, adds git checks) — gate as a one-liner.
+- **`npm run bump:version <X.Y.Z>`** — the atomic bumper.
+
+### Changed — Hard publish gate
+- **`package.json` → `vscode:prepublish`** now runs `npm run check:release:strict` _before_ typecheck and bundle. **`vsce publish` will refuse to ship a drifted state.** The strict mode requires the commit + tag are already pushed to GitHub, which means the GitHub source-of-truth always matches the Marketplace listing at the moment of publish.
+- **`.github/workflows/ci.yml`** — Added a release-consistency check that runs on every push and pull request. Strict mode kicks in only on tag pushes (`refs/tags/v*`), so PRs aren't blocked by the working-tree / push checks they can't satisfy.
+
+### Added — README "Verify Marketplace VSIX" section
+Per reviewer recommendation. Walks the user through:
+1. Downloading the matching version's `.vsix` + `ghcp-mem.vsix.sha256` from GitHub Releases
+2. `shasum -a 256 -c ghcp-mem.vsix.sha256` to verify the bits
+3. `gh attestation verify` for SLSA provenance (already produced by `release.yml`)
+4. Auditing `sbom.json` for npm dependency provenance
+
+### What the gate prevents (for future reviewers)
+The exact bug the reviewer flagged — "Marketplace footer says v1.5.0, package.json shows 1.4.9, CHANGELOG newest is 1.4.9, GitHub Releases latest is v1.4.0" — is now impossible. Each surface is either:
+- enforced by the doc-only gate (README, DEMO, CHANGELOG must match package.json), or
+- enforced by the strict gate (HEAD pushed + tag pushed → GitHub Release auto-created by `release.yml`), or
+- enforced by the publish pipeline itself (vsce only ships what's in package.json).
+
+A drift in any single surface causes the publish to abort before producing a `.vsix`. CI catches the drift even earlier — on the PR that introduced it.
+
+---
+
 ## [1.5.0] — 2026-05-31
 
 This release responds to a follow-up external review that recommended five hardening tracks (volatile-cache cap, secret-hash validation, diff-based ingestion, prune-dashboard, corporate policy URL). An audit confirmed **four of the five were already shipped** in 1.4.x; this release adds the fifth — prune-dashboard actions on the visual timeline — plus a formal threat model and reproducible activation-cost benchmark so enterprise reviewers can verify both.

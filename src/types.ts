@@ -124,7 +124,16 @@ export type ObservationType =
  * the optional line range that was touched, and the originating event index.
  */
 export interface Evidence {
-  kind: 'file_edit' | 'file_create' | 'file_delete' | 'file_rename' | 'diagnostic' | 'terminal' | 'git' | 'task' | 'debug';
+  kind:
+    | 'file_edit'
+    | 'file_create'
+    | 'file_delete'
+    | 'file_rename'
+    | 'diagnostic'
+    | 'terminal'
+    | 'git'
+    | 'task'
+    | 'debug';
   /** Workspace-relative file path the evidence refers to, when applicable. */
   filePath?: string;
   /**
@@ -282,7 +291,13 @@ export interface ContextDatabase {
   sessions: CompressedSession[];
   lastUpdated: number;
   /** Optional free-form observations seeded from CI/CD pipelines. */
-  observations?: Array<{ id: string; text: string; seedLabel: string; capturedAt: string; redactionCount: number }>;
+  observations?: Array<{
+    id: string;
+    text: string;
+    seedLabel: string;
+    capturedAt: string;
+    redactionCount: number;
+  }>;
 }
 
 /**
@@ -384,7 +399,7 @@ function clampNum(raw: unknown, lo: number, hi: number, fallback: number): numbe
 export function getConfig(): PluginConfig {
   const cfg = vscode.workspace.getConfiguration('ghcpMem');
   const githubCompatibleMode = cfg.get('githubCompatibleMode', false);
-  const scope = (cfg.get<MemoryScope>('scope', 'user'));
+  const scope = cfg.get<MemoryScope>('scope', 'user');
   return {
     enabled: cfg.get('enabled', true),
     compressionIntervalMinutes: cfg.get('compressionIntervalMinutes', 15),
@@ -393,7 +408,8 @@ export function getConfig(): PluginConfig {
     // GitHub-compatible mode pins retention to 28 days like Copilot agentic memory.
     retentionDays: githubCompatibleMode ? 28 : cfg.get('retentionDays', 90),
     captureFileEdits: cfg.get('captureFileEdits', true),
-    captureTerminalCommands: cfg.get('captureTerminalCommands', true) && !cfg.get('enterpriseMode', false),
+    captureTerminalCommands:
+      cfg.get('captureTerminalCommands', true) && !cfg.get('enterpriseMode', false),
     captureDiagnostics: cfg.get('captureDiagnostics', true),
     captureGitOps: cfg.get('captureGitOps', true),
     contextRetrievalCount: cfg.get('contextRetrievalCount', 5),
@@ -410,9 +426,13 @@ export function getConfig(): PluginConfig {
     githubCompatibleMode,
     enterpriseMode: cfg.get('enterpriseMode', false),
     captureCodeSnippets: cfg.get('captureCodeSnippets', true) && !cfg.get('enterpriseMode', false),
-    allowMcpWriteAccess: cfg.get('allowMcpWriteAccess', true) && !cfg.get('enterpriseMode', false),
+    // Default `false` (v1.6.1+): MCP is read-only out of the box. Write tools
+    // (memory-store/delete/correct/retract/supersede) require opt-in. This is
+    // the enterprise-safe posture; flipping to `true` is a deliberate choice.
+    allowMcpWriteAccess: cfg.get('allowMcpWriteAccess', false) && !cfg.get('enterpriseMode', false),
     allowTeamExport: cfg.get('allowTeamExport', true) && !cfg.get('enterpriseMode', false),
-    previewBeforePersist: cfg.get('previewBeforePersist', false) || cfg.get('enterpriseMode', false),
+    previewBeforePersist:
+      cfg.get('previewBeforePersist', false) || cfg.get('enterpriseMode', false),
     policySource: normalizeOptionalString(cfg.get<string | undefined>('policySource', undefined)),
     idleTimeoutSeconds: clampNum(cfg.get('idleTimeoutSeconds', 30), 0, 300, 30),
     customRedactionRules: cfg.get<CustomRedactionRule[]>('customRedactionRules', []),
@@ -428,7 +448,7 @@ function normalizeOptionalString(raw: string | undefined): string | undefined {
 /** Minimal glob matcher for excludeGlobs. */
 export function isPathExcluded(relPath: string, globs: string[]): boolean {
   if (!globs?.length) return false;
-  return globs.some(g => getCachedGlobRegex(g).test(relPath));
+  return globs.some((g) => getCachedGlobRegex(g).test(relPath));
 }
 
 // Memoize compiled glob patterns. Called on every captured file event so the

@@ -7,8 +7,9 @@
 > what you've already decided, and why.**
 >
 > GHCP-MEM gives Copilot a local memory that **remembers what you built**, **proves
-> what it remembers** (every decision cites the events that produced it), and
-> **routes itself to the cheapest answer** so your tokens go to shipping — not
+> what it remembers** (every stored decision cites the captured events that produced it),
+> and **routes most "what / why / how" questions to a millisecond-latency local lookup**
+> instead of a fresh Copilot completion — so your token budget goes to shipping, not
 > catching up.
 
 **Local-first · Copilot chat participant · MCP stdio · Redaction-first**
@@ -69,7 +70,7 @@ We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything
 
 **Why we have the right to guide you here:**
 
-- **307 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Auditable in an afternoon.
+- **323 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Nine documented engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -83,7 +84,7 @@ We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything
 |---|---|---|
 | **1. Install** | One click from the Marketplace, or `code --install-extension ITcredibl.ghcp-mem` | Activates on next VS Code launch. Zero config required. |
 | **2. Code normally** | Edit files, run terminals, push commits — your usual day | Captures events locally, redacts secrets, compresses sessions through your own Copilot subscription |
-| **3. Open a new chat** | Type `@mem` or just ask your usual question | Copilot already knows what you built last session. Decisions are cited. Token cost drops by 5–20× for "what / why / how" questions. |
+| **3. Open a new chat** | Type `@mem` or just ask your usual question | Copilot starts with the prior session's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent* — which is where the headline token-cost reduction comes from. The synthetic benchmark estimates 5–20× savings on this query class; results on your real repo will vary with query mix. |
 
 That's it. No daemon to keep running. No cloud account to register. No vector DB to provision.
 
@@ -185,29 +186,52 @@ It surfaces memory through:
 | **Command line** | `code --install-extension ITcredibl.ghcp-mem` |
 | **Offline / air-gapped** | Download a [`.vsix` from Releases](https://github.com/ITcredibl/ghcp-mem/releases) and run `code --install-extension ghcp-mem-<version>.vsix` |
 
-#### Verify the .vsix you installed (security-conscious teams)
+#### Verify the installed extension (security-conscious teams)
 
-Every release uploads `ghcp-mem.vsix` + `ghcp-mem.vsix.sha256` + `sbom.json` + `release-manifest.json.intoto.jsonl` (SLSA provenance) to the corresponding [GitHub Release](https://github.com/ITcredibl/ghcp-mem/releases). To verify the bits you got from the Marketplace match the open-source build:
+Every release from **v1.6.1 onward** uploads four artifacts to its [GitHub Release](https://github.com/ITcredibl/ghcp-mem/releases) page:
+
+| Artifact | What it lets you check |
+|---|---|
+| `ghcp-mem.vsix` | The exact build the Marketplace publishes |
+| `ghcp-mem.vsix.sha256` | Tamper-evident integrity for the `.vsix` |
+| `sbom.json` (CycloneDX) | Every npm dependency that ends up in the bundle — auditable before install |
+| `release-manifest.json` + SLSA L3 provenance attestation | Build provenance: this `.vsix` was built by the public `release.yml` workflow on the matching tag |
+
+> **Backfilled v1.5.0–v1.6.0 releases** include `.vsix` + `.sha256` + `sbom.json` + a manifest, but **not** the SLSA L3 attestation — those tags predate the workflow fix that lets the attestor run successfully. Verify them via the SHA-256 + SBOM only. v1.6.1+ has the full L3 trail.
+
+End-to-end verification script you can paste into a terminal:
 
 ```bash
-# 1. download the matching version's .vsix and checksum from GitHub Releases
-TAG=v$(code --list-extensions --show-versions | grep ITcredibl.ghcp-mem | cut -d@ -f2)
-curl -sLO "https://github.com/ITcredibl/ghcp-mem/releases/download/${TAG}/ghcp-mem.vsix"
-curl -sLO "https://github.com/ITcredibl/ghcp-mem/releases/download/${TAG}/ghcp-mem.vsix.sha256"
+# Discover the installed version and the matching tag.
+VERSION=$(code --list-extensions --show-versions | grep -i 'ITcredibl.ghcp-mem' | cut -d@ -f2)
+TAG="v${VERSION}"
+test -n "$VERSION" || { echo "GHCP-MEM not installed"; exit 1; }
 
-# 2. verify the checksum
+# 1. Pull the public release artifacts.
+BASE="https://github.com/ITcredibl/ghcp-mem/releases/download/${TAG}"
+curl -sfLO "${BASE}/ghcp-mem.vsix"            || { echo "no .vsix for ${TAG}"; exit 1; }
+curl -sfLO "${BASE}/ghcp-mem.vsix.sha256"     || { echo "no checksum for ${TAG}"; exit 1; }
+curl -sfLO "${BASE}/sbom.json"                || echo "(no SBOM for ${TAG} — backfilled release)"
+
+# 2. Verify the .vsix matches its published checksum.
 shasum -a 256 -c ghcp-mem.vsix.sha256
 
-# 3. confirm SHA-256 matches the locally-installed extension
-INSTALLED_VSIX="$HOME/.vscode/extensions/itcredibl.ghcp-mem-${TAG#v}/<reconstruct if needed>"
-# (the Marketplace doesn't ship the .vsix to ~/.vscode/extensions/ verbatim;
-#  use `vsce ls itcredibl.ghcp-mem` and compare extension contents instead)
+# 3. Verify your locally-installed bundle byte-for-byte against the .vsix.
+EXT_DIR="$HOME/.vscode/extensions/itcredibl.ghcp-mem-${VERSION}"
+test -d "$EXT_DIR" || { echo "expected $EXT_DIR — is the extension installed?"; exit 1; }
+unzip -p ghcp-mem.vsix 'extension/out/extension.js' \
+  | shasum -a 256 \
+  | awk '{print $1}' > /tmp/release-extension.sha256
+shasum -a 256 "$EXT_DIR/out/extension.js" \
+  | awk '{print $1}' > /tmp/installed-extension.sha256
+diff /tmp/release-extension.sha256 /tmp/installed-extension.sha256 \
+  && echo "✅ installed bundle SHA matches the public release"
 
-# 4. (optional) verify SLSA provenance
+# 4. (v1.6.1+ only) Verify the SLSA L3 provenance attestation.
 gh attestation verify ghcp-mem.vsix --owner ITcredibl
 ```
 
-Every release also includes a CycloneDX SBOM (`sbom.json`) so you can audit npm dependencies before installing.
+Step 3 catches the only attack that step 2 can't: a tampered Marketplace artifact that wasn't built from the public source. If step 3's `diff` shows a mismatch on a v1.6.1+ install, **don't trust the install** — open an issue with the diff and the installed-extension manifest.
 
 ### Step 2: Let it capture your work
 
@@ -689,4 +713,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.6.0** · local-first memory for Copilot</sub>
+<sub>**v1.6.1** · local-first memory for Copilot</sub>

@@ -6,6 +6,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.1] — 2026-06-01
+
+Targeted response to the external v1.6.0 review. The reviewer's #1 concern was **release integrity**: Marketplace said v1.6.0, GitHub Releases still showed v1.4.0 as "latest." For a memory extension that captures coding activity, that gap is a trust problem — buyers can't answer "what source commit produced the Marketplace artifact?" This release fixes the root cause, backfills the missing release trail, and tightens the smaller items the same review flagged.
+
+### Fixed — Release trail (the trust-eroding bug)
+- **CI test runner now works on Node 20** (`scripts/run-tests.mjs`, `package.json`). The `release.yml` workflow has been silently failing since v1.4.10 because `node --test "out-test/src/test/*.test.js"` doesn't expand globs on Node 20 (added in Node 22.6+). Local dev (Node 25) expanded fine; CI (Node 20) tried to read the literal `*.test.js` path and exited 1. Every Release workflow run on `v1.5.0`, `v1.5.1`, `v1.5.2`, `v1.5.3`, `v1.6.0` failed at the test step, which is why no GitHub Release was created for any of those tags. Replaced the brittle quoted-glob with a tiny `run-tests.mjs` shim that recursively discovers `*.test.js` under `out-test/src/test/` via `fs.readdirSync` and spawns `node --test <file1> <file2> …` with the explicit list — fully portable across Node 18/20/22/25, no shell-glob assumptions, no version-conditional behaviour.
+- **Backfilled GitHub Releases for v1.5.0 through v1.6.0** with the rebuilt `.vsix`, SHA-256 checksum, CycloneDX SBOM, and release manifest for each tag. These backfills are marked clearly: they include integrity artifacts but **not** the SLSA L3 provenance attestation, because the in-CI attestor only runs as part of `release.yml` on a fresh tag push. v1.6.1+ gets the full L3 attestation chain now that the workflow runs to completion.
+- **Honest "Verify installed extension" docs** (`README.md`). Rewrote the section the v1.6.0 review called out as not actually working end-to-end. Step 3 (compare locally-installed bundle SHA against the public release) was a `<reconstruct if needed>` placeholder; it's now a real shell snippet that unzips the release `.vsix`, hashes `extension/out/extension.js`, hashes the installed copy, and diffs them. The section also clearly states what's verifiable for backfilled releases vs v1.6.1+.
+
+### Changed — Default posture
+- **MCP write tools default to OFF** (`package.json` schema, `src/types.ts:413`, `src/extension.ts:1243`). `ghcpMem.allowMcpWriteAccess` was `true` by default; it is now `false`. The MCP server still exposes the full read surface out of the box (`memory-search`, `memory-recent`, `memory-timeline`, `memory-get`) — but `memory-store`, `memory-delete`, `memory-correct`, `memory-retract`, and `memory-supersede` require an opt-in flip. This matches MCP's own human-in-the-loop guidance and the enterprise-safe defaults the v1.6.0 reviewer asked for under their "MCP write tools need stronger guardrails" item. **Breaking change for users who relied on the previous default**: if you want write tools, set `ghcpMem.allowMcpWriteAccess: true` in your settings. (Enterprise mode continues to force this off regardless of the user setting.)
+
+### Changed — Auditability hygiene (the "minified source" concern)
+- **Adopted Prettier across the entire codebase** (`.prettierrc.json`, `.prettierignore`, `package.json`). The v1.6.0 review said "several raw TypeScript files appear minified" — that was the esbuild output (`out/extension.js`), not source. `.prettierignore` now points this out explicitly: source under `src/` is formatted via `npm run format` (Prettier; printWidth 100, single quotes, trailing commas) and checked by `npm run format:check`. This release ran `--write` across all 79 source files; future PRs can use `format:check` as a CI gate.
+
+### Changed — Marketing copy honesty
+- **Tightened absolute claims in README** (`README.md`). Lead paragraph now says "routes most 'what / why / how' questions to a millisecond-latency local lookup *instead of* a fresh Copilot completion — so your token budget goes to shipping" — that's the actual mechanism behind the headline token-cost reduction, not the marketing claim "eliminates token waste" the reviewer warned against. The "3 steps" table's token-savings cell now explicitly says "The synthetic benchmark estimates 5–20× savings on this query class; results on your real repo will vary with query mix" — keeping the number but flagging it as a benchmark estimate. Test count updated 307 → 323.
+
+### Out of scope for v1.6.1 (planned for follow-up sprints)
+The v1.6.0 review listed four substantive feature requests that are not patch-release work:
+- **Encrypted local storage** (`ghcpMem.storageEncryption: off | os-keychain | passphrase` with migration) — scoped for a v1.7 sprint.
+- **First-run enterprise-strict wizard** with Personal / Team / Enterprise-strict presets — scoped for v1.7.
+- **Real-world benchmark suite** against curated repos (React, Azure Terraform, Bicep, Python, monorepo) measuring recall@5, MRR, stale-memory rejection, false positive conflict rate, redaction false negatives, latency at 1K/10K/50K sessions — scoped for v1.7.
+- **Prompt-injection defenses** ("memory is untrusted context" wrapper, instruction stripping for stored memories, pack quarantine mode) — scoped for v1.8.
+
+These are tracked openly so the rating gap (current 8.1 → target 8.6–8.8 per the same review) closes against work that ships, not against work that's claimed.
+
+### Test count
+All 323 tests still passing after the Prettier sweep and the test-runner refactor. CI's Release workflow on the `v1.6.1` tag will be the first successful end-to-end run since v1.4.9 — that run produces the canonical GitHub Release for this version with full SLSA L3 attestation.
+
+---
+
 ## [1.6.0] — 2026-06-01
 
 **Production-grade memory upgrade.** Seven incremental phases that take GHCP-MEM from "a session summarization tool" to a memory system developers can trust: every claim is grounded in evidence, every ranking is provenance-aware, every memory has a confidence that decays over time, and every search hop carries the full decision narrative. 136 new tests (153 → 289), 0 native deps, 0 schema migrations, fully backward-compatible with stores captured under 1.5.x.

@@ -62,7 +62,7 @@ You can also query explicitly with `@mem` commands, `#ghcpMemSearch`, and MCP.
 
 It surfaces memory through:
 
-- the **`@mem`** chat participant (20 commands including `/savings` to see per-session and lifetime token savings)
+- the **`@mem`** chat participant (20 commands including `/savings` to see per-session and lifetime token-savings _estimates_)
 - native Copilot **agent tools** (`#ghcpMemSearch`, `#ghcpMemStore`)
 - a bundled **stdio MCP server** for Cursor, Cline, Windsurf, Claude Desktop, and GitHub Copilot CLI
 
@@ -142,7 +142,7 @@ Stop burning tokens on catch-up. Install GHCP-MEM and capture your first snapsho
 2. Open any workspace
 3. Run **`GHCP-MEM: Capture Session Snapshot Now`**
 4. Open Copilot Chat and try **`@mem /recent`**
-5. Run **`@mem /savings`** after a few sessions to see session-by-session and lifetime token savings
+5. Run **`@mem /savings`** after a few sessions to see session-by-session and lifetime token-savings _estimates_
 
 <details>
 <summary><b>📺 Watch the install in 5 seconds</b></summary>
@@ -285,7 +285,7 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 | `@mem /recap [7d\|30d\|90d]` | Narrative engineering recap for sprint retros |
 | `@mem /related` | Sessions that touched the active file, grouped by recency |
 | `@mem /decisions [keyword]` | ADR-style decision log deduped across all sessions |
-| `@mem /savings` | Session and lifetime token savings plus GPT-4o dollar-equivalent |
+| `@mem /savings` | Session and lifetime token-savings _estimates_ plus GPT-4o dollar-equivalent |
 | `@mem /whereami` | Interruption-recovery brief: what you were doing, where you left off, your next step |
 | `@mem /debt` | Technical debt ledger — TODO/FIXME/HACK signals grouped by age and file |
 | `@mem /adr [topic]` | Formal Architecture Decision Record auto-generated from session history |
@@ -374,7 +374,7 @@ Copilot agent mode can call these without a separate MCP setup:
 | `/export` | `@mem /export a1b2c3d4` |
 | `/azure` | `@mem /azure key-vault` |
 | `/health` | `@mem /health` |
-| `/savings` | `@mem /savings` — per-session and lifetime token-savings breakdown with dollar-equivalent |
+| `/savings` | `@mem /savings` — per-session and lifetime token-savings _estimates_ with dollar-equivalent. Note: estimates derived from typical Copilot context windows, not measured against real Copilot sessions |
 | `/related` | `@mem /related` — sessions touching the currently open file |
 | `/decisions` | `@mem /decisions` or `@mem /decisions auth` — ADR-style decision log |
 | `/standup` | `@mem /standup` or `@mem /standup yesterday` — AI daily standup note |
@@ -585,4 +585,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](docs/DEMO.md) · [Compare memory tools](docs/COMPARISON.md) · [Uninstall guide](docs/UNINSTALL.md) · [Configuration reference](docs/CONFIGURATION.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
-<sub>**v1.4.9** · local-first memory for Copilot</sub>
+<sub>**v1.4.10** · local-first memory for Copilot</sub>

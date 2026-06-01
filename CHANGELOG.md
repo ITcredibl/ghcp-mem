@@ -6,6 +6,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.10] — 2026-05-31
+
+### Fixed
+- **`.vscodeignore`** — Excluded root-level `*.mp4`, `*.gif`, `ghcp_mem_promo.*`, and `sleek-cinematic-promo.*` so stray marketing artefacts at the repo root can never ship in the `.vsix` again. (The previous rule only matched `images/demo/`, which let a 0-byte `ghcp_mem_promo.mp4` slip into `1.4.9`.)
+
+### Changed — Honest-claims pass (responding to external review)
+An external reviewer rated GHCP-MEM 7.4/10 and flagged several over-claims in our marketing copy. This patch addresses what we could land in a single release; the rest is on the deferred roadmap below.
+
+- **`README.md`** — `@mem /savings` mentions now label the number as an **estimate** with a one-line caveat that it is derived from typical Copilot context windows rather than measured against real Copilot sessions. Four places updated: hero overview, getting-started step, command table, and chat-participant table.
+- **`README.md`** — Version footer + badge sweep to `1.4.10`.
+- **`docs/DEMO.md`** — Version references updated to `1.4.10`.
+
+### Deferred to 1.5.x (acknowledged from the review, not in this release)
+These are real gaps; tracking publicly so adopters can plan:
+
+- Signed release artifacts, checksums, SBOM, GitHub Actions provenance.
+- Formal threat model document covering extension-host permissions, local-store exposure, LM transfer, MCP write tools, pack imports, and terminal capture.
+- CI security gates: Dependabot, Gitleaks, Semgrep, `npm audit` blocking. (CodeQL already wired since 1.2.0.)
+- Optional encrypted local store via OS keychain.
+- Public benchmark suite vs. Copilot Memory / Continue / Cline / OpenMemory with reproducible numbers.
+- Published activation-time + memory-footprint measurements in README.
+
+---
+
 ## [1.4.9] — 2026-05-31
 
 ### Added — Enterprise controls

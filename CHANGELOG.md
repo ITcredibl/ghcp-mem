@@ -6,6 +6,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.7.1] — 2026-06-10
+
+Maintenance release responding to a thorough post-merge review of v1.7.0. Three independently small fixes, each closing a real correctness or trust gap.
+
+### Fixed — Janitor pruning age was using the wrong clock
+- **`src/janitor.ts`**: when `ghcpMem.janitorPruneAfterDays > 0`, the prune cutoff compared `now - s.endTime` against the threshold. `endTime` is the original session-capture timestamp, **not** the last time the user touched the session. A session captured 90 days ago but retrieved or accepted yesterday could still be pruned. Now uses `max(endTime, s.usage.lastInteractionAt)` so active sessions can't be silently deleted just because they're old. Plain bug fix — no schema change, no migration; the field has been on `CompressedSession.usage` since v1.6.0 grounding work.
+
+### Fixed — `format:check` is now actually CI-enforced
+- **`.github/workflows/ci.yml`** + **`.github/workflows/release.yml`**: added a `Format check (Prettier)` step. The v1.6.1 review asked for Prettier hygiene to be CI-enforced; the README said it was. In reality no workflow step ran `npm run format:check`, so v1.7.0 landed with 4 unformatted files. This release makes the README claim true: any source/script file that isn't Prettier-clean fails the build, on both `CI` and `Release` workflows, before lint/typecheck/test run.
+- **Formatted the 4 stale files** introduced by v1.7.0: `src/contextStore.ts`, `src/extension.ts`, `src/test/contextStore.test.ts`, `src/test/janitor.test.ts`. Mechanical reformat, no behaviour change.
+
+### Fixed — Cleared the last 3 Dependabot alerts that v1.6.3 couldn't reach
+- **`package.json`** + **`package-lock.json`**: bumped `@vscode/vsce` from `2.32.0` → `^3.9.2`. v1.6.3's `npm audit fix` returned "0 vulnerabilities" on the default audit level, but GitHub Dependabot kept showing `tmp` (high — path traversal), `qs` (moderate — DoS), and `uuid` (moderate — buffer-bounds) as **open** on the default branch. All three are transitive deps of `@vscode/vsce@2.32` — npm audit was scoring them below its severity threshold while Dependabot was correctly flagging them. The vsce 3.x release tree carries patched versions of all three. vsce is a **build-only** dependency (it ships the `.vsix`; no runtime in the extension), so the major bump has no end-user surface.
+- Post-bump: `npm audit` reports `0 vulnerabilities` and GitHub Dependabot will auto-close the 3 alerts on this commit landing in `main`.
+
+### Updated — Stale claims refresh
+- **`README.md`**: test count `323 → 329`. Also updated the Prettier-CI claim to call out the new `format:check` gate explicitly: *"Source is formatted with Prettier (CI-enforced via `format:check`)"*.
+- **`docs/DEMO.md`**: test count `307 → 329`, version `v1.7.0 → v1.7.1`, added `npm audit` 0-vulns + Prettier-gated to the footer.
+
+### Test count
+All 329 tests still passing. No behaviour changes outside the janitor pruning condition (which is covered by `src/test/janitor.test.ts`).
+
+### Verification ahead of CI
+- `npm run format:check` — all files pass
+- `npm run lint` (--max-warnings=0) — clean
+- `npm run typecheck` — clean
+- `npm test` — 329/329 pass
+- `npm run check:release` — 4/4 doc checks pass
+- `npm audit` — 0 vulnerabilities
+
+---
+
 ## [1.7.0] — 2026-06-10
 
 Headline: stop memories leaking across projects, and stop low-signal sessions polluting the injected brief.

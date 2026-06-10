@@ -721,8 +721,7 @@ export class ContextStore implements vscode.Disposable {
       // if their workspaceId equals the current workspace.
       candidates = candidates.filter(
         (s) =>
-          s.repoScope === filters.repoScope ||
-          (!s.repoScope && !!wsId && s.workspaceId === wsId),
+          s.repoScope === filters.repoScope || (!s.repoScope && !!wsId && s.workspaceId === wsId),
       );
     }
 
@@ -977,8 +976,7 @@ export class ContextStore implements vscode.Disposable {
     if (filters.repoScope) {
       scoped = scoped.filter(
         (s) =>
-          s.repoScope === filters.repoScope ||
-          (!s.repoScope && !!wsId && s.workspaceId === wsId),
+          s.repoScope === filters.repoScope || (!s.repoScope && !!wsId && s.workspaceId === wsId),
       );
     }
 

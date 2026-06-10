@@ -231,7 +231,7 @@ test('ContextStore — getStartupCandidates unions in sessions tagged with a glo
   const origGet = vscodeMock.workspace.getConfiguration;
   const origFolders = vscodeMock.workspace.workspaceFolders;
   vscodeMock.workspace.getConfiguration = () => ({
-    get: <T,>(key: string, dflt?: T): T => {
+    get: <T>(key: string, dflt?: T): T => {
       if (key === 'scope') return 'repo' as unknown as T;
       if (key === 'globalTags') return ['global'] as unknown as T;
       return dflt as T;

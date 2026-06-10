@@ -48,11 +48,17 @@ export async function runJanitor(
     s.qualityScore = q.score;
     report.rescored++;
 
+    // Age the session from whichever happened later — original capture or the
+    // user's most recent interaction with it. Using `endTime` alone meant a
+    // session captured 90 days ago but retrieved/accepted yesterday would still
+    // be eligible for pruning. That was a real footgun: pruneAfterDays=30 plus
+    // a low-quality flag could delete sessions the user is actively using.
+    const lastTouched = Math.max(s.endTime, s.usage?.lastInteractionAt ?? 0);
     if (
       opts.pruneAfterDays > 0 &&
       (s.lowQuality || isLow) &&
       (s.usage?.accepted ?? 0) === 0 &&
-      now - s.endTime > opts.pruneAfterDays * DAY
+      now - lastTouched > opts.pruneAfterDays * DAY
     ) {
       toPrune.push(s.id);
     }

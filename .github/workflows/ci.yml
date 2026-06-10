@@ -57,6 +57,13 @@ jobs:
           fi
         shell: bash
 
+      - name: Format check (Prettier)
+        # Closes the auditability gap from the v1.6.1 review: the README claimed
+        # "CI-enforced" Prettier but no CI step actually ran it. New files were
+        # landing unformatted (4 of them by v1.7.0) and the claim went stale.
+        # This gate fails the build if any source/script file isn't Prettier-clean.
+        run: npm run format:check
+
       - name: Lint
         run: npm run lint
 

@@ -17,13 +17,7 @@ import { getConfig, CompressedSession, AzureContextMeta, SessionEvent } from './
 import { scoreSessionQuality } from './quality';
 import { runJanitor } from './janitor';
 import { computeHealth, formatHealthMarkdown, fillGlyph } from './health';
-import {
-  buildPack,
-  parsePack,
-  importPack,
-  uninstallPack,
-  listInstalledPacks,
-} from './packs';
+import { buildPack, parsePack, importPack, uninstallPack, listInstalledPacks } from './packs';
 import { AutosaveTrigger } from './autosave';
 import { MemoryTimelinePanel } from './timelinePanel';
 import { SessionCodeLensProvider } from './sessionCodeLens';

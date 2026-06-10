@@ -58,9 +58,7 @@ test('janitor — flags low-quality sessions and leaves rich ones', async () => 
 test('janitor — prunes long-stale low-quality sessions with no acceptance', async () => {
   const store = new ContextStore(new InMemoryMemento() as any);
   const old = Date.now() - 30 * 86_400_000;
-  await store.addSession(
-    makeSession({ id: 'stale', summary: 'x', startTime: old, endTime: old }),
-  );
+  await store.addSession(makeSession({ id: 'stale', summary: 'x', startTime: old, endTime: old }));
   const report = await runJanitor(store, { qualityFloor: 0.3, pruneAfterDays: 14 });
   assert.equal(report.pruned, 1);
   assert.equal(store.getById('stale'), undefined);

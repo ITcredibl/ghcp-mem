@@ -284,6 +284,13 @@ export interface CompressedSession {
     rejected: number;
     lastInteractionAt?: number;
   };
+  /** Heuristic ingestion quality score in [0,1] (see ./quality). */
+  qualityScore?: number;
+  /**
+   * Marked when scoreSessionQuality fell below `ghcpMem.qualityFloor`.
+   * Kept on disk for audit but excluded from startup injection.
+   */
+  lowQuality?: boolean;
 }
 
 export interface ContextDatabase {
@@ -349,6 +356,8 @@ export interface PluginConfig {
    * cross-repo org-level knowledge (coding standards, naming, WAF, etc.).
    */
   globalTags: string[];
+  /** Sessions scoring below this on the heuristic quality gate are flagged lowQuality and excluded from injection. */
+  qualityFloor: number;
   /** Filter out sessions whose key files no longer exist in the current workspace. */
   validateAgainstCodebase: boolean;
   /** Sessions with freshness below this value are dropped from retrieval (0–1). */
@@ -429,6 +438,7 @@ export function getConfig(): PluginConfig {
     startupContextSessionCount: clampNum(cfg.get('startupContextSessionCount', 5), 1, 20, 5),
     scope: githubCompatibleMode ? 'repo' : scope,
     globalTags: normalizeGlobalTags(cfg.get<string[]>('globalTags', ['global'])),
+    qualityFloor: clampNum(cfg.get('qualityFloor', 0.3), 0, 1, 0.3),
     validateAgainstCodebase: cfg.get('validateAgainstCodebase', true),
     // Clamp to [0, 1] regardless of what the user types in settings.json.
     // package.json declares min/max for the UI, but raw JSON edits can bypass that.

@@ -14,6 +14,7 @@ import { getEmbedder } from './embeddings';
 import { captureAzureContext } from './azureContext';
 import { AzureSubsystem } from './azureDetect';
 import { getConfig, CompressedSession, AzureContextMeta, SessionEvent } from './types';
+import { scoreSessionQuality } from './quality';
 import { computeHealth, formatHealthMarkdown, fillGlyph } from './health';
 import {
   buildPack,
@@ -1233,6 +1234,19 @@ async function compressAndStore(): Promise<void> {
       azureTags,
     });
     if (session) {
+      const quality = scoreSessionQuality(session);
+      session.qualityScore = quality.score;
+      const floor = getConfig().qualityFloor;
+      if (quality.score < floor) {
+        session.lowQuality = true;
+        log(
+          'INFO',
+          `dropping low-quality session ${session.id} (score=${quality.score.toFixed(2)} < ${floor}): ${quality.reasons.join(', ')}`,
+        );
+        capture.resetStartTime();
+        setStatusBarState('idle');
+        return;
+      }
       if (!(await confirmPersistSession(session))) {
         setStatusBarState('idle');
         return;

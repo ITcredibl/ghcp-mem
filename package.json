@@ -789,6 +789,13 @@
           "default": ["global"],
           "markdownDescription": "User tags that promote a session to global scope: it is always included in startup context and retrieval regardless of `#ghcpMem.scope#`. Reserve for cross-repo knowledge such as organization coding standards, naming conventions, or Well-Architected Framework guidance. Tag a session with `GHCP-MEM: Tag Session...`."
         },
+        "ghcpMem.qualityFloor": {
+          "type": "number",
+          "default": 0.3,
+          "minimum": 0,
+          "maximum": 1,
+          "markdownDescription": "Minimum heuristic quality score (0-1) required for a captured session to be injected. Sessions below the floor are flagged `lowQuality`, kept on disk for audit, and excluded from the startup context block. Signals include grounded decisions, summary length, observation type, and event volume. Set to 0 to disable the gate."
+        },
         "ghcpMem.validateAgainstCodebase": {
           "type": "boolean",
           "default": true,

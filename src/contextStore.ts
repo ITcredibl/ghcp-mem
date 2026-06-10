@@ -1047,7 +1047,20 @@ export class ContextStore implements vscode.Disposable {
     // Exclude retracted sessions and sessions superseded by a more recent
     // one. Both stay on disk for audit but we never want the auto-injected
     // brief to surface a contradicted/retracted memory.
-    workspace = workspace.filter((s) => !s.retracted && !s.supersededBy);
+    workspace = workspace.filter((s) => !s.retracted && !s.supersededBy && !s.lowQuality);
+    if (workspace.length === 0) return [];
+    // Conflict-aware: if a newer session in the pool contradicts an older
+    // one (shared file/topic + contradiction marker), drop the older side
+    // so the injected brief doesn't carry both contradicting decisions.
+    const dropped = new Set<string>();
+    for (const s of workspace) {
+      const others = workspace.filter((o) => o.id !== s.id && o.startTime < s.startTime);
+      const warnings = detectConflicts(s, others);
+      for (const w of warnings) {
+        for (const c of w.candidates) dropped.add(c.sessionId);
+      }
+    }
+    if (dropped.size > 0) workspace = workspace.filter((s) => !dropped.has(s.id));
     if (workspace.length === 0) return [];
     const now = Date.now();
     const DAY = 86_400_000;

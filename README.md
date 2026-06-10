@@ -415,6 +415,8 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 | `@mem /correct <id> <text>` | Capture a correction note that supersedes the original session (kept in the audit log) |
 | `@mem /supersede <newer> <older>` | Mark one session as superseding another; auto-acknowledges matching conflict warnings |
 | `@mem /retract <id> [reason]` / `/retract undo <id>` | Exclude a session from retrieval/injection (reversible) |
+| `@mem /noise <id>` / `/noise undo <id>` | Mark a session as low-quality noise — same effect as the ingestion quality gate, reversible |
+| `@mem /janitor` | Re-score every stored session against the current quality floor and flag/unflag low-quality memories |
 | `@mem /accept <id>` / `/reject <id>` | Reinforcement signal — strengthens or weakens a session's retrieval ranking |
 | `@mem /why <query> :: <id>` | Score-decomposition explainer — break down every signal contribution (keyword, recency, confidence, feedback, …) |
 | `@mem /graph [file:<path>]` | Mermaid flowchart of the decision graph (supersession + correction + causal edges) for paste into PRs/ADRs |
@@ -530,7 +532,12 @@ Copilot agent mode can call these without a separate MCP setup:
 | `ghcpMem.maxStoreSizeMB` | `25` | Soft size cap on `~/.ghcp-mem/sessions.json` |
 | `ghcpMem.retentionDays` | `90` | Age-based retention |
 | `ghcpMem.contextRetrievalCount` | `5` | Number of injected matches |
-| `ghcpMem.scope` | `"user"` | Retrieval scope: `user`, `workspace`, or `repo` |
+| `ghcpMem.scope` | `"repo"` | Retrieval scope: `user`, `workspace`, or `repo`. Default is `repo` so memories don't leak across projects |
+| `ghcpMem.globalTags` | `["global"]` | User tags that promote a session to always-included status regardless of scope — reserve for cross-repo knowledge (org coding standards, naming, WAF) |
+| `ghcpMem.qualityFloor` | `0.3` | Minimum heuristic quality score (0–1) required for a captured session to be injected. Sessions below the floor are flagged `lowQuality`, kept on disk for audit, and excluded from the startup block. Set to `0` to disable the gate |
+| `ghcpMem.janitorEnabled` | `true` | Periodically re-score stored sessions against the current `qualityFloor` |
+| `ghcpMem.janitorIntervalDays` | `7` | Days between janitor re-scoring passes |
+| `ghcpMem.janitorPruneAfterDays` | `0` | If > 0, delete sessions that have been `lowQuality` past this threshold and were never `/accept`-ed (`0` = flagging only) |
 | `ghcpMem.validateAgainstCodebase` | `true` | Drop stale memories whose key files no longer exist |
 | `ghcpMem.freshnessFloor` | `0.25` | Minimum surviving key-file fraction |
 | `ghcpMem.githubCompatibleMode` | `false` | Mirror Copilot Memory's 28-day repo-scoped contract |

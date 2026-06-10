@@ -6,6 +6,37 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed — default scope is now `repo`
+- **`ghcpMem.scope` default flips from `"user"` to `"repo"`.** Opening a new workspace no longer pulls in sessions from unrelated projects. Users who genuinely want cross-repo retrieval can opt back to `"user"` or `"workspace"`. Legacy sessions captured before `repoScope` was stamped fall back to a `workspaceId` match so existing data is not silently hidden.
+
+### Added — `ghcpMem.globalTags` cross-repo allow-list
+- New array setting (default `["global"]`). Sessions tagged with any value in the list are always injected and retrieved regardless of `scope`. Reserved for cross-repo knowledge — organization coding standards, naming conventions, Well-Architected Framework guidance, etc. Tag sessions via `GHCP-MEM: Tag Session...`.
+
+### Added — ingestion quality gate
+- New `src/quality.ts` scores each compressed session on local heuristics (grounded decisions, summary length, observation type, event volume, LM mode, key topics, non-truncated event log).
+- New `ghcpMem.qualityFloor` setting (default `0.3`, range `0–1`). Sessions below the floor are flagged `lowQuality`, kept on disk for audit, and excluded from the startup-context block. Set to `0` to disable.
+
+### Added — conflict-aware injection
+- `getStartupCandidates` now runs `detectConflicts` across the candidate pool and drops the older side of any contradiction-marker pair (`"instead of"`, `"no longer"`, `"deprecated"`, …). The auto-injected brief no longer carries both sides of a U-turn.
+
+### Added — `/noise` chat command
+- `@mem /noise <id>` flags a session as low-quality (same effect as the ingestion gate). `@mem /noise undo <id>` restores it. The row stays on disk.
+
+### Added — weekly janitor
+- New `src/janitor.ts` periodically re-scores every stored session against the current `qualityFloor` and flags/unflags `lowQuality` accordingly. Runs ~60 s after activation, then every `ghcpMem.janitorIntervalDays` (default `7`).
+- Optional pruning via `ghcpMem.janitorPruneAfterDays` (default `0` = off) deletes sessions that have been `lowQuality` past the threshold and were never `/accept`-ed.
+- `@mem /janitor` triggers a re-scoring pass on demand.
+
+### Added — `AGENTS.md`
+- Single entry-point for AI coding agents working on the repo. Links to `CONTRIBUTING.md` instead of duplicating, captures project-specific rules (no native deps, no open ports, redact-first, TypeScript strict).
+
+### Test count
+329 tests, all passing.
+
+---
+
 ## [1.6.3] — 2026-06-07
 
 Pure maintenance release. No extension behaviour changes — every fix here is in the build/CI/security plumbing the v1.6.2 audit (and the 10 stuck Dependabot PRs that resulted from it) surfaced.

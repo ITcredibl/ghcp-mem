@@ -305,6 +305,13 @@ export interface ContextDatabase {
     capturedAt: string;
     redactionCount: number;
   }>;
+  /**
+   * Consolidated semantic + procedural memory derived from the episodic
+   * sessions (see {@link './lessons'}). Maintained by the janitor and the
+   * hot-path "remember this" write path; surfaced in startup injection so the
+   * agent sees durable project knowledge, not just raw session logs.
+   */
+  lessons?: import('./lessons').Lesson[];
 }
 
 /**

@@ -9,7 +9,7 @@ import { ContextStore } from './contextStore';
 import { ContextProvider, renderClaimList } from './contextProvider';
 import { effectiveConfidence } from './decay';
 import { SessionsTreeProvider, TreeNode } from './sessionsView';
-import { MemorySearchTool, MemoryStoreTool, MemoryAuditTool } from './memoryTool';
+import { MemorySearchTool, MemoryStoreTool, MemoryAuditTool, MemoryLessonsTool } from './memoryTool';
 import { getEmbedder } from './embeddings';
 import { captureAzureContext } from './azureContext';
 import { AzureSubsystem } from './azureDetect';
@@ -32,6 +32,15 @@ let compressionTimer: NodeJS.Timeout | undefined;
 let janitorTimer: NodeJS.Timeout | undefined;
 let idleCheckTimer: NodeJS.Timeout | undefined;
 let lastActivityMs = Date.now();
+/**
+ * In-memory, session-scoped suppression for the persist-preview modal. Once the
+ * user confirms a snapshot in the current VS Code session, we stop prompting for
+ * the remainder of this session. This is independent of the persisted
+ * `previewBeforePersist` setting, so it works even when a Workspace-level
+ * override or enterprise mode would otherwise force the modal back on every
+ * compression cycle.
+ */
+let persistPromptSuppressedThisSession = false;
 let statusBarItem: vscode.StatusBarItem;
 let autosave: AutosaveTrigger | undefined;
 let reviewStateStore: vscode.Memento | undefined;
@@ -104,6 +113,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.lm.registerTool('ghcpMem_search', new MemorySearchTool(store)),
     // Audit is always available — read-only workspace inspection, no write surface.
     vscode.lm.registerTool('ghcpMem_audit', new MemoryAuditTool()),
+    // Lessons are read-only — consolidated semantic + procedural memory.
+    vscode.lm.registerTool('ghcpMem_lessons', new MemoryLessonsTool(store)),
   ];
   if (!config.enterpriseMode && config.allowMcpWriteAccess) {
     toolDisposables.push(vscode.lm.registerTool('ghcpMem_store', new MemoryStoreTool(store)));
@@ -1273,9 +1284,37 @@ async function confirmPersistSession(session: CompressedSession): Promise<boolea
   const config = getConfig();
   if (!config.previewBeforePersist && !config.enterpriseMode) return true;
 
+  // Once the user has confirmed a snapshot in this session, don't prompt again
+  // for the rest of it — even if a Workspace-level setting or enterprise mode
+  // would otherwise re-arm the modal on every compression cycle.
+  if (persistPromptSuppressedThisSession) return true;
+
   const preview = buildSessionPreview(session);
   const doc = await vscode.workspace.openTextDocument({ content: preview, language: 'markdown' });
-  await vscode.window.showTextDocument(doc, { preview: true });
+  // Open the preview beside the code without stealing focus, so it sits
+  // "behind" the editor the user is working in rather than taking over the
+  // active group. It stays wired up (clickable tab) for as long as the modal
+  // is up, then we close it after the decision so it doesn't linger.
+  await vscode.window.showTextDocument(doc, {
+    preview: true,
+    viewColumn: vscode.ViewColumn.Beside,
+    preserveFocus: true,
+  });
+
+  const closePreview = async (): Promise<void> => {
+    try {
+      const tab = vscode.window.tabGroups.all
+        .flatMap((g) => g.tabs)
+        .find(
+          (t) =>
+            t.input instanceof vscode.TabInputText &&
+            t.input.uri.toString() === doc.uri.toString(),
+        );
+      if (tab) await vscode.window.tabGroups.close(tab);
+    } catch {
+      // Best-effort cleanup; never block persistence on a stale tab.
+    }
+  };
 
   // The "don't ask again" path. When the user picks this, we permanently
   // disable previewBeforePersist so they're never interrupted again. If
@@ -1297,7 +1336,16 @@ async function confirmPersistSession(session: CompressedSession): Promise<boolea
     DISCARD,
   );
 
+  // Decision made — tear down the side preview so it doesn't linger in the
+  // user's editor regardless of which button they picked.
+  await closePreview();
+
   if (choice === PERSIST_ALWAYS) {
+    // Suppress for the rest of this session immediately. This is the part the
+    // user can rely on: even if the persisted setting below is overridden by a
+    // Workspace value or enterprise mode, they won't be prompted again until
+    // VS Code is restarted.
+    persistPromptSuppressedThisSession = true;
     try {
       // Globally — survives across workspaces. Matches user intent ("once and for all").
       await vscode.workspace
@@ -1305,10 +1353,11 @@ async function confirmPersistSession(session: CompressedSession): Promise<boolea
         .update('previewBeforePersist', false, vscode.ConfigurationTarget.Global);
       if (config.enterpriseMode) {
         // Enterprise mode forces previewBeforePersist back on via the OR in
-        // getConfig(). Be honest about it rather than silently ignoring the
-        // user's choice.
+        // getConfig(), so the Global update above won't survive a restart. It's
+        // silenced for the rest of this session via the in-memory flag; be
+        // honest that it will return next session unless enterprise mode is off.
         const followUp = await vscode.window.showWarningMessage(
-          'GHCP-MEM: preview-before-persist disabled, but enterprise mode keeps it on. To fully silence the prompt, also disable ghcpMem.enterpriseMode.',
+          'GHCP-MEM: persist prompt silenced for this session, but enterprise mode re-enables it on restart. To fully silence it, also disable ghcpMem.enterpriseMode.',
           'Open Settings',
         );
         if (followUp === 'Open Settings') {

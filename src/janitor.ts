@@ -8,10 +8,13 @@
  */
 import { ContextStore } from './contextStore';
 import { scoreSessionQuality } from './quality';
+import { deriveLessons } from './lessons';
 
 export interface JanitorOptions {
   qualityFloor: number;
   pruneAfterDays: number;
+  /** Minimum distinct sessions before a recurring decision becomes a lesson. Default 2. */
+  lessonMinSupport?: number;
 }
 
 export interface JanitorReport {
@@ -19,13 +22,22 @@ export interface JanitorReport {
   flagged: number;
   unflagged: number;
   pruned: number;
+  lessonsCreated: number;
+  lessonsReinforced: number;
 }
 
 export async function runJanitor(
   store: ContextStore,
   opts: JanitorOptions,
 ): Promise<JanitorReport> {
-  const report: JanitorReport = { rescored: 0, flagged: 0, unflagged: 0, pruned: 0 };
+  const report: JanitorReport = {
+    rescored: 0,
+    flagged: 0,
+    unflagged: 0,
+    pruned: 0,
+    lessonsCreated: 0,
+    lessonsReinforced: 0,
+  };
   const sessions = store.getAllSessions();
   const now = Date.now();
   const DAY = 86_400_000;
@@ -67,5 +79,19 @@ export async function runJanitor(
   if (toPrune.length > 0) {
     report.pruned = await store.deleteSessions(toPrune);
   }
+
+  // Consolidation pass: distill recurring decisions/problems from the
+  // (surviving) episodic sessions into durable semantic + procedural lessons,
+  // reinforcing any previously-derived ones instead of duplicating.
+  const surviving = store.getAllSessions();
+  const { lessons, created, reinforced } = deriveLessons(surviving, store.getLessons(), {
+    minSupport: opts.lessonMinSupport ?? 2,
+  });
+  if (created > 0 || reinforced > 0) {
+    await store.setLessons(lessons);
+  }
+  report.lessonsCreated = created;
+  report.lessonsReinforced = reinforced;
+
   return report;
 }

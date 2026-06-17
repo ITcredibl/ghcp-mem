@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "A local, auditable session-memory layer for VS Code and GitHub Copilot, built for engineers who need persistent project context without relying on a cloud memory backend.",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -417,6 +417,18 @@
           {
             "name": "route",
             "description": "Context-acquisition recommender — given a question, returns whether MCP tools or file open is cheaper and estimates token cost for each path"
+          },
+          {
+            "name": "lessons",
+            "description": "List consolidated semantic + procedural lessons; `add <text>` pins one, `forget <id>` removes one"
+          },
+          {
+            "name": "pin",
+            "description": "Return a session evicted with /evict back to the injected working set for this VS Code session"
+          },
+          {
+            "name": "evict",
+            "description": "Drop a session from the injected working set for this VS Code session without deleting it from the store"
           }
         ]
       }
@@ -581,6 +593,37 @@
                 "type": "string"
               },
               "description": "Optional subset of rules to run (e.g. ['version-drift']). Empty/omitted = run all."
+            }
+          }
+        }
+      },
+      {
+        "name": "ghcpMem_lessons",
+        "displayName": "Recall Consolidated Lessons",
+        "modelDescription": "Return GHCP-MEM's consolidated semantic and procedural lessons: durable project facts and how-to sequences distilled from recurring decisions across many past sessions, plus any hand-pinned lessons. This is the cheapest, highest-signal memory surface — prefer it over re-reading source when the question is 'what is true about this project' or 'how do we usually do X'. Read-only. Optionally filter by kind (semantic facts or procedural how-tos).",
+        "toolReferenceName": "ghcpMemLessons",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(mortar-board)",
+        "tags": [
+          "memory",
+          "lessons",
+          "semantic",
+          "procedural"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "semantic",
+                "procedural"
+              ],
+              "description": "Optional filter: 'semantic' for facts, 'procedural' for how-to sequences."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max lessons to return (1-100, default 12)."
             }
           }
         }

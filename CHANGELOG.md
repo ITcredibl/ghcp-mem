@@ -6,6 +6,36 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.8.0] — 2026-06-17
+
+Headline: GHCP-MEM grows from an episodic session log into a multi-type memory system — it now distills durable **lessons** from your history, lets the agent and you write to memory on the hot path, and exports project knowledge as an Agent **Skill**.
+
+### Added — consolidated lessons (semantic + procedural memory)
+- New `src/lessons.ts` pure module distills recurring decisions and resolved problems from episodic sessions into durable **lessons**, split into `semantic` (facts about the project) and `procedural` (how-to sequences). Deterministic IDs mean re-running reinforces a lesson's support and confidence instead of duplicating it; pinned lessons are never auto-pruned.
+- The weekly **janitor** now runs a consolidation pass after re-scoring, promoting any decision/fix that recurs across ≥2 sessions (configurable) and reporting `lessonsCreated` / `lessonsReinforced`.
+- Lessons are injected into the startup context block right after the routing primer and **before** the raw session cards — durable, distilled knowledge first, episodic detail second.
+- `ContextDatabase` gains a `lessons` array, persisted to the same on-disk JSON the MCP server reads.
+
+### Added — `/lessons` chat command + hot-path "remember this" write
+- `@mem /lessons` lists the consolidated facts and how-tos. `@mem /lessons add <text>` pins a hand-authored lesson (redacted first); `@mem /lessons forget <id>` removes one.
+- New `ghcpMem_lessons` Language Model Tool and MCP tool let Copilot agent mode recall the lessons surface directly — the cheapest, highest-signal answer to "what is true about this project" / "how do we usually do X".
+
+### Added — `/pin` and `/evict` working-set control
+- `@mem /evict <id>` drops a session from the injected working set for the current VS Code session **without deleting it from disk** (mirrors Anthropic's context-editing model). `@mem /pin <id>` restores it. Suppression is in-memory and resets on restart.
+
+### Added — export memory packs as `SKILL.md`
+- New `renderPackAsSkill` / `buildSkillFromStore` in `src/packs.ts` render a memory pack as an Anthropic **Agent Skills**-format `SKILL.md`: YAML frontmatter (`name`, `description`) plus a progressive-disclosure body (Facts → How-to → Session history). The consolidated lessons become the high-signal top layer.
+
+### Changed — `/noise` now teaches the ranker
+- Marking a session as noise with `@mem /noise <id>` now feeds a negative sample into the adaptive ranker (the same feedback loop as `/reject`), so an explicit "this was noise" verdict nudges retrieval weights — not just hides the row.
+
+### Fixed — persist prompt no longer nags every compression cycle
+- The "Persist, don't ask again" button only wrote `ghcpMem.previewBeforePersist = false` to **Global** config. A Workspace-level override (or `ghcpMem.enterpriseMode`, which ORs the flag back on) defeated that write, so the modal re-armed on every compression cycle — firing many times within a single short session.
+- Added an in-memory, session-scoped suppression flag in `extension.ts`. Once a snapshot is confirmed in the current VS Code session, `confirmPersistSession` returns early without prompting for the rest of that session — independent of config precedence or enterprise mode. The flag resets on restart.
+- The enterprise-mode follow-up warning now states the prompt is silenced for the session and will return on restart unless `ghcpMem.enterpriseMode` is also disabled.
+
+---
+
 ## [1.7.1] — 2026-06-10
 
 Maintenance release responding to a thorough post-merge review of v1.7.0. Three independently small fixes, each closing a real correctness or trust gap.

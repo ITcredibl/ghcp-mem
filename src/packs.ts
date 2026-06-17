@@ -263,3 +263,119 @@ export function listInstalledPacks(store: ContextStore): { name: string; count: 
     a.name.localeCompare(b.name),
   );
 }
+
+// ── SKILL.md export (Anthropic Agent Skills / progressive disclosure) ──────
+
+/**
+ * Slugify a pack name into a value safe for SKILL.md frontmatter `name`
+ * (lowercase, digits, hyphens; collapses runs; trims to 64 chars). Agent
+ * Skills require the directory/name to match `^[a-z0-9-]+$`.
+ */
+export function slugifySkillName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+    .replace(/-+$/g, '');
+  return slug || 'memory-pack';
+}
+
+/** Escape a string for safe inclusion in a single-quoted YAML scalar. */
+function yamlSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
+}
+
+export interface SkillExportOptions {
+  /** Consolidated lessons to surface first (facts + how-tos). */
+  lessons?: import('./lessons').Lesson[];
+  /** Max sessions summarised in the body. Default 40. */
+  maxSessions?: number;
+}
+
+/**
+ * Render a {@link MemoryPack} as an Anthropic-style SKILL.md document:
+ * YAML frontmatter (`name`, `description`) followed by a progressive-
+ * disclosure body. Durable lessons (when supplied) come first as the
+ * high-signal layer; the pack's episodic sessions follow as supporting
+ * detail an agent can drill into on demand.
+ *
+ * Pure + deterministic (timestamps formatted from the pack data only) so it
+ * is unit-testable and produces no I/O.
+ */
+export function renderPackAsSkill(pack: MemoryPack, opts: SkillExportOptions = {}): string {
+  const skillName = slugifySkillName(pack.name);
+  const description =
+    (pack.description?.trim() ||
+      `Project knowledge distilled from ${pack.sessions.length} past coding session(s) in the "${pack.name}" memory pack.`) +
+    ' Consult before reading source when you need durable facts, prior decisions, or how-to sequences for this project.';
+
+  const lines: string[] = [
+    '---',
+    `name: ${skillName}`,
+    `description: ${yamlSingleQuote(description)}`,
+    '---',
+    '',
+    `# ${pack.name}`,
+    '',
+    'Durable, consolidated knowledge for this project. Read the **Facts** and',
+    '**How-to** sections first — they are the high-signal summary. Drill into',
+    '**Session history** only when you need the episodic detail behind a point.',
+    '',
+  ];
+
+  const lessons = opts.lessons ?? [];
+  const facts = lessons.filter((l) => l.kind === 'semantic');
+  const howtos = lessons.filter((l) => l.kind === 'procedural');
+  if (facts.length) {
+    lines.push('## Facts', '');
+    for (const l of facts) lines.push(`- ${l.text}`);
+    lines.push('');
+  }
+  if (howtos.length) {
+    lines.push('## How-to', '');
+    for (const l of howtos) lines.push(`- ${l.text}`);
+    lines.push('');
+  }
+
+  const maxSessions = opts.maxSessions ?? 40;
+  const shown = pack.sessions.slice(0, maxSessions);
+  if (shown.length) {
+    lines.push('## Session history', '');
+    for (const s of shown) {
+      const when = new Date(s.startTime).toISOString().slice(0, 10);
+      lines.push(`### ${when} · ${s.observationType}`, '', s.summary, '');
+      if (s.decisions.length) {
+        lines.push('Decisions:');
+        for (const d of s.decisions.slice(0, 6)) lines.push(`- ${d}`);
+        lines.push('');
+      }
+      if (s.problemsSolved.length) {
+        lines.push('Resolved:');
+        for (const p of s.problemsSolved.slice(0, 6)) lines.push(`- ${p}`);
+        lines.push('');
+      }
+    }
+    if (pack.sessions.length > shown.length) {
+      lines.push(`_(+${pack.sessions.length - shown.length} more session(s) omitted.)_`, '');
+    }
+  }
+
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
+/**
+ * Convenience: build a pack from the store and render it directly as
+ * SKILL.md, folding in the store's consolidated lessons as the Facts/How-to
+ * layer. One call from a command handler to a shippable skill document.
+ */
+export function buildSkillFromStore(
+  store: ContextStore,
+  opts: ExportPackOptions & { maxSessions?: number },
+): string {
+  const pack = buildPack(store, opts);
+  return renderPackAsSkill(pack, {
+    lessons: store.getLessons(),
+    maxSessions: opts.maxSessions,
+  });
+}

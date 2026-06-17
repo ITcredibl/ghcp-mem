@@ -210,3 +210,57 @@ export class MemoryAuditTool implements vscode.LanguageModelTool<AuditToolInput>
     return { invocationMessage: 'Running GHCP-MEM workspace integrity audit…' };
   }
 }
+
+interface LessonsToolInput {
+  kind?: 'semantic' | 'procedural';
+  limit?: number;
+}
+
+/**
+ * Language Model Tool — exposes the consolidated semantic + procedural
+ * lessons to Copilot agent mode. This is the highest-signal, cheapest memory
+ * surface: durable project facts and how-to sequences distilled from many
+ * sessions, rather than a single episodic log. The agent should reach for it
+ * when the question is "what is true about this project" or "how do we do X".
+ */
+export class MemoryLessonsTool implements vscode.LanguageModelTool<LessonsToolInput> {
+  constructor(private readonly store: ContextStore) {}
+
+  async invoke(
+    options: vscode.LanguageModelToolInvocationOptions<LessonsToolInput>,
+    _token: vscode.CancellationToken,
+  ): Promise<vscode.LanguageModelToolResult> {
+    const { rankLessons } = await import('./lessons');
+    const input = options.input;
+    const limit = Math.max(1, Math.min(100, input.limit ?? 12));
+    let lessons = rankLessons(this.store.getLessons());
+    if (input.kind === 'semantic' || input.kind === 'procedural') {
+      lessons = lessons.filter((l) => l.kind === input.kind);
+    }
+    lessons = lessons.slice(0, limit);
+
+    if (lessons.length === 0) {
+      return new vscode.LanguageModelToolResult([
+        new vscode.LanguageModelTextPart(
+          'No consolidated lessons yet — they form once a decision or fix recurs across sessions.',
+        ),
+      ]);
+    }
+
+    const lines: string[] = [`${lessons.length} consolidated lesson(s):`, ''];
+    for (const l of lessons) {
+      const tag = l.kind === 'procedural' ? 'how-to' : 'fact';
+      const pin = l.pinned ? ' (pinned)' : ` (seen ×${l.supportCount})`;
+      const scope = l.scopeLabel ? ` [${l.scopeLabel}]` : '';
+      lines.push(`- ${tag}${pin}${scope}: ${l.text}`);
+    }
+    return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(lines.join('\n'))]);
+  }
+
+  async prepareInvocation(
+    _options: vscode.LanguageModelToolInvocationPrepareOptions<LessonsToolInput>,
+    _token: vscode.CancellationToken,
+  ): Promise<vscode.PreparedToolInvocation> {
+    return { invocationMessage: 'Recalling consolidated lessons…' };
+  }
+}

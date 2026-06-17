@@ -45,6 +45,7 @@ import { getCausalNeighbors } from './causalGraph';
 import { explainScore } from './explain';
 import { buildMermaidGraph } from './graphExport';
 import { recommend } from './router';
+import { rankLessons } from './lessons';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'ghcp-mem';
@@ -432,6 +433,24 @@ const TOOLS = [
       required: ['query'],
     },
   },
+  {
+    name: 'ghcpMem_lessons',
+    description:
+      'Return the consolidated semantic + procedural lessons distilled from past sessions: durable project facts and how-to sequences that recurred across episodes, plus any hand-pinned lessons. Prefer this over re-reading source when the question is "what is true about this project" or "how do we usually do X" — it is the cheapest, highest-signal memory surface. Optional kind filter ("semantic" facts or "procedural" how-tos).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          description: 'Optional filter: "semantic" for facts, "procedural" for how-to sequences.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum lessons to return (default 12).',
+        },
+      },
+    },
+  },
 ];
 
 /** Atomically write `db` back to disk (same rename pattern as the extension). */
@@ -702,6 +721,25 @@ async function handleCall(name: string, args: any): Promise<any> {
           : undefined;
       const rec = recommend(query, { fileSizes, mcpAvailable: true });
       return textContent(rec);
+    }
+
+    case 'ghcpMem_lessons': {
+      const limit = clamp(args?.limit, 12, 100);
+      const kind = args?.kind === 'semantic' || args?.kind === 'procedural' ? args.kind : undefined;
+      let all = rankLessons(db.lessons ?? []);
+      if (kind) all = all.filter((l) => l.kind === kind);
+      return textContent(
+        all.slice(0, limit).map((l) => ({
+          id: l.id.substring(0, 8),
+          kind: l.kind,
+          text: l.text,
+          pinned: l.pinned ?? false,
+          supportCount: l.supportCount,
+          confidence: Number(l.confidence.toFixed(2)),
+          scope: l.scopeLabel,
+          tags: l.tags,
+        })),
+      );
     }
 
     default:

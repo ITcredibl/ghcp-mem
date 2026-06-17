@@ -30,6 +30,7 @@ test('mcpServer — TOOLS catalog exposes the full surface', () => {
     'ghcpMem_explain',
     'ghcpMem_get',
     'ghcpMem_graph',
+    'ghcpMem_lessons',
     'ghcpMem_lineage',
     'ghcpMem_recent',
     'ghcpMem_route',

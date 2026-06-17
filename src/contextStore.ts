@@ -32,7 +32,7 @@ import {
   applyRecomputedWeights,
   defaultWeights,
 } from './adaptiveWeights';
-
+import { Lesson } from './lessons';
 const DB_KEY = 'ghcpMem.contextDatabase';
 const ADAPTIVE_KEY = 'ghcpMem.adaptiveWeights';
 const DB_VERSION = 2;
@@ -446,11 +446,17 @@ export class ContextStore implements vscode.Disposable {
    * Mark a session as noise — same effect as the ingestion quality gate
    * deciding the session was low value. The row stays on disk; retrieval
    * and injection exclude it. `undoNoise` clears the flag.
+   *
+   * When `feedLearner` is set (the user-driven `/noise` path, as opposed to
+   * the janitor's automatic re-scoring), we also push a negative sample into
+   * the adaptive ranker so an explicit "this was noise" verdict nudges the
+   * ranking weights — closing the feedback loop the same way `/reject` does.
    */
-  async setNoise(id: string): Promise<boolean> {
+  async setNoise(id: string, feedLearner = false): Promise<boolean> {
     const s = this.getById(id);
     if (!s) return false;
     s.lowQuality = true;
+    if (feedLearner) this.feedAdaptiveSample(s.id, -1);
     await this.persist();
     return true;
   }
@@ -588,6 +594,62 @@ export class ContextStore implements vscode.Disposable {
   async resetAdaptiveWeights(): Promise<void> {
     this.adaptiveState = emptyState();
     await this.globalState.update(ADAPTIVE_KEY, this.adaptiveState);
+  }
+
+  // ── Derived lessons (semantic + procedural memory) ────────────────────────
+
+  /** Return all consolidated lessons (defensive copy of the array). */
+  getLessons(): Lesson[] {
+    return [...(this.db.lessons ?? [])];
+  }
+
+  /** Look up a lesson by full id or unique id prefix. */
+  getLessonById(idOrPrefix: string): Lesson | undefined {
+    const key = idOrPrefix.trim();
+    if (!key) return undefined;
+    const all = this.db.lessons ?? [];
+    return all.find((l) => l.id === key) ?? all.find((l) => l.id.startsWith(key));
+  }
+
+  /**
+   * Replace the full lesson set — used by the janitor after a consolidation
+   * pass. Persists immediately so the on-disk JSON (which the stdio MCP
+   * server reads) stays in sync.
+   */
+  async setLessons(lessons: Lesson[]): Promise<void> {
+    this.db.lessons = lessons;
+    await this.persist();
+  }
+
+  /**
+   * Add or merge a single authored (pinned) lesson — the hot-path "remember
+   * this" write. If a lesson with the same id already exists we keep the
+   * pinned flag and refresh its text/tags rather than duplicating.
+   */
+  async addLesson(lesson: Lesson): Promise<void> {
+    const all = this.db.lessons ?? [];
+    const existing = all.find((l) => l.id === lesson.id);
+    if (existing) {
+      existing.text = lesson.text;
+      existing.tags = Array.from(new Set([...existing.tags, ...lesson.tags])).slice(0, 12);
+      existing.pinned = true;
+      existing.updatedAt = lesson.updatedAt;
+      existing.confidence = Math.max(existing.confidence, lesson.confidence);
+    } else {
+      all.push(lesson);
+    }
+    this.db.lessons = all;
+    await this.persist();
+  }
+
+  /** Delete a lesson by id or prefix. Returns true if one was removed. */
+  async deleteLesson(idOrPrefix: string): Promise<boolean> {
+    const all = this.db.lessons ?? [];
+    const before = all.length;
+    this.db.lessons = all.filter((l) => l.id !== idOrPrefix && !l.id.startsWith(idOrPrefix));
+    if (this.db.lessons.length === before) return false;
+    await this.persist();
+    return true;
   }
 
   /**

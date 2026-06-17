@@ -18,6 +18,7 @@ import { explainScore, renderExplanation } from './explain';
 import { buildMermaidGraph } from './graphExport';
 import { buildComplianceReport, renderComplianceReport } from './compliance';
 import { recommend, renderRecommendation, extractMentionedPaths } from './router';
+import { renderLessonsForInjection, rankLessons, makePinnedLesson } from './lessons';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -59,6 +60,15 @@ function isSafePrNumber(input: string): boolean {
  */
 export class ContextProvider implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
+
+  /**
+   * Session IDs the developer has evicted ("stale for this task") via
+   * `/evict`. In-memory only — the suppression resets when VS Code restarts,
+   * mirroring Anthropic's context-editing model where stale tool results are
+   * cleared from the working window without touching the durable store.
+   * `/pin` removes an id from this set.
+   */
+  private suppressedForSession = new Set<string>();
 
   constructor(private readonly store: ContextStore) {}
 
@@ -341,6 +351,12 @@ export class ContextProvider implements vscode.Disposable {
         return this.compliance(stream);
       case 'route':
         return this.route(query, stream);
+      case 'lessons':
+        return this.lessons(query, stream);
+      case 'pin':
+        return this.pin(query, stream);
+      case 'evict':
+        return this.evict(query, stream);
       default:
         if (!query || query.toLowerCase() === 'status') return this.status(stream);
         if (query.toLowerCase() === 'recent') return this.recent(stream);
@@ -856,10 +872,10 @@ export class ContextProvider implements vscode.Disposable {
       stream.markdown(`No session found for ID "${trimmed}".\n`);
       return;
     }
-    await this.store.setNoise(target.id);
+    await this.store.setNoise(target.id, true);
     stream.markdown(
-      `🗑️ Marked \`${target.id.substring(0, 8)}\` as noise. Excluded from injection and retrieval. ` +
-        `Run \`/noise undo ${target.id.substring(0, 8)}\` to restore.\n`,
+      `🗑️ Marked \`${target.id.substring(0, 8)}\` as noise. Excluded from injection and retrieval, ` +
+        `and the ranker learned from it. Run \`/noise undo ${target.id.substring(0, 8)}\` to restore.\n`,
     );
   }
 
@@ -880,6 +896,11 @@ export class ContextProvider implements vscode.Disposable {
     stream.markdown(
       `🧹 Janitor: rescored **${r.rescored}**, flagged **${r.flagged}**, unflagged **${r.unflagged}**, pruned **${r.pruned}** (floor=${cfg.qualityFloor}).\n`,
     );
+    if (r.lessonsCreated > 0 || r.lessonsReinforced > 0) {
+      stream.markdown(
+        `🎓 Lessons: **${r.lessonsCreated}** new, **${r.lessonsReinforced}** reinforced.\n`,
+      );
+    }
   }
 
   /**
@@ -1183,6 +1204,124 @@ export class ContextProvider implements vscode.Disposable {
     stream.markdown(renderRecommendation(rec));
   }
 
+  /**
+   * `/lessons` — list the consolidated semantic + procedural lessons.
+   * `/lessons add <text>` pins a hand-authored lesson (the hot-path
+   * "remember this" write). `/lessons forget <id>` deletes one.
+   */
+  private async lessons(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const trimmed = query.trim();
+    const [verb, ...rest] = trimmed.split(/\s+/);
+    const arg = rest.join(' ').trim();
+
+    if (verb?.toLowerCase() === 'add') {
+      if (!arg) {
+        stream.markdown('Usage: `/lessons add <a fact or how-to worth remembering>`\n');
+        return;
+      }
+      const cfg = getConfig();
+      const cleanText = redact(arg, {
+        redactSecrets: true,
+        honorPrivateTags: true,
+        customRules: cfg.customRedactionRules,
+        customSensitiveEntities: cfg.customSensitiveEntities,
+      }).text;
+      const lesson = makePinnedLesson(cleanText);
+      await this.store.addLesson(lesson);
+      const kindLabel = lesson.kind === 'procedural' ? 'how-to' : 'fact';
+      stream.markdown(
+        `📌 Pinned ${kindLabel} \`${lesson.id.substring(0, 8)}\`: ${lesson.text}\n`,
+      );
+      return;
+    }
+
+    if (verb?.toLowerCase() === 'forget') {
+      if (!arg) {
+        stream.markdown('Usage: `/lessons forget <lesson-id-prefix>`\n');
+        return;
+      }
+      const removed = await this.store.deleteLesson(arg);
+      stream.markdown(
+        removed
+          ? `🗑️ Forgot lesson \`${arg}\`.\n`
+          : `No lesson found for ID "${arg}".\n`,
+      );
+      return;
+    }
+
+    const all = rankLessons(this.store.getLessons());
+    if (all.length === 0) {
+      stream.markdown(
+        'No consolidated lessons yet. They form automatically once a decision or fix recurs ' +
+          'across sessions (run `/janitor` to consolidate now), or pin one with `/lessons add <text>`.\n',
+      );
+      return;
+    }
+    const facts = all.filter((l) => l.kind === 'semantic');
+    const howtos = all.filter((l) => l.kind === 'procedural');
+    stream.markdown(`## 🎓 Durable lessons (${all.length})\n\n`);
+    const renderRow = (l: (typeof all)[number]): string => {
+      const pin = l.pinned ? ' 📌' : '';
+      const seen = l.pinned ? '' : ` _(seen ×${l.supportCount})_`;
+      const scope = l.scopeLabel ? ` · \`${l.scopeLabel}\`` : '';
+      return `- \`${l.id.substring(0, 8)}\`${pin} ${l.text}${seen}${scope}`;
+    };
+    if (facts.length) {
+      stream.markdown(`### Facts\n\n${facts.map(renderRow).join('\n')}\n\n`);
+    }
+    if (howtos.length) {
+      stream.markdown(`### How-to\n\n${howtos.map(renderRow).join('\n')}\n`);
+    }
+  }
+
+  /**
+   * `/pin <session-id>` — un-evict a session that was suppressed for this
+   * task with `/evict`, returning it to the injected working set.
+   */
+  private async pin(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      stream.markdown('Usage: `/pin <session-id-prefix>`\n');
+      return;
+    }
+    const target = this.store.getById(trimmed);
+    if (!target) {
+      stream.markdown(`No session found for ID "${trimmed}".\n`);
+      return;
+    }
+    if (this.suppressedForSession.delete(target.id)) {
+      stream.markdown(
+        `📌 \`${target.id.substring(0, 8)}\` is back in the injected working set.\n`,
+      );
+    } else {
+      stream.markdown(`\`${target.id.substring(0, 8)}\` was not evicted — nothing to pin.\n`);
+    }
+  }
+
+  /**
+   * `/evict <session-id>` — drop a session from the injected working set for
+   * the remainder of this VS Code session without deleting it from the store.
+   * Mirrors Anthropic's context-editing: clear stale material from the
+   * working window, keep it durable on disk. `/pin` reverses it.
+   */
+  private async evict(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      stream.markdown('Usage: `/evict <session-id-prefix>`\n');
+      return;
+    }
+    const target = this.store.getById(trimmed);
+    if (!target) {
+      stream.markdown(`No session found for ID "${trimmed}".\n`);
+      return;
+    }
+    this.suppressedForSession.add(target.id);
+    stream.markdown(
+      `🚫 Evicted \`${target.id.substring(0, 8)}\` from the injected working set for this session. ` +
+        `Run \`/pin ${target.id.substring(0, 8)}\` to bring it back (the session stays on disk).\n`,
+    );
+  }
+
   buildStartupContext(): string {
     const config = getConfig();
     const recent = this.store.getStartupCandidates(config.startupContextSessionCount);
@@ -1215,7 +1354,15 @@ export class ContextProvider implements vscode.Disposable {
       'history, the memory tools are typically 5–20× cheaper.',
       '',
     ];
+    // Consolidated semantic + procedural lessons go right after the routing
+    // primer and before the raw session cards: durable, distilled knowledge
+    // first, then the episodic detail it was drawn from.
+    const lessonsBlock = renderLessonsForInjection(rankLessons(this.store.getLessons()));
+    if (lessonsBlock) {
+      lines.push(lessonsBlock, '');
+    }
     for (const s of recent) {
+      if (this.suppressedForSession.has(s.id)) continue;
       const when = formatInjectTimestamp(s.startTime);
       const branch = s.branchName ? ` · branch:\`${s.branchName}\`` : '';
       const workspace = s.workspaceName ? ` · workspace:\`${s.workspaceName}\`` : '';

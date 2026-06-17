@@ -1229,9 +1229,7 @@ export class ContextProvider implements vscode.Disposable {
       const lesson = makePinnedLesson(cleanText);
       await this.store.addLesson(lesson);
       const kindLabel = lesson.kind === 'procedural' ? 'how-to' : 'fact';
-      stream.markdown(
-        `📌 Pinned ${kindLabel} \`${lesson.id.substring(0, 8)}\`: ${lesson.text}\n`,
-      );
+      stream.markdown(`📌 Pinned ${kindLabel} \`${lesson.id.substring(0, 8)}\`: ${lesson.text}\n`);
       return;
     }
 
@@ -1242,9 +1240,7 @@ export class ContextProvider implements vscode.Disposable {
       }
       const removed = await this.store.deleteLesson(arg);
       stream.markdown(
-        removed
-          ? `🗑️ Forgot lesson \`${arg}\`.\n`
-          : `No lesson found for ID "${arg}".\n`,
+        removed ? `🗑️ Forgot lesson \`${arg}\`.\n` : `No lesson found for ID "${arg}".\n`,
       );
       return;
     }
@@ -1290,9 +1286,7 @@ export class ContextProvider implements vscode.Disposable {
       return;
     }
     if (this.suppressedForSession.delete(target.id)) {
-      stream.markdown(
-        `📌 \`${target.id.substring(0, 8)}\` is back in the injected working set.\n`,
-      );
+      stream.markdown(`📌 \`${target.id.substring(0, 8)}\` is back in the injected working set.\n`);
     } else {
       stream.markdown(`\`${target.id.substring(0, 8)}\` was not evicted — nothing to pin.\n`);
     }

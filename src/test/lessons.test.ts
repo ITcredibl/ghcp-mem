@@ -83,7 +83,10 @@ test('deriveLessons — re-running reinforces, does not duplicate', () => {
   const round1 = deriveLessons(first, [], { minSupport: 2 });
   assert.equal(round1.created, 1);
 
-  const second = [...first, makeSession({ id: 'c', decisions: ['always redact before persisting'] })];
+  const second = [
+    ...first,
+    makeSession({ id: 'c', decisions: ['always redact before persisting'] }),
+  ];
   const round2 = deriveLessons(second, round1.lessons, { minSupport: 2 });
   assert.equal(round2.created, 0);
   assert.equal(round2.reinforced, 1);
@@ -102,8 +105,18 @@ test('deriveLessons — retracted sessions teach nothing', () => {
 
 test('deriveLessons — uniform repoScope is carried onto the lesson', () => {
   const sessions = [
-    makeSession({ id: 'a', decisions: ['ship via azd up'], repoScope: 'repo1', repoScopeLabel: 'org/repo1' }),
-    makeSession({ id: 'b', decisions: ['ship via azd up'], repoScope: 'repo1', repoScopeLabel: 'org/repo1' }),
+    makeSession({
+      id: 'a',
+      decisions: ['ship via azd up'],
+      repoScope: 'repo1',
+      repoScopeLabel: 'org/repo1',
+    }),
+    makeSession({
+      id: 'b',
+      decisions: ['ship via azd up'],
+      repoScope: 'repo1',
+      repoScopeLabel: 'org/repo1',
+    }),
   ];
   const { lessons } = deriveLessons(sessions, [], { minSupport: 2 });
   assert.equal(lessons[0].scope, 'repo1');

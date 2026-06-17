@@ -9,7 +9,12 @@ import { ContextStore } from './contextStore';
 import { ContextProvider, renderClaimList } from './contextProvider';
 import { effectiveConfidence } from './decay';
 import { SessionsTreeProvider, TreeNode } from './sessionsView';
-import { MemorySearchTool, MemoryStoreTool, MemoryAuditTool, MemoryLessonsTool } from './memoryTool';
+import {
+  MemorySearchTool,
+  MemoryStoreTool,
+  MemoryAuditTool,
+  MemoryLessonsTool,
+} from './memoryTool';
 import { getEmbedder } from './embeddings';
 import { captureAzureContext } from './azureContext';
 import { AzureSubsystem } from './azureDetect';
@@ -1307,8 +1312,7 @@ async function confirmPersistSession(session: CompressedSession): Promise<boolea
         .flatMap((g) => g.tabs)
         .find(
           (t) =>
-            t.input instanceof vscode.TabInputText &&
-            t.input.uri.toString() === doc.uri.toString(),
+            t.input instanceof vscode.TabInputText && t.input.uri.toString() === doc.uri.toString(),
         );
       if (tab) await vscode.window.tabGroups.close(tab);
     } catch {

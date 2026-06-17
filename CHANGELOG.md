@@ -6,6 +6,34 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.8.1] — 2026-06-17
+
+Maintenance patch on top of v1.8.0. v1.8.0's CI workflow failed (format gate + audit gate both red) and was never published to the Marketplace. This release fixes both gates and re-baselines the v1.8 line so the new lessons/pin/evict/SKILL.md features can actually ship.
+
+### Fixed — format gate that v1.7.1 added was tripped by v1.8.0
+- **`src/contextProvider.ts`, `src/extension.ts`, `src/packs.ts`, `src/test/lessons.test.ts`** — mechanically reformatted with Prettier. The v1.7.1 CHANGELOG promised that `format:check` would fail the build on any unformatted source, and it did exactly that on v1.8.0 — but the v1.8.0 tag was pushed before the failure was acted on. Now clean; `format:check` is green again.
+
+### Fixed — all 6 GitHub Dependabot alerts cleared
+v1.8.0's push surfaced 6 open advisories (3 high, 3 moderate). All cleared without source changes:
+
+- **`esbuild` ^0.25 → ^0.28** (direct devDep, high — GHSA path). Bumping our direct dependency also caused npm to dedup the transitive subgraph, which incidentally resolved `tmp`, `qs`, `uuid`, and `markdown-it` (all transitive via `@vscode/vsce`) — these had been re-flagged under newer GHSA IDs since v1.7.1.
+- **`form-data` (high)** and **`js-yaml` (moderate)** — cleared via `npm audit fix`. Non-breaking transitive bumps.
+- **Post-fix state**: `npm audit` reports `found 0 vulnerabilities` at all severity levels; the 6 Dependabot alerts on `ITcredibl/ghcp-mem` will auto-close when this commit lands on `main`.
+
+### Why no code-behaviour changes
+v1.8.0 introduced the lessons memory layer, pin/evict commands, and packs-as-skill export — all of which work correctly under the existing 350-test suite. This release is purely the hygiene work needed to **ship** that release: format the 4 files the gate caught, bump the deps, get CI green so the GitHub Release artifact is generated and provenance-attested, and then publish to the Marketplace. The product surface is identical to what's documented in the [1.8.0] entry below.
+
+### Verification before push
+- `npm run format:check` — clean
+- `npm run lint` (`--max-warnings=0`) — clean
+- `npm run typecheck` — clean
+- `npm test` — 350/350 pass
+- `npm run check:release` — 4/4 doc checks pass
+- `npm run bundle:prod` — 228.7 kB extension bundle
+- `npm audit` — 0 vulnerabilities at every severity
+
+---
+
 ## [1.8.0] — 2026-06-17
 
 Headline: GHCP-MEM grows from an episodic session log into a multi-type memory system — it now distills durable **lessons** from your history, lets the agent and you write to memory on the hot path, and exports project knowledge as an Agent **Skill**.

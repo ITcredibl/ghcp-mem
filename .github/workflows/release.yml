@@ -42,6 +42,11 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           test "$version" = "$tag"
       - run: npx --yes @vscode/vsce package --out ghcp-mem.vsix --no-dependencies
+      - name: Publish to VS Code Marketplace
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npx --yes @vscode/vsce publish --packagePath ghcp-mem.vsix --no-dependencies
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
       - run: sha256sum ghcp-mem.vsix > ghcp-mem.vsix.sha256
       - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.json
       - name: Generate release manifest

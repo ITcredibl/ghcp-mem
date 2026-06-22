@@ -355,6 +355,8 @@ export interface PluginConfig {
   excludeGlobs: string[];
   autoInjectStartupContext: boolean;
   startupContextSessionCount: number;
+  /** Inject team-shared project rules from .github/memory/rules.md into every session. */
+  projectRules: boolean;
   /** Retrieval scope. 'user' = cross-workspace, 'workspace' = current folder, 'repo' = current git repo. */
   scope: MemoryScope;
   /**
@@ -443,6 +445,7 @@ export function getConfig(): PluginConfig {
     excludeGlobs: cfg.get('excludeGlobs', []),
     autoInjectStartupContext: cfg.get('autoInjectStartupContext', true),
     startupContextSessionCount: clampNum(cfg.get('startupContextSessionCount', 5), 1, 20, 5),
+    projectRules: cfg.get('projectRules', true),
     scope: githubCompatibleMode ? 'repo' : scope,
     globalTags: normalizeGlobalTags(cfg.get<string[]>('globalTags', ['global'])),
     qualityFloor: clampNum(cfg.get('qualityFloor', 0.3), 0, 1, 0.3),

@@ -15,7 +15,7 @@ We use a lightweight STRIDE pass over each major data-flow boundary. Where a mit
 │   ┌──────────────────────────────────────────────────────────┐  │
 │   │  VS Code extension host process                          │  │
 │   │   • src/sessionCapture.ts (event hooks)                  │  │
-│   │   • src/redactor.ts        (24-rule SHA-256 hashing)     │  │
+│   │   • src/redactor.ts        (26-rule SHA-256 hashing)     │  │
 │   │   • src/contextCompressor  (vscode.lm)                   │  │
 │   │   • src/contextStore.ts    (globalState + mirror)        │  │
 │   │   • src/policySource.ts    (HTTPS fetch)                 │  │

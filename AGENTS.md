@@ -29,7 +29,7 @@ Entry points and module ownership are listed in [CONTRIBUTING.md §2](CONTRIBUTI
 - [src/contextCompressor.ts](src/contextCompressor.ts) — LM compression. **Evidence-citation gate**: a decision cannot be emitted without pointing at the captured event that produced it. Do not weaken this.
 - [src/searchCore.ts](src/searchCore.ts) — BM25 + RRF + recency. Guarded by an nDCG@K regression gate in CI (`scripts/eval-check.js`).
 - [src/lessons.ts](src/lessons.ts) — pure consolidation of episodic sessions into durable semantic/procedural lessons. Deterministic IDs, support/confidence reinforcement, pinned lessons immune to pruning. Consumed by the janitor (consolidation pass) and `contextProvider` (startup injection).
-- [src/redactor.ts](src/redactor.ts) — 24-rule secret/PII redaction. **Every new capture path must pipe through this before persistence.**
+- [src/redactor.ts](src/redactor.ts) — 26-rule secret/PII redaction. **Every new capture path must pipe through this before persistence.**
 - [src/mcpServer.ts](src/mcpServer.ts) — stdio MCP server. Schema is asserted in tests (`mcpServerSchema.test.ts`); update both when changing tool surface.
 - `out/` is committed-by-build, not by hand — never edit compiled JS in `out/` or `out-test/`.
 

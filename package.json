@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "A local, auditable session-memory layer for VS Code and GitHub Copilot, built for engineers who need persistent project context without relying on a cloud memory backend.",
-  "version": "1.8.2",
+  "version": "1.9.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -57,6 +57,10 @@
       {
         "command": "ghcpMem.showContext",
         "title": "GHCP-MEM: Show Stored Context"
+      },
+      {
+        "command": "ghcpMem.editProjectRules",
+        "title": "GHCP-MEM: Edit Project Memory Rules"
       },
       {
         "command": "ghcpMem.runPrivacyWizard",
@@ -423,6 +427,10 @@
             "description": "List consolidated semantic + procedural lessons; `add <text>` pins one, `forget <id>` removes one"
           },
           {
+            "name": "rules",
+            "description": "List team-shared project rules from .github/memory/rules.md; `add [category:]<text>` adds one, `remove <id>` deletes one"
+          },
+          {
             "name": "pin",
             "description": "Return a session evicted with /evict back to the injected working set for this VS Code session"
           },
@@ -752,6 +760,11 @@
           "minimum": 1,
           "maximum": 20,
           "description": "Number of recent sessions to include in the auto-injected instructions file."
+        },
+        "ghcpMem.projectRules": {
+          "type": "boolean",
+          "default": true,
+          "description": "Inject durable, team-shared project rules from .github/memory/rules.md (managed with @mem /rules) at the top of every Copilot/agent session. Commit that file to share rules with your team."
         },
         "ghcpMem.idleTimeoutSeconds": {
           "type": "number",

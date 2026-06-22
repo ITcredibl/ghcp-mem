@@ -62,7 +62,7 @@ Every new Copilot chat is a fresh amnesia. The cost shows up in three places:
 
 ---
 
-## Meet your guide
+## Why we built this
 
 We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything, a market full of "memory" tools that wanted ports, sidecars, vector databases, or cloud sync — and not one of them showing receipts for what they claimed to remember.
 
@@ -70,7 +70,7 @@ We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything
 
 **Why we have the right to guide you here:**
 
-- **350 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **372 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Nine documented engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -78,7 +78,7 @@ We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything
 
 ---
 
-## The plan — 3 steps
+## Up and running in 3 steps
 
 | Step | What you do | What GHCP-MEM does |
 |---|---|---|
@@ -96,7 +96,7 @@ That's it. No daemon to keep running. No cloud account to register. No vector DB
 
 ---
 
-## What you avoid
+## The cost of doing nothing
 
 Without a memory layer that proves itself, the cost compounds session by session:
 
@@ -110,7 +110,7 @@ Without a memory layer that proves itself, the cost compounds session by session
 
 ---
 
-## What success looks like
+## What changes after you install
 
 With GHCP-MEM, the failure modes above are designed-out:
 
@@ -132,11 +132,11 @@ With GHCP-MEM, the failure modes above are designed-out:
 | **🧠 Memory** | Persistent, structured record of what you changed, decided, fixed, deployed — captured locally from real editor events | `@mem /recent` · `@mem /entity src/<file>` |
 | **💰 Tokens** | Auto-routing primer in every Copilot session steers the agent to cheap MCP queries over file opens | `@mem /route <question>` shows the cost estimate |
 | **⚡ Performance** | Hybrid retrieval — BM25 + recency + embeddings + match-ratio + decayed confidence + reinforcement, tuned by per-user adaptive weights, gated by nDCG@K regression suite | `@mem /why <q> :: <id>` decomposes the score |
-| **🤖 AI agentic coding** | Full MCP parity (13 tools), evidence-grounded decisions, conflict detection, score explainer, Mermaid graph export — for Cursor, Cline, Windsurf, Claude Desktop, Copilot CLI | `npx ghcp-mem-mcp` exposes all tools over stdio |
+| **🤖 AI agentic coding** | Full MCP parity (14 tools), evidence-grounded decisions, conflict detection, score explainer, Mermaid graph export — for Cursor, Cline, Windsurf, Claude Desktop, Copilot CLI | `npx ghcp-mem-mcp` exposes all tools over stdio |
 
 It surfaces memory through:
 
-- the **`@mem`** chat participant (37 commands including `/savings`, `/entity`, `/snippet`, `/why`, `/graph`, `/compliance`, `/route`, `/lessons`)
+- the **`@mem`** chat participant (41 commands including `/savings`, `/entity`, `/snippet`, `/why`, `/graph`, `/compliance`, `/route`, `/lessons`, `/rules`)
 - native Copilot **agent tools** (`#ghcpMemSearch`, `#ghcpMemStore`, `#ghcpMemAudit`, `#ghcpMemLessons`)
 - a bundled **stdio MCP server** with 14 tools for Cursor, Cline, Windsurf, Claude Desktop, and GitHub Copilot CLI
 
@@ -435,6 +435,22 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 
 ---
 
+### Project memory rules (team-shared, git-committed)
+
+Durable, team-authored directives — the GHCP-MEM answer to Cursor's `.cursorrules` / Continue's project context. Unlike pinned lessons (personal, local), **project rules live in a git-committed file** so they travel with the repo and apply for everyone who clones it. They inject at the **top** of every Copilot/agent session — ahead of the routing primer, lessons, and session cards — and are **never evicted**.
+
+- **Source of truth:** `.github/memory/rules.md`, grouped under `## Architecture / Conventions / Constraints / Gotchas / General`. Commit it to share with your team.
+- **Always-on:** rules inject even before you've captured any sessions, and a hand-edited secret in the file is **redacted** before it reaches any generated context.
+
+| Command | What it does |
+|---|---|
+| `@mem /rules` | List the current project rules grouped by category |
+| `@mem /rules add [category:]<text>` | Add a rule (redacted first); `category:` is optional and one of architecture, convention, constraint, gotcha, general |
+| `@mem /rules remove <id\|index>` | Delete a rule by id prefix or its list number |
+| `GHCP-MEM: Edit Project Memory Rules` | Open (creating if needed) `.github/memory/rules.md` to edit rules by hand |
+
+---
+
 ## Enterprise & Azure
 
 ### Built for locked-down machines
@@ -465,6 +481,7 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 | **Capture** | `GHCP-MEM: Capture Session Snapshot Now` | Manually trigger compression (`⌘⇧⌥S` / `Ctrl+Shift+Alt+S`) |
 |  | `GHCP-MEM: Compress Current Session` | Compress with progress |
 | **Inspect** | `GHCP-MEM: Show Stored Context` | Open a markdown report of sessions |
+|  | `GHCP-MEM: Edit Project Memory Rules` | Open/create `.github/memory/rules.md` — team-shared rules injected first in every session |
 |  | `GHCP-MEM: Show Memory Health Score` | Show 0-100 health score and notes |
 |  | `GHCP-MEM: Run Retrieval Eval` | Compare retrieval quality |
 |  | `GHCP-MEM: Open Visual Timeline` | Color-coded WebviewPanel timeline of all sessions |
@@ -556,6 +573,7 @@ Copilot agent mode can call these without a separate MCP setup:
 | `ghcpMem.honorPrivateTags` | `true` | Strip `<private>...</private>` |
 | `ghcpMem.excludeGlobs` | default exclusions | Skip sensitive or noisy paths |
 | `ghcpMem.autoInjectStartupContext` | `true` | Write prior session context to `.github/instructions/session-memory.instructions.md`, `CLAUDE.md`, and `.cursor/rules` on startup and after each compression |
+| `ghcpMem.projectRules` | `true` | Inject durable, team-shared project rules from `.github/memory/rules.md` (managed with `@mem /rules`) at the top of every session |
 | `ghcpMem.startupContextSessionCount` | `5` | Number of recent sessions (1–20) included in the auto-injected instructions file |
 | `ghcpMem.healthAlertThreshold` | `30` | Warn when health score is low |
 | `ghcpMem.autosave.enabled` | `true` | Enable context-pressure autosave |
@@ -676,7 +694,8 @@ Key modules:
 | `src/contextStore.ts` | Persistent storage, indexing, eviction, backups, lifetime token stats |
 | `src/searchCore.ts` | Shared retrieval scoring (BM25 + RRF + recency decay) |
 | `src/lessons.ts` | Consolidation of episodic sessions into durable semantic + procedural lessons |
-| `src/contextProvider.ts` | `@mem` chat participant with 37 slash commands |
+| `src/projectRules.ts` | Parse/serialize/render team-shared project rules from `.github/memory/rules.md` |
+| `src/contextProvider.ts` | `@mem` chat participant with 41 slash commands |
 | `src/memoryTool.ts` | Agent-mode tools (`#ghcpMemSearch`, `#ghcpMemStore`, `#ghcpMemAudit`, `#ghcpMemLessons`) |
 | `src/mcpServer.ts` | Stand-alone stdio MCP server (14 tools, read + write) |
 | `src/timelinePanel.ts` | Visual Memory Timeline WebviewPanel |
@@ -740,4 +759,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.8.2** · local-first memory for Copilot</sub>
+<sub>**v1.9.0** · local-first memory for Copilot</sub>

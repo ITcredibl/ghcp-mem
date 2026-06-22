@@ -52,8 +52,8 @@ npm run watch          # incremental build in watch mode
 | `src/contextStore.ts` | Persistent storage, indexing, eviction, backups |
 | `src/contextCompressor.ts` | LM compression and git branch tagging |
 | `src/searchCore.ts` | BM25 + RRF + recency scoring |
-| `src/redactor.ts` | 24-rule secret/PII redaction |
-| `src/mcpServer.ts` | Stand-alone stdio MCP server (6 tools) |
+| `src/redactor.ts` | 26-rule secret/PII redaction |
+| `src/mcpServer.ts` | Stand-alone stdio MCP server (14 tools) |
 | `src/timelinePanel.ts` | Visual Memory Timeline WebviewPanel |
 | `src/sessionCodeLens.ts` | Inline file-history CodeLens |
 | `src/validator.ts` | Codebase freshness validation |

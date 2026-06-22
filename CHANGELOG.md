@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.9.0] — 2026-06-22
+
+### Added — Durable project memory rules (`@mem /rules`)
+Cursor/Continue-style **project rules**: explicit, team-authored directives that GHCP-MEM injects at the **top** of every Copilot/agent session — ahead of the routing primer, lessons, and session cards. Unlike pinned lessons (personal, stored in your local DB), project rules live in a **git-committed** file so they travel with the repo and are shared across the whole team.
+
+- **Source of truth:** `.github/memory/rules.md` — human-editable markdown, grouped under `## Architecture / Conventions / Constraints / Gotchas / General`. Commit it to share with your team (it is **not** gitignored, unlike the auto-generated session file).
+- **Chat command:** `@mem /rules` lists rules; `@mem /rules add [category:]<text>` appends one (redacted first); `@mem /rules remove <id|index>` deletes one. A leading `category:` is only treated as a category when it names a known one, so URLs / `C:\…` / "Note: …" aren't misparsed.
+- **VS Code command:** `GHCP-MEM: Edit Project Memory Rules` opens (creating if needed) the rules file.
+- **Always-on injection:** rules inject even when there are no captured sessions yet, and are **never** evicted or rank-pruned.
+- **Redaction on render:** even a hand-edited secret in `rules.md` is redacted before it reaches any generated context file (`session-memory.instructions.md`, `CLAUDE.md`, `.cursor/rules`).
+- **Live reload:** a file watcher refreshes the injected context when the rules file is edited, created, deleted, or pulled from a teammate.
+- **Setting:** `ghcpMem.projectRules` (default `true`) toggles injection.
+
+Pure module `src/projectRules.ts` (parse/serialize/add/remove/render) ships with full unit coverage; provider-level tests assert zero-session injection and secret redaction. The `@mem` chat surface grows to **41** commands; the test suite to **372** tests.
+
+### Docs — consistency sweep
+- Corrected stale counts across README/docs: test count `350 → 372`, MCP-tool count `13 → 14` (adds `ghcpMem_lessons`), `@mem` command count `37 → 41`.
+- Aligned the redaction-rule count to the verified **26** rules (18 generic + 8 Azure) in `AGENTS.md`, `docs/COMPARISON.md`, and `docs/THREAT_MODEL.md` (were `24`).
+
+---
+
 ## [1.8.2] — 2026-06-19
 
 Tiny trigger release. v1.8.1 added the auto-publish step to `.github/workflows/release.yml` (`npx vsce publish` using a `VSCE_PAT` GitHub Actions secret) but that wiring was added _after_ the v1.8.1 tag was pushed, so the v1.8.1 tag never exercised the new step — the v1.8.1 publish was attempted by hand from a laptop and blocked on an expired local PAT. v1.8.2 is a no-code-change tag that fires the now-wired Release workflow end-to-end, which produces the GitHub Release artifact with full SLSA L3 provenance **and** publishes to the VS Code Marketplace from CI for the first time.

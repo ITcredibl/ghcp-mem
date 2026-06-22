@@ -7,6 +7,7 @@ import { SessionCapture } from './sessionCapture';
 import { ContextCompressor } from './contextCompressor';
 import { ContextStore } from './contextStore';
 import { ContextProvider, renderClaimList } from './contextProvider';
+import { serializeRulesFile } from './projectRules';
 import { effectiveConfidence } from './decay';
 import { SessionsTreeProvider, TreeNode } from './sessionsView';
 import {
@@ -207,6 +208,33 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('ghcpMem.runPrivacyWizard', async () => {
       await runPrivacyWizard(context);
       updateStatusBar();
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.editProjectRules', async () => {
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) {
+        vscode.window.showWarningMessage(
+          'GHCP-MEM: open a workspace folder to edit project rules.',
+        );
+        return;
+      }
+      const dir = vscode.Uri.joinPath(ws.uri, '.github', 'memory');
+      const file = vscode.Uri.joinPath(dir, 'rules.md');
+      let created = false;
+      try {
+        await vscode.workspace.fs.stat(file);
+      } catch {
+        await vscode.workspace.fs.createDirectory(dir);
+        await vscode.workspace.fs.writeFile(file, Buffer.from(serializeRulesFile([]), 'utf-8'));
+        created = true;
+      }
+      const doc = await vscode.workspace.openTextDocument(file);
+      await vscode.window.showTextDocument(doc);
+      if (created) {
+        vscode.window.showInformationMessage(
+          'GHCP-MEM: created .github/memory/rules.md — add rules under a category, then commit it to share with your team.',
+        );
+      }
     }),
 
     vscode.commands.registerCommand('ghcpMem.auditMemory', async () => {
@@ -1025,6 +1053,16 @@ export async function activate(context: vscode.ExtensionContext) {
   log('INFO', 'Timeline, file history, and CodeLens features registered.');
 
   if (config.autoInjectStartupContext) {
+    // Load team-shared project rules before the first injection so they are
+    // present in the generated context from activation onward.
+    await provider.refreshProjectRules();
+    // A `/rules` mutation (or external edit) rewrites the generated context.
+    provider.setRulesChangedHook(async () => {
+      if (!getConfig().autoInjectStartupContext) return;
+      await writeStartupContext();
+      await writeCrossEditorContext();
+    });
+    watchProjectRules(context);
     await writeStartupContext();
     writeCrossEditorContext();
   }
@@ -1693,13 +1731,14 @@ ${contextText}
 /** Write session context into CLAUDE.md and .cursor/rules for cross-editor continuity. */
 async function writeCrossEditorContext(): Promise<void> {
   const contextText = provider.buildStartupContext();
-  if (!contextText) return;
   const ws = vscode.workspace.workspaceFolders?.[0];
   if (!ws) return;
 
   const START = '<!-- GHCP-MEM:START -->';
   const END = '<!-- GHCP-MEM:END -->';
-  const block = `${START}\n${contextText}\n${END}`;
+  // When there's nothing to inject, remove any previously-written block so a
+  // deleted rules file / cleared store doesn't leave stale guidance behind.
+  const block = contextText ? `${START}\n${contextText}\n${END}` : '';
 
   const targets: [vscode.Uri, string][] = [
     [vscode.Uri.joinPath(ws.uri, 'CLAUDE.md'), 'CLAUDE.md'],
@@ -1715,13 +1754,18 @@ async function writeCrossEditorContext(): Promise<void> {
       try {
         existing = Buffer.from(await vscode.workspace.fs.readFile(fileUri)).toString('utf-8');
       } catch {}
-      let updated: string;
       const startIdx = existing.indexOf(START);
       const endIdx = existing.indexOf(END);
+      let updated: string;
       if (startIdx !== -1 && endIdx !== -1) {
-        updated = existing.slice(0, startIdx) + block + existing.slice(endIdx + END.length);
-      } else {
+        // Replace (or, when block is empty, strip) the managed region.
+        const before = existing.slice(0, startIdx);
+        const after = existing.slice(endIdx + END.length);
+        updated = block ? before + block + after : (before + after).replace(/\n{3,}/g, '\n\n');
+      } else if (block) {
         updated = existing ? `${existing}\n\n${block}\n` : `${block}\n`;
+      } else {
+        continue; // nothing to write and no existing block to strip.
       }
       const dir = vscode.Uri.joinPath(fileUri, '..');
       await vscode.workspace.fs.createDirectory(dir);
@@ -1732,6 +1776,29 @@ async function writeCrossEditorContext(): Promise<void> {
     }
   }
   lastClaudeMdHash = contentHash;
+}
+
+/**
+ * Watch the team-shared project-rules file so hand-edits (or edits from
+ * another tool / teammate's pull) refresh the in-memory cache and rewrite the
+ * generated context. The rules file itself is committed; only the generated
+ * files it feeds are gitignored, so this never creates a write loop.
+ */
+function watchProjectRules(context: vscode.ExtensionContext): void {
+  const ws = vscode.workspace.workspaceFolders?.[0];
+  if (!ws) return;
+  const pattern = new vscode.RelativePattern(ws, '.github/memory/rules.md');
+  const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+  const onChange = async () => {
+    await provider.refreshProjectRules();
+    if (!getConfig().autoInjectStartupContext) return;
+    await writeStartupContext();
+    await writeCrossEditorContext();
+  };
+  watcher.onDidCreate(() => void onChange());
+  watcher.onDidChange(() => void onChange());
+  watcher.onDidDelete(() => void onChange());
+  context.subscriptions.push(watcher);
 }
 
 /** Append `entry` to the workspace .gitignore if it isn't already listed. */

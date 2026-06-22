@@ -89,6 +89,7 @@ Use `/noise <id>` to manually flag a session and `/janitor` to trigger a re-scor
 |---|---|---|---|
 | `ghcpMem.autoInjectStartupContext` | boolean | `true` | On startup and after each compression, write `.github/instructions/session-memory.instructions.md` (Copilot auto-injection), `CLAUDE.md`, and `.cursor/rules` with recent session context. |
 | `ghcpMem.startupContextSessionCount` | number | `5` | How many recent sessions (1–20) to include in the auto-injected instructions file. |
+| `ghcpMem.projectRules` | boolean | `true` | Inject durable, team-shared project rules from `.github/memory/rules.md` at the top of every Copilot/agent session. Manage with `@mem /rules` or the **GHCP-MEM: Edit Project Memory Rules** command. Commit `rules.md` to share rules with your team; secrets in it are redacted before injection. |
 | `ghcpMem.healthAlertThreshold` | number (0–100) | `30` | Show a warning notification if the memory health score falls below this value. Set to `0` to disable. |
 
 ---

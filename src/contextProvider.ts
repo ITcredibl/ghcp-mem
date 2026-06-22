@@ -19,6 +19,17 @@ import { buildMermaidGraph } from './graphExport';
 import { buildComplianceReport, renderComplianceReport } from './compliance';
 import { recommend, renderRecommendation, extractMentionedPaths } from './router';
 import { renderLessonsForInjection, rankLessons, makePinnedLesson } from './lessons';
+import {
+  ProjectRule,
+  RuleCategory,
+  parseRulesFile,
+  serializeRulesFile,
+  addRule,
+  removeRule,
+  renderRulesForInjection,
+  isKnownCategory,
+  RULE_CATEGORIES,
+} from './projectRules';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -70,7 +81,28 @@ export class ContextProvider implements vscode.Disposable {
    */
   private suppressedForSession = new Set<string>();
 
+  /**
+   * In-memory cache of the team-shared project rules parsed from
+   * `.github/memory/rules.md`. Refreshed on activation and whenever the file
+   * changes (watcher) or a `/rules` command mutates it. Read-only for
+   * injection/listing; mutations always re-read the file from disk first so a
+   * concurrent hand-edit is never clobbered.
+   */
+  private projectRules: ProjectRule[] = [];
+
+  /**
+   * Hook the extension installs so a `/rules` mutation immediately rewrites
+   * the generated startup + cross-editor context files (instead of waiting for
+   * the file watcher to fire).
+   */
+  private rulesChangedHook?: () => Promise<void> | void;
+
   constructor(private readonly store: ContextStore) {}
+
+  /** Install the callback invoked after a `/rules` command edits the file. */
+  setRulesChangedHook(fn: () => Promise<void> | void): void {
+    this.rulesChangedHook = fn;
+  }
 
   register(): void {
     const p = vscode.chat.createChatParticipant('ghcp-mem', this.handle.bind(this));
@@ -353,6 +385,8 @@ export class ContextProvider implements vscode.Disposable {
         return this.route(query, stream);
       case 'lessons':
         return this.lessons(query, stream);
+      case 'rules':
+        return this.rules(query, stream);
       case 'pin':
         return this.pin(query, stream);
       case 'evict':
@@ -1270,6 +1304,174 @@ export class ContextProvider implements vscode.Disposable {
     }
   }
 
+  // ── Durable project memory rules (team-shared, git-committed) ──
+
+  /** Workspace-relative URI of the canonical rules file, or undefined if no workspace. */
+  private rulesFileUri(): vscode.Uri | undefined {
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!ws) return undefined;
+    return vscode.Uri.joinPath(ws, '.github', 'memory', 'rules.md');
+  }
+
+  /** Read + parse the rules file from disk (empty list when absent/unreadable). */
+  private async readRulesFromDisk(): Promise<ProjectRule[]> {
+    const uri = this.rulesFileUri();
+    if (!uri) return [];
+    try {
+      const buf = await vscode.workspace.fs.readFile(uri);
+      return parseRulesFile(Buffer.from(buf).toString('utf-8'));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Refresh the in-memory rules cache from disk. Called on activation + file change. */
+  async refreshProjectRules(): Promise<void> {
+    this.projectRules = await this.readRulesFromDisk();
+  }
+
+  /** Redact a rule's text so a hand-edited secret never reaches a generated file. */
+  private redactRule(r: ProjectRule): ProjectRule {
+    const cfg = getConfig();
+    const text = redact(r.text, {
+      redactSecrets: true,
+      honorPrivateTags: true,
+      customRules: cfg.customRedactionRules,
+      customSensitiveEntities: cfg.customSensitiveEntities,
+    }).text;
+    return { ...r, text };
+  }
+
+  /** The redacted rules block for startup injection (empty string when disabled/empty). */
+  buildProjectRulesBlock(): string {
+    if (!getConfig().projectRules) return '';
+    const redacted = this.projectRules.map((r) => this.redactRule(r));
+    return renderRulesForInjection(redacted);
+  }
+
+  /**
+   * `/rules` — list the team-shared project rules.
+   * `/rules add [category:]<text>` — append a rule (redacted) and commit-ready.
+   * `/rules remove <id|index>` — delete a rule.
+   */
+  private async rules(query: string, stream: vscode.ChatResponseStream): Promise<void> {
+    const trimmed = query.trim();
+    const [verb, ...rest] = trimmed.split(/\s+/);
+    const arg = rest.join(' ').trim();
+    const lc = verb?.toLowerCase();
+
+    if (!this.rulesFileUri()) {
+      stream.markdown('Open a workspace folder to use project rules.\n');
+      return;
+    }
+
+    if (lc === 'add') {
+      return this.rulesAdd(arg, stream);
+    }
+    if (lc === 'remove' || lc === 'rm' || lc === 'forget') {
+      return this.rulesRemove(arg, stream);
+    }
+
+    // Default: list. Always read fresh so the listing reflects hand-edits.
+    const rules = await this.readRulesFromDisk();
+    this.projectRules = rules;
+    if (rules.length === 0) {
+      stream.markdown(
+        'No project rules yet. Add one with `/rules add <text>` ' +
+          '(optionally `/rules add architecture: all writes go through contextStore`). ' +
+          'Rules live in `.github/memory/rules.md` — commit it to share with your team.\n',
+      );
+      return;
+    }
+    stream.markdown(`## 📐 Project Memory Rules (${rules.length})\n\n`);
+    stream.markdown('_Source: `.github/memory/rules.md` · injected first in every session._\n\n');
+    let idx = 0;
+    for (const cat of RULE_CATEGORIES) {
+      const inCat = rules.filter((r) => r.category === cat);
+      if (inCat.length === 0) continue;
+      stream.markdown(`### ${cat[0].toUpperCase()}${cat.slice(1)}\n\n`);
+      for (const r of inCat) {
+        idx++;
+        const shown = this.redactRule(r).text;
+        stream.markdown(`${idx}. \`${r.id.substring(0, 8)}\` ${shown}\n`);
+      }
+      stream.markdown('\n');
+    }
+  }
+
+  private async rulesAdd(arg: string, stream: vscode.ChatResponseStream): Promise<void> {
+    if (!arg) {
+      stream.markdown(
+        'Usage: `/rules add [category:]<text>` — category is one of ' +
+          `${RULE_CATEGORIES.join(', ')}.\n`,
+      );
+      return;
+    }
+    // Treat a leading `word:` as a category only when it names a known one,
+    // so rules containing URLs / `C:\` / "Note: ..." aren't misparsed.
+    let category: RuleCategory = 'general';
+    let body = arg;
+    const m = /^([A-Za-z]+)\s*:\s*(.+)$/.exec(arg);
+    if (m && isKnownCategory(m[1])) {
+      category = m[1].toLowerCase() as RuleCategory;
+      body = m[2].trim();
+    }
+    const cfg = getConfig();
+    const cleanText = redact(body, {
+      redactSecrets: true,
+      honorPrivateTags: true,
+      customRules: cfg.customRedactionRules,
+      customSensitiveEntities: cfg.customSensitiveEntities,
+    }).text;
+    if (cleanText.trim().length < 3) {
+      stream.markdown('Rule text is too short after redaction — nothing added.\n');
+      return;
+    }
+
+    // Read fresh from disk so a concurrent hand-edit isn't clobbered.
+    const current = await this.readRulesFromDisk();
+    const { rules, rule, added } = addRule(current, cleanText, category);
+    if (!added) {
+      stream.markdown(`That rule already exists as \`${rule.id.substring(0, 8)}\`.\n`);
+      return;
+    }
+    await this.writeRulesFile(rules);
+    stream.markdown(
+      `📐 Added **${category}** rule \`${rule.id.substring(0, 8)}\`: ${rule.text}\n\n` +
+        '_Commit `.github/memory/rules.md` to share it with your team._\n',
+    );
+  }
+
+  private async rulesRemove(arg: string, stream: vscode.ChatResponseStream): Promise<void> {
+    if (!arg) {
+      stream.markdown('Usage: `/rules remove <rule-id-prefix | list-number>`\n');
+      return;
+    }
+    const current = await this.readRulesFromDisk();
+    const result = removeRule(current, arg);
+    if (result.ambiguous) {
+      stream.markdown(`Id prefix "${arg}" matches more than one rule — use a longer prefix.\n`);
+      return;
+    }
+    if (!result.removed) {
+      stream.markdown(`No rule found for "${arg}".\n`);
+      return;
+    }
+    await this.writeRulesFile(result.rules);
+    stream.markdown(`🗑️ Removed rule \`${result.removed.id.substring(0, 8)}\`.\n`);
+  }
+
+  /** Persist the rule list, refresh the cache, and rewrite generated context. */
+  private async writeRulesFile(rules: ProjectRule[]): Promise<void> {
+    const uri = this.rulesFileUri();
+    if (!uri) return;
+    const dir = vscode.Uri.joinPath(uri, '..');
+    await vscode.workspace.fs.createDirectory(dir);
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(serializeRulesFile(rules), 'utf-8'));
+    this.projectRules = rules;
+    await this.rulesChangedHook?.();
+  }
+
   /**
    * `/pin <session-id>` — un-evict a session that was suppressed for this
    * task with `/evict`, returning it to the injected working set.
@@ -1319,39 +1521,49 @@ export class ContextProvider implements vscode.Disposable {
   buildStartupContext(): string {
     const config = getConfig();
     const recent = this.store.getStartupCandidates(config.startupContextSessionCount);
-    if (recent.length === 0) return '';
+    const rulesBlock = this.buildProjectRulesBlock();
+    const lessonsBlock = renderLessonsForInjection(rankLessons(this.store.getLessons()));
+    // Nothing to inject? Signal the caller to remove any stale generated file.
+    if (recent.length === 0 && !rulesBlock && !lessonsBlock) return '';
+
+    const lines = ['## Previous Session Context (auto-injected by GHCP-MEM)', ''];
+
+    // Project memory rules are binding, team-authored directives — they go
+    // first, ahead of the routing primer and any episodic detail.
+    if (rulesBlock) {
+      lines.push(rulesBlock, '');
+    }
+
     // Phase 9 routing primer: teaches the agent to prefer GHCP-MEM MCP/chat
-    // tools over file open for lookup-style questions. Prepended once per
-    // injection so every new Copilot session starts with the routing rule
-    // in scope — zero extra round-trips required for "auto" routing.
-    const lines = [
-      '## Previous Session Context (auto-injected by GHCP-MEM)',
-      '',
-      '### How to gather context cheaply',
-      'Before reading source files, check whether the question is about',
-      'project HISTORY (what was decided / fixed / why) vs CODE (need to',
-      'modify or read current state). Prefer GHCP-MEM tools for history:',
-      '',
-      '- "why did we / what was decided / how does X work" →',
-      '  `@mem /entity <path>`, `@mem /snippet <q>`, or MCP `ghcpMem_entity` / `ghcpMem_snippets` (~200–500 tokens vs typically 2000–10000 for a file).',
-      '- "find where X is used / show me past errors / who touched Y" →',
-      '  `@mem /search <q>` or MCP `ghcpMem_search` (~250 tokens).',
-      '- "what is the supersession chain / lineage for X" →',
-      '  `@mem /lineage <id>` or MCP `ghcpMem_lineage` (~350 tokens).',
-      '- "explain why this session ranked above that one" →',
-      '  `@mem /why <q> :: <id>` or MCP `ghcpMem_explain`.',
-      '- Unsure which is cheaper? Call `@mem /route <question>` or MCP',
-      '  `ghcpMem_route` first — it returns a token-cost estimate per option.',
-      '',
-      'Only open / attach files when you need to MODIFY or read current',
-      'source. For "what / why / when / who" questions about project',
-      'history, the memory tools are typically 5–20× cheaper.',
-      '',
-    ];
+    // tools over file open for lookup-style questions. Only worth injecting
+    // when there is actually memory to route to (sessions or lessons).
+    if (recent.length > 0 || lessonsBlock) {
+      lines.push(
+        '### How to gather context cheaply',
+        'Before reading source files, check whether the question is about',
+        'project HISTORY (what was decided / fixed / why) vs CODE (need to',
+        'modify or read current state). Prefer GHCP-MEM tools for history:',
+        '',
+        '- "why did we / what was decided / how does X work" →',
+        '  `@mem /entity <path>`, `@mem /snippet <q>`, or MCP `ghcpMem_entity` / `ghcpMem_snippets` (~200–500 tokens vs typically 2000–10000 for a file).',
+        '- "find where X is used / show me past errors / who touched Y" →',
+        '  `@mem /search <q>` or MCP `ghcpMem_search` (~250 tokens).',
+        '- "what is the supersession chain / lineage for X" →',
+        '  `@mem /lineage <id>` or MCP `ghcpMem_lineage` (~350 tokens).',
+        '- "explain why this session ranked above that one" →',
+        '  `@mem /why <q> :: <id>` or MCP `ghcpMem_explain`.',
+        '- Unsure which is cheaper? Call `@mem /route <question>` or MCP',
+        '  `ghcpMem_route` first — it returns a token-cost estimate per option.',
+        '',
+        'Only open / attach files when you need to MODIFY or read current',
+        'source. For "what / why / when / who" questions about project',
+        'history, the memory tools are typically 5–20× cheaper.',
+        '',
+      );
+    }
     // Consolidated semantic + procedural lessons go right after the routing
     // primer and before the raw session cards: durable, distilled knowledge
     // first, then the episodic detail it was drawn from.
-    const lessonsBlock = renderLessonsForInjection(rankLessons(this.store.getLessons()));
     if (lessonsBlock) {
       lines.push(lessonsBlock, '');
     }

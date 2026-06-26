@@ -6,6 +6,43 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.10.1] — 2026-06-26
+
+CI hardening release. The v1.8.2 → v1.10.0 stretch shipped three tags in a row whose Release workflow failed at the `Publish to VS Code Marketplace` step (missing/expired `VSCE_PAT` secret), and because that step was strict-failing, **every subsequent step was skipped** — SHA-256 checksum, CycloneDX SBOM, release manifest, SLSA L3 attestation, and the `gh release create` upload. The trust chain we built in v1.6.x was silently broken for three consecutive releases without anyone noticing, because the workflow's red status looked indistinguishable from the long-fixed PAT/format issues. This patch makes that class of failure impossible.
+
+### Changed — `Publish to VS Code Marketplace` step now non-blocking
+**`.github/workflows/release.yml`**: added `continue-on-error: true` and an `id: marketplace_publish` to the publish step. The step still runs on every `vX.Y.Z` tag push, but a failure no longer aborts the workflow — the SHA-256, SBOM, manifest, SLSA `attest-build-provenance`, and GitHub Release creation steps all run unconditionally. Result: even when `VSCE_PAT` is empty/expired/rotated, the GitHub Release page for the tag is fully provenance-attested and downloadable, with verifiable checksums + SBOM. The Marketplace publish becomes a separate concern that the operator can recover at leisure (rotate PAT → re-run workflow).
+
+### Added — `Surface Marketplace publish outcome` step
+**`.github/workflows/release.yml`**: a new always-runs step after the artifact uploads inspects `steps.marketplace_publish.outcome` and re-raises a hard `::error::` + `exit 1` if the Marketplace step didn't succeed. The job status accurately reflects "Marketplace was updated" — silent passes are impossible — but the *artifact chain that already ran* is preserved on the GitHub Release page regardless. The error message names the most likely cause (`VSCE_PAT` missing/expired) and the exact URL to rotate the PAT (https://aka.ms/vscodepat).
+
+### Why this matters operationally
+With this change, the **only** thing that can break the SLSA trust chain is something that breaks the build/test/bundle/attest steps themselves — code or infrastructure regressions, not credential lifecycle. The Marketplace publish is now an *eventual-consistency* operation rather than a blocking dependency. Three downstream consequences:
+
+1. Downloads from the GitHub Release page get full SHA-256 + SBOM + provenance even during PAT outages.
+2. Security reviewers who verify via `gh attestation verify ghcp-mem.vsix --owner ITcredibl` (the flow in the README) keep working.
+3. Recovering a failed publish is `rotate PAT → re-run workflow` — no version bump or re-tag needed, since the publish step is idempotent against the existing tag.
+
+### Why no source changes
+v1.10.0's product surface (default-on local embeddings, high-entropy redaction, BM25 stat memoisation, project memory rules) is unchanged. This is a workflow-only patch — same 386 tests, same bundle, same `npm audit` 0 vulnerabilities. The only files modified are `.github/workflows/release.yml` + the standard version stamps (`package.json`, `README.md`, `docs/DEMO.md`, `docs/COMPARISON.md`, `CHANGELOG.md`).
+
+### Operator action still required for Marketplace publish
+This release fixes the *fallout* but not the *root cause*. `VSCE_PAT` is still empty on `ITcredibl/ghcp-mem`. To resume Marketplace publishes:
+
+1. Generate a fresh PAT at https://aka.ms/vscodepat — **Marketplace → Manage** scope, 1-year expiry.
+2. Set it as `VSCE_PAT` at https://github.com/ITcredibl/ghcp-mem/settings/secrets/actions.
+3. Re-run any failed Release workflow run, or push the next tag — both paths now succeed independently of whether v1.10.1 has succeeded yet.
+
+### Verification before push
+- `npm run format:check` — clean
+- `npm run lint` (`--max-warnings=0`) — clean
+- `npm run typecheck` — clean
+- `npm test` — 386 / 386 pass
+- `npm run check:release` — 5 / 5 doc checks pass (`package.json`, README, DEMO, CHANGELOG, COMPARISON badge)
+- `npm audit` — 0 vulnerabilities at every severity
+
+---
+
 ## [1.10.0] — 2026-06-25
 
 Feature release on top of the v1.9.0 project-rules line: hybrid retrieval and secret redaction now work out of the box, with a faster search path and a smaller chat-formatting surface.

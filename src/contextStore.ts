@@ -186,12 +186,20 @@ export class ContextStore implements vscode.Disposable {
         ...session.decisions,
         ...session.problemsSolved,
       ].join(' ');
+      // Capture the id by value so the closure doesn't pin the session ref;
+      // we re-resolve from the live db at write time. Before v1.10.2 we
+      // assigned `session.embedding = vec` directly to the captured object,
+      // which (a) wrote to a dead reference if enforceSizeCap had evicted
+      // the row between scheduling and resolution, and (b) raced with
+      // concurrent addSession/persist mutations on the same row.
+      const targetId = session.id;
       this.embedder(text)
         .then((vec) => {
-          if (vec) {
-            session.embedding = vec;
-            this.globalState.update(DB_KEY, this.db).then(undefined, () => {});
-          }
+          if (!vec) return;
+          const current = this.db.sessions.find((s) => s.id === targetId);
+          if (!current) return; // evicted between scheduling and resolution
+          current.embedding = vec;
+          this.globalState.update(DB_KEY, this.db).then(undefined, () => {});
         })
         .catch(() => {});
     }
@@ -1419,6 +1427,23 @@ export class ContextStore implements vscode.Disposable {
     // successive addSession / tag / delete calls.
     this.syncQueue = this.syncQueue.then(() => this.syncToDisk()).catch(() => {});
     this.onChangeEmitter.fire();
+  }
+
+  /**
+   * Public flush — for callers that have mutated session fields in place and
+   * need those mutations persisted without triggering every other write-side
+   * effect on the hot path.
+   *
+   * Added in v1.11.0 for the weekly janitor. Before v1.11.0 the janitor wrote
+   * `session.qualityScore = q.score` in a loop and the comment honestly said
+   * "persisted on next mutation or prune" — but if a session's score drifted
+   * within the floor (still below, still flagged) no flag flip happened and
+   * the assignment was lost on next reload. Every weekly pass therefore
+   * re-scored from scratch. Now the janitor calls `flush()` once after the
+   * loop and the rescored values survive.
+   */
+  async flush(): Promise<void> {
+    await this.persist();
   }
 
   /**

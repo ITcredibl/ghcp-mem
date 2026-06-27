@@ -6,6 +6,138 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.11.0] — 2026-06-26
+
+Companion feature/cleanup release to v1.10.2's security patch. Addresses the **next-priority cluster** of items from the v1.10.1 code review — the UX self-discovery gap, two hot-path perf wins, the shared-helper refactor that the review flagged as copy-pasted across four sites, and a near-doubling of unit-test coverage across previously-untested modules.
+
+### Added — `@mem /help` self-discovery (review item #6)
+The chat surface grew to **42 slash commands** without an in-chat catalog; new users had to grep the README or scroll the followup chips (which only cover ~15 of them). `@mem /help` (alias: `@mem /?`) now renders a grouped markdown table of every command, split by intent: 🔍 retrieval · ✅ trust + correction · ✍️ authoring · ✏️ generation · 🛡 admin + insight. Each row shows the command's argument shape and a one-line description. Adds zero token cost to existing flows — only renders when explicitly requested.
+
+### Changed — `/commit` and `/precommit` now use `execFile` (review item #9)
+The `/pr` command in this file was hardened to `execFileAsync` (no shell) at the v1.6.x security pass, but `/commit` and `/precommit` were missed and kept shelling out via `execAsync`. No user input flows into the argv arrays today, so the risk was latent — but the inconsistency would have inherited a shell-injection footgun the next time someone added a user-supplied git flag. Both commands now match `/pr`'s posture. Pre-existing graceful "no staged changes" behaviour preserved via per-call try/catch.
+
+### Added — `matchFilePath()` shared helper (review item #22)
+The same four-condition fuzzy-match comparison (exact / suffix / reverse-suffix / basename) was copy-pasted across **four sites**: `src/contextProvider.ts` (3 sites) and `src/extension.ts` (1 site). The review flagged this as a divergence risk — each copy was free to drift its case-handling or `null`/empty guards. Consolidated into `src/pathMatch.ts` with one definitive implementation and 7 unit tests pinning the documented contract (empty inputs reject; basename match works after a file move; case-insensitive on macOS/Windows-style paths). Net: −16 LOC across the four call sites, +35 LOC of helper + tests.
+
+### Changed — Janitor bulk-persists `qualityScore` mutations (review item #11)
+`runJanitor` ([src/janitor.ts:46](src/janitor.ts)) mutates `session.qualityScore` in place during its weekly re-scoring pass. Before v1.11.0 the comment honestly admitted "persisted on next mutation or prune" — meaning a session whose score drifted within the floor (still below, still flagged) never persisted, and every weekly run rescored from scratch. Now: the loop tracks whether *any* score actually drifted (compared to its prior value) and calls a new `ContextStore.flush()` once at the end IFF (a) no prune happened (which would have persisted anyway) AND (b) at least one score moved. Steady-state cost: zero extra disk writes when nothing changed; one write per janitor run when scores drift.
+
+### Changed — `localEmbed()` now memoises via a 512-entry LRU (review item #13)
+[src/embeddings.ts:120](src/embeddings.ts) is on two hot paths: every `addSession` runs it during indexing, and every `searchWithEmbedding` embeds the query string. Both call patterns re-tokenise + re-hash strings the cache could have served. New behaviour: deterministic content-addressed key (FNV hash of input + dim), Map-order-preserving LRU eviction at 512 entries, ~0.5 MB peak memory budget. Test-only `_resetLocalEmbedCache()` export keeps test isolation tight. Memo hit returns the exact same `number[]` reference, so the perf win is visible AND verifiable (the new tests assert `===` identity, not value equality).
+
+### Added — Test coverage for 10 previously-untested modules (review item #19)
+The v1.10.1 review called out 10 pure modules with zero direct test files — most of them drive retrieval/ranking outputs, so silent behaviour changes there would degrade results without anyone noticing. New test files:
+
+- `src/test/compliance.test.ts`
+- `src/test/causalGraph.test.ts`
+- `src/test/explain.test.ts`
+- `src/test/router.test.ts`
+- `src/test/decay.test.ts`
+- `src/test/entity.test.ts`
+- `src/test/snippets.test.ts`
+- `src/test/queryIntent.test.ts`
+- `src/test/queryExpansion.test.ts`
+- `src/test/adaptiveWeights.test.ts`
+- `src/test/pathMatch.test.ts` (review item #22's companion)
+
+Plus targeted extensions to three existing test files:
+
+- `src/test/embeddings.test.ts` — LRU memo behaviour (review item #13)
+- `src/test/janitor.test.ts` — lessons consolidation path + bulk-persist (review items #11, #18)
+- `src/test/redactor.entropy.test.ts` — adversarial corpus: PEM body lines, JWT non-double-redaction, Stripe live vs test keys, 32-char hex git-SHA spare (review item #17)
+
+### Test count
+**498 tests** (was 401 → +97 in this release; 394 was the v1.10.2 count and the test suite has grown 27 % in one release). All gates green: format, lint (`--max-warnings=0`), typecheck, test, check:release (5/5 doc surfaces), bundle:prod, `npm audit` 0 vulns at every severity.
+
+### Deferred to v1.12.0
+Two refactor items from the same review intentionally postponed: splitting `contextProvider.ts` (3,002 LOC, 47 private methods) into command-group modules `src/commands/{retrieval,trust,authoring,generation,admin}.ts`, and splitting `extension.ts` (2,024 LOC, 32 `registerCommand`s) into `src/extensionCommands/*.ts`. These are mechanical but produce ~4,000-line diffs; bundling them with the substantive fixes above would have made the v1.11.0 commit unreviewable. v1.12.0 is reserved for those splits and their unit-test-runner consolidation.
+
+---
+
+## [1.10.2] — 2026-06-26
+
+Targeted security + correctness patch in response to a thorough code review of v1.10.1. Six surgical fixes, each closing a real attack surface or trust gap. No new product features; no schema migrations; backward-compatible with every store captured under v1.x.
+
+### Fixed — MCP store handler now redacts every write (review item #1)
+**Severity: high.** The in-process VS Code surface (`MemoryStoreTool.invoke`, [src/memoryTool.ts:108-120](src/memoryTool.ts)) ran every user-supplied string through `redact()` before persisting. The MCP server's `ghcpMem_store` handler ([src/mcpServer.ts:540-549](src/mcpServer.ts)) did not. Any external MCP client (Cursor, Cline, Claude Desktop, Copilot CLI, …) handing the tool a secret persisted it in cleartext to `sessions.json`. New behaviour: a single `redactPersistedStrings()` helper now gates every MCP write field (`summary`, `keyFiles`, `keyTopics`, `decisions`, `problemsSolved`, `userTags`) and the resulting `redactionCount` is stored on the session row so the health score and audit log stay accurate. The helper is exported and unit-tested (4 tests covering: AWS key in summary, GitHub PAT in a decision array, clean-input pass-through, non-string array entries dropped).
+
+### Changed — MCP write tools are now opt-in by default (review item #2)
+**Severity: high.** The previous default — `process.env.GHCP_MEM_ALLOW_MCP_WRITE !== 'false'` — meant write tools were ENABLED unless explicitly disabled. External clients (Cursor, Cline, Claude Desktop) spawning the stdio server typically don't set env vars, so the fail-open default contradicted the "MCP read-only default" claim made in the v1.6.2 CHANGELOG. New default: `process.env.GHCP_MEM_ALLOW_MCP_WRITE === 'true'` — writes require explicit opt-in. `GHCP_MEM_READONLY=true` continues to force read-only even if the opt-in is set. **Breaking change** for any setup that relied on writes being on by default; mitigate by adding `GHCP_MEM_ALLOW_MCP_WRITE=true` to the client's MCP server env block.
+
+### Fixed — Project rules now render inside an "untrusted content" fence (review item #3)
+**Severity: high.** `.github/memory/rules.md` is git-committed content — anyone who can land a PR against the repo can land text that appears at the very top of every Copilot session brief. The previous injection wrapper described the block as *"Binding, team-authored rules… Follow them unless they conflict with a higher-priority instruction or a safety/privacy constraint"* — phrasing that elevates user-controlled text to instruction authority, a textbook stored-prompt-injection vector. New wrapper ([src/projectRules.ts:215-254](src/projectRules.ts)) explicitly labels the block as **PROJECT CONFIGURATION authored by repository collaborators** (not "binding"), subordinates it to the user's prompt and to safety/privacy policy, and fences it with explicit `<<< BEGIN UNTRUSTED PROJECT RULES >>>` / `<<< END UNTRUSTED PROJECT RULES >>>` markers so a downstream LM can lexically tell project-provided context from active user instructions. Mirrors the OWASP LLM01 mitigation pattern.
+
+### Fixed — MCP `ghcpMem_store` no longer double-loads the database (review item #4)
+**Severity: medium.** The handler called `loadDatabase()` at the top of `handleCall`, then called it AGAIN inside the `ghcpMem_store` case before writing. Any concurrent `tools/call` mutation that completed between the two reads got clobbered by the second write (last-writer-wins). Now uses the outer `db` reference for the write — eliminates the clobber window.
+
+### Fixed — Async embedding write-back no longer races with eviction (review item #5)
+**Severity: medium.** `addSession` ([src/contextStore.ts:189-196](src/contextStore.ts)) scheduled an async `this.embedder(text).then(vec => { session.embedding = vec; ... })` while the session reference was captured by the closure. If the session was evicted by `enforceSizeCap` or the count clamp between scheduling and resolution, the embedding write went to a dead reference and (worse) raced with concurrent mutations on the row. The closure now captures the id by value and re-resolves the live row from `this.db.sessions` before assigning — so evicted-in-flight sessions are skipped, and surviving sessions get a current, unraced write.
+
+### Fixed — Tightened `azure-storage-key` redactor rule (review item #10)
+**Severity: medium.** The previous pattern `\b[A-Za-z0-9+/]{86}==` matched ANY 88-char base64 ending in `==`, which fired on multi-line PEM bodies, base64-encoded images embedded in markdown/JSON, and large lockfile hashes — heavy false positives on real workspaces. The named rule now requires a recognised Azure context prefix (`AccountKey=`, query-string `key=`, or JSON `"key": "..."`). Standalone base64 strings of this shape that are genuinely secret are still caught by the high-entropy fallback detector (`detectHighEntropy: true`). 3 new positive tests pin the context-prefix paths; 1 new negative test pins the false-positive regression (`looksLikePemLine` no longer matches with the entropy detector disabled).
+
+### Test count
+**394 tests** (was 386 → +8: 4 redactor-context cases, 2 project-rules fence cases, 4 `redactPersistedStrings` cases). All gates green: format, lint (`--max-warnings=0`), typecheck, test, check:release (5/5 doc surfaces), bundle:prod, `npm audit` 0 vulns at every severity.
+
+### Out of scope for this patch
+The same v1.10.1 review surfaced 18 more items — UX self-discovery (`@mem /help`, `/noise` vs `/retract` collapse), perf wins (janitor bulk-persist, lessons incremental, embeddings LRU, conflict-aware dedupe), test coverage for 10 untested modules, and shared-helper refactors. Those ship in **v1.11.0** as a focused feature/cleanup release. The two large file splits (`contextProvider.ts` 3,002 LOC, `extension.ts` 2,024 LOC) ship in **v1.12.0** to keep the diffs reviewable.
+
+---
+
+## [1.10.1] — 2026-06-26
+
+CI hardening release. The v1.8.2 → v1.10.0 stretch shipped three tags in a row whose Release workflow failed at the `Publish to VS Code Marketplace` step (missing/expired `VSCE_PAT` secret), and because that step was strict-failing, **every subsequent step was skipped** — SHA-256 checksum, CycloneDX SBOM, release manifest, SLSA L3 attestation, and the `gh release create` upload. The trust chain we built in v1.6.x was silently broken for three consecutive releases without anyone noticing, because the workflow's red status looked indistinguishable from the long-fixed PAT/format issues. This patch makes that class of failure impossible.
+
+### Changed — `Publish to VS Code Marketplace` step now non-blocking
+**`.github/workflows/release.yml`**: added `continue-on-error: true` and an `id: marketplace_publish` to the publish step. The step still runs on every `vX.Y.Z` tag push, but a failure no longer aborts the workflow — the SHA-256, SBOM, manifest, SLSA `attest-build-provenance`, and GitHub Release creation steps all run unconditionally. Result: even when `VSCE_PAT` is empty/expired/rotated, the GitHub Release page for the tag is fully provenance-attested and downloadable, with verifiable checksums + SBOM. The Marketplace publish becomes a separate concern that the operator can recover at leisure (rotate PAT → re-run workflow).
+
+### Added — `Surface Marketplace publish outcome` step
+**`.github/workflows/release.yml`**: a new always-runs step after the artifact uploads inspects `steps.marketplace_publish.outcome` and re-raises a hard `::error::` + `exit 1` if the Marketplace step didn't succeed. The job status accurately reflects "Marketplace was updated" — silent passes are impossible — but the *artifact chain that already ran* is preserved on the GitHub Release page regardless. The error message names the most likely cause (`VSCE_PAT` missing/expired) and the exact URL to rotate the PAT (https://aka.ms/vscodepat).
+
+### Why this matters operationally
+With this change, the **only** thing that can break the SLSA trust chain is something that breaks the build/test/bundle/attest steps themselves — code or infrastructure regressions, not credential lifecycle. The Marketplace publish is now an *eventual-consistency* operation rather than a blocking dependency. Three downstream consequences:
+
+1. Downloads from the GitHub Release page get full SHA-256 + SBOM + provenance even during PAT outages.
+2. Security reviewers who verify via `gh attestation verify ghcp-mem.vsix --owner ITcredibl` (the flow in the README) keep working.
+3. Recovering a failed publish is `rotate PAT → re-run workflow` — no version bump or re-tag needed, since the publish step is idempotent against the existing tag.
+
+### Why no source changes
+v1.10.0's product surface (default-on local embeddings, high-entropy redaction, BM25 stat memoisation, project memory rules) is unchanged. This is a workflow-only patch — same 386 tests, same bundle, same `npm audit` 0 vulnerabilities. The only files modified are `.github/workflows/release.yml` + the standard version stamps (`package.json`, `README.md`, `docs/DEMO.md`, `docs/COMPARISON.md`, `CHANGELOG.md`).
+
+### Operator action still required for Marketplace publish
+This release fixes the *fallout* but not the *root cause*. `VSCE_PAT` is still empty on `ITcredibl/ghcp-mem`. To resume Marketplace publishes:
+
+1. Generate a fresh PAT at https://aka.ms/vscodepat — **Marketplace → Manage** scope, 1-year expiry.
+2. Set it as `VSCE_PAT` at https://github.com/ITcredibl/ghcp-mem/settings/secrets/actions.
+3. Re-run any failed Release workflow run, or push the next tag — both paths now succeed independently of whether v1.10.1 has succeeded yet.
+
+### Verification before push
+- `npm run format:check` — clean
+- `npm run lint` (`--max-warnings=0`) — clean
+- `npm run typecheck` — clean
+- `npm test` — 386 / 386 pass
+- `npm run check:release` — 5 / 5 doc checks pass (`package.json`, README, DEMO, CHANGELOG, COMPARISON badge)
+- `npm audit` — 0 vulnerabilities at every severity
+
+---
+
+## [1.10.0] — 2026-06-25
+
+Feature release on top of the v1.9.0 project-rules line: hybrid retrieval and secret redaction now work out of the box, with a faster search path and a smaller chat-formatting surface.
+
+### Added
+- **Local dense embeddings (default-on).** A dependency-free, deterministic 128-dim lexical embedder (`embeddings.ts` `localEmbed`/`makeLocalEmbedder`, FNV-1a feature hashing) powers hybrid cosine-RRF retrieval offline with zero native deps or network. The proposed neural `vscode.lm` embeddings API still supersedes it when present. Opt-out via `ghcpMem.localEmbeddings`.
+- **High-entropy secret redaction.** A heuristic catch-all (`redactor.ts`) redacts long, mixed-character-class, high-Shannon-entropy tokens that no named rule matches — random API keys, base64 credential blobs, opaque session tokens — while sparing lowercase git SHAs, hex digests, and ordinary prose. Piped through every capture path; gated by `ghcpMem.detectHighEntropySecrets` (default on).
+
+### Changed
+- **Faster search.** Per-session BM25 term statistics are memoised at index time (`searchCore.ts` `computeTermStats`/`keywordScoreFromStats`, `ContextStore.termStats`), eliminating the per-query re-tokenisation that dominated `search()` on large stores. Scores are numerically identical to the previous path.
+- **Slimmer chat participant.** Response-formatting helpers extracted from `contextProvider.ts` into `contextProviderFormat.ts`, with no behavior change.
+- Pin the `undici` override to `^7.28.0` to clear a high-severity transitive advisory.
+- Release-consistency gate now also checks the `docs/COMPARISON.md` version badge.
+- Test suite grows to **386** tests (adds embeddings, high-entropy redaction, and search-stats coverage).
+
+---
+
 ## [1.9.0] — 2026-06-22
 
 ### Added — Durable project memory rules (`@mem /rules`)

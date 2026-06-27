@@ -5,7 +5,9 @@ import { redact } from './redactor';
 import {
   extractTerms as sharedExtractTerms,
   keywordScore as sharedKeywordScore,
-  computeAvgDocLen,
+  computeTermStats,
+  keywordScoreFromStats,
+  SessionTermStats,
 } from './searchCore';
 import { validateSessions } from './validator';
 import { getRepoScopeSync } from './repoScope';
@@ -71,6 +73,13 @@ export interface SearchFilters {
 export class ContextStore implements vscode.Disposable {
   private db: ContextDatabase;
   private index = new Map<string, Set<string>>(); // term → session IDs
+  /**
+   * Per-session BM25 term statistics, memoised at index time. Eliminates the
+   * per-query O(candidates × fields) re-tokenisation that was the dominant cost
+   * in `search()` as the store grows. Kept in lockstep with `index` — every
+   * `indexSession` writes it, every `removeFromIndex` clears it.
+   */
+  private termStats = new Map<string, SessionTermStats>();
   private readonly onChangeEmitter = new vscode.EventEmitter<void>();
   readonly onChange = this.onChangeEmitter.event;
   /** Phase 4 pending conflict warnings, kept in memory (not persisted). */
@@ -177,12 +186,20 @@ export class ContextStore implements vscode.Disposable {
         ...session.decisions,
         ...session.problemsSolved,
       ].join(' ');
+      // Capture the id by value so the closure doesn't pin the session ref;
+      // we re-resolve from the live db at write time. Before v1.10.2 we
+      // assigned `session.embedding = vec` directly to the captured object,
+      // which (a) wrote to a dead reference if enforceSizeCap had evicted
+      // the row between scheduling and resolution, and (b) raced with
+      // concurrent addSession/persist mutations on the same row.
+      const targetId = session.id;
       this.embedder(text)
         .then((vec) => {
-          if (vec) {
-            session.embedding = vec;
-            this.globalState.update(DB_KEY, this.db).then(undefined, () => {});
-          }
+          if (!vec) return;
+          const current = this.db.sessions.find((s) => s.id === targetId);
+          if (!current) return; // evicted between scheduling and resolution
+          current.embedding = vec;
+          this.globalState.update(DB_KEY, this.db).then(undefined, () => {});
         })
         .catch(() => {});
     }
@@ -788,10 +805,20 @@ export class ContextStore implements vscode.Disposable {
     }
 
     // --- Rank 1: keyword score (BM25 with field weights) ---
-    const avgDocLen = computeAvgDocLen(candidates);
+    // Uses the memoised per-session term stats so we don't re-tokenise every
+    // candidate's fields on every query. Numerically identical to the
+    // un-memoised path (computeAvgDocLen + keywordScore).
+    const avgDocLen = candidates.length
+      ? candidates.reduce((sum, s) => sum + this.statsFor(s).docLenWeighted, 0) / candidates.length
+      : 50;
     const keywordScores = candidates.map((s) => ({
       s,
-      score: this.keywordScore(s, terms, wsId, avgDocLen),
+      score: keywordScoreFromStats(
+        this.statsFor(s),
+        terms,
+        !!wsId && s.workspaceId === wsId,
+        avgDocLen,
+      ),
     }));
     const keywordRanked = [...keywordScores].sort((a, b) => b.score - a.score);
     const keywordRankById = new Map<string, number>();
@@ -1311,6 +1338,9 @@ export class ContextStore implements vscode.Disposable {
       }
       set.add(s.id);
     }
+    // Memoise BM25 term stats alongside the inverted index. Recomputed here on
+    // every field-affecting mutation (add, dup-merge, tag/untag, sanitize).
+    this.termStats.set(s.id, computeTermStats(s));
   }
 
   private removeFromIndex(s: CompressedSession): void {
@@ -1333,10 +1363,22 @@ export class ContextStore implements vscode.Disposable {
       set.delete(s.id);
       if (set.size === 0) this.index.delete(term);
     }
+    this.termStats.delete(s.id);
+  }
+
+  /** Lazily fetch (and cache) the memoised term stats for a session. */
+  private statsFor(s: CompressedSession): SessionTermStats {
+    let st = this.termStats.get(s.id);
+    if (!st) {
+      st = computeTermStats(s);
+      this.termStats.set(s.id, st);
+    }
+    return st;
   }
 
   private rebuildIndex(): void {
     this.index.clear();
+    this.termStats.clear();
     for (const s of this.db.sessions) this.indexSession(s);
   }
 
@@ -1346,6 +1388,7 @@ export class ContextStore implements vscode.Disposable {
    */
   private rebuildIndexAsync(): Promise<void> {
     this.index.clear();
+    this.termStats.clear();
     const sessions = [...this.db.sessions];
     const CHUNK = 50;
     let i = 0;
@@ -1384,6 +1427,23 @@ export class ContextStore implements vscode.Disposable {
     // successive addSession / tag / delete calls.
     this.syncQueue = this.syncQueue.then(() => this.syncToDisk()).catch(() => {});
     this.onChangeEmitter.fire();
+  }
+
+  /**
+   * Public flush — for callers that have mutated session fields in place and
+   * need those mutations persisted without triggering every other write-side
+   * effect on the hot path.
+   *
+   * Added in v1.11.0 for the weekly janitor. Before v1.11.0 the janitor wrote
+   * `session.qualityScore = q.score` in a loop and the comment honestly said
+   * "persisted on next mutation or prune" — but if a session's score drifted
+   * within the floor (still below, still flagged) no flag flip happened and
+   * the assignment was lost on next reload. Every weekly pass therefore
+   * re-scored from scratch. Now the janitor calls `flush()` once after the
+   * loop and the rescored values survive.
+   */
+  async flush(): Promise<void> {
+    await this.persist();
   }
 
   /**

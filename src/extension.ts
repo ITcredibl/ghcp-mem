@@ -7,6 +7,7 @@ import { SessionCapture } from './sessionCapture';
 import { ContextCompressor } from './contextCompressor';
 import { ContextStore } from './contextStore';
 import { ContextProvider, renderClaimList } from './contextProvider';
+import { matchFilePath } from './pathMatch';
 import { serializeRulesFile } from './projectRules';
 import { effectiveConfidence } from './decay';
 import { SessionsTreeProvider, TreeNode } from './sessionsView';
@@ -16,7 +17,7 @@ import {
   MemoryAuditTool,
   MemoryLessonsTool,
 } from './memoryTool';
-import { getEmbedder } from './embeddings';
+import { getEmbedder, makeLocalEmbedder } from './embeddings';
 import { captureAzureContext } from './azureContext';
 import { AzureSubsystem } from './azureDetect';
 import { getConfig, CompressedSession, AzureContextMeta, SessionEvent } from './types';
@@ -141,15 +142,26 @@ export async function activate(context: vscode.ExtensionContext) {
     log('INFO', 'MCP server provider registered.');
   }
 
-  // Feature-detect the embeddings API (proposed). Safe no-op when unavailable.
+  // Hybrid retrieval embedder. Prefer the proposed neural `vscode.lm`
+  // embeddings API when present; otherwise fall back to the dependency-free
+  // local lexical embedding so dense hybrid search works by default. The
+  // fallback is opt-out via `ghcpMem.localEmbeddings`.
   getEmbedder()
     .then((fn) => {
       if (fn) {
         store.setEmbedder(fn);
-        log('INFO', 'Embedding-based hybrid search enabled.');
+        log('INFO', 'Embedding-based hybrid search enabled (neural vscode.lm).');
+      } else if (config.localEmbeddings) {
+        store.setEmbedder(makeLocalEmbedder());
+        log('INFO', 'Embedding-based hybrid search enabled (local lexical fallback).');
       }
     })
-    .catch(() => {});
+    .catch(() => {
+      if (config.localEmbeddings) {
+        store.setEmbedder(makeLocalEmbedder());
+        log('INFO', 'Embedding-based hybrid search enabled (local lexical fallback).');
+      }
+    });
 
   startCompressionTimer(config.compressionIntervalMinutes, config.idleTimeoutSeconds);
   startJanitorTimer();
@@ -864,26 +876,15 @@ export async function activate(context: vscode.ExtensionContext) {
       if (proactiveCooldown) return; // debounce
 
       const relPath = vscode.workspace.asRelativePath(doc.uri.fsPath);
-      const fileName = relPath.split('/').pop() ?? relPath;
       const all = store.getAllSessions();
-      const matches = all.filter((s) =>
-        s.keyFiles.some((sf) => {
-          const sfl = sf.toLowerCase();
-          const rfl = relPath.toLowerCase();
-          return (
-            sfl === rfl ||
-            sfl.endsWith('/' + rfl) ||
-            rfl.endsWith('/' + sfl) ||
-            sfl.split('/').pop() === fileName.toLowerCase()
-          );
-        }),
-      );
+      const matches = all.filter((s) => s.keyFiles.some((sf) => matchFilePath(sf, relPath)));
 
       if (matches.length > 0) {
         const count = matches.length;
         const latest = [...matches].sort((a, b) => b.endTime - a.endTime)[0];
         const ago = formatAgoSimple(latest.endTime);
-        const msg = `$(history) ${count} mem session${count > 1 ? 's' : ''} for ${fileName} · last: ${ago} — @mem /related`;
+        const baseName = relPath.split('/').pop() ?? relPath;
+        const msg = `$(history) ${count} mem session${count > 1 ? 's' : ''} for ${baseName} · last: ${ago} — @mem /related`;
         vscode.window.setStatusBarMessage(msg, 8000);
       }
 

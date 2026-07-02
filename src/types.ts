@@ -450,6 +450,33 @@ export interface PluginConfig {
    * with AES-256-GCM envelopes.
    */
   storageEncryption: 'off' | 'os-keychain' | 'passphrase';
+  /**
+   * OpenTelemetry export bridge (v1.13.0+). Outbound-only, fire-and-forget:
+   * when GHCP-MEM answers a query from local memory it exports a token-savings
+   * span to an OTLP/HTTP endpoint using gen_ai semantic conventions. Honors
+   * the no-ports / no-daemon constraint — the extension never opens a listener,
+   * it only POSTs to a collector you already run. Default disabled.
+   */
+  otel: OtelConfig;
+}
+
+/** Outbound OpenTelemetry (OTLP/HTTP) export settings. v1.13.0+. */
+export interface OtelConfig {
+  /** Master switch. When false, `emitSavedQuery` is a no-op (zero network I/O). */
+  enabled: boolean;
+  /**
+   * OTLP/HTTP base endpoint, e.g. `http://localhost:4318`. Spans are POSTed to
+   * `${endpoint}/v1/traces`. Empty string disables export even if `enabled`.
+   */
+  endpoint: string;
+  /**
+   * Attach the (redacted) query text as a span attribute. Off by default —
+   * only token counts and operation names are exported. Forced off in
+   * enterprise mode regardless of this setting.
+   */
+  captureContent: boolean;
+  /** Optional headers (e.g. auth) sent with every OTLP POST. */
+  headers: Record<string, string>;
 }
 
 /** A user-defined redaction rule injected via `ghcpMem.customRedactionRules`. */
@@ -536,6 +563,17 @@ export function getConfig(): PluginConfig {
     // accidentally drop every capture.
     qualityPersistFloor: clampNum(cfg.get('qualityPersistFloor', 0), 0, 1, 0),
     storageEncryption: normalizeStorageEncryption(cfg.get<string>('storageEncryption', 'off')),
+    otel: {
+      enabled: cfg.get('otel.enabled', false),
+      endpoint: (normalizeOptionalString(cfg.get<string>('otel.endpoint', '')) ?? '').replace(
+        /\/+$/,
+        '',
+      ),
+      // Enterprise mode forces content off (defense in depth) — export counts,
+      // never (even redacted) query text, when locked down.
+      captureContent: cfg.get('otel.captureContent', false) && !cfg.get('enterpriseMode', false),
+      headers: cfg.get<Record<string, string>>('otel.headers', {}),
+    },
   };
 }
 

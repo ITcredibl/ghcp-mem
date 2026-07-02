@@ -782,6 +782,29 @@
           "default": true,
           "markdownDescription": "Store a short redacted snippet for file edits. Disabled automatically in enterprise mode."
         },
+        "ghcpMem.otel.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Export a token-savings span to an OpenTelemetry (OTLP/HTTP) collector whenever GHCP-MEM answers a query from local memory. **Outbound only** — the extension never opens a port or listener, it only POSTs to a collector you already run (honoring the no-ports / no-daemon contract). Default `false`. Requires `ghcpMem.otel.endpoint`."
+        },
+        "ghcpMem.otel.endpoint": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "OTLP/HTTP base endpoint (e.g. `http://localhost:4318`). Spans are POSTed to `${endpoint}/v1/traces` using the gen_ai semantic conventions. Empty disables export even when `ghcpMem.otel.enabled` is on. No trailing slash needed."
+        },
+        "ghcpMem.otel.captureContent": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Attach the (redacted) query text as a span attribute. Off by default — only token counts and operation names are exported. Query text always passes through the standard redaction pipeline first, and this is forced off in enterprise mode regardless of the setting."
+        },
+        "ghcpMem.otel.headers": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Optional HTTP headers (e.g. `{ \"authorization\": \"Bearer …\" }`) sent with every OTLP export POST. Useful for authenticated collectors."
+        },
         "ghcpMem.allowMcpWriteAccess": {
           "type": "boolean",
           "default": false,

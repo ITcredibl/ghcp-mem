@@ -127,13 +127,18 @@ export class ContextProvider implements vscode.Disposable, CommandContext {
         const last = context.history[context.history.length - 1];
         const cmd = last instanceof vscode.ChatRequestTurn ? last.command : undefined;
         // Follow-up chips are declared once in commandRegistry.ts so they can
-        // never drift from the dispatch/help surfaces.
-        return getFollowups(cmd).map((chip) => ({
-          prompt: '',
-          command: chip.command,
-          label: chip.label,
-          participant: 'ghcp-mem',
-        }));
+        // never drift from the dispatch/help surfaces. Defensive filter: VS
+        // Code hard-rejects a followup whose label is empty ("Expected 'label'
+        // to be a non-empty string" in Runtime Status), so a bad registry
+        // entry must degrade to a missing chip, not an activation error.
+        return getFollowups(cmd)
+          .filter((chip) => typeof chip.label === 'string' && chip.label.trim().length > 0)
+          .map((chip) => ({
+            prompt: '',
+            command: chip.command,
+            label: chip.label,
+            participant: 'ghcp-mem',
+          }));
       },
     };
     this.disposables.push(p);

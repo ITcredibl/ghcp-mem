@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.16.2] — 2026-07-08
+
+Docs + defensive-hardening release: the marketing narrative now fully applies the customer-as-hero storytelling structure, and the chat followup provider gained a guard against the "Expected 'label' to be a non-empty string" error class.
+
+### Changed — README + Marketplace narrative (customer-as-hero structure, fully applied)
+The README was already loosely narrative-shaped; this pass completes the structure end-to-end without naming the framework in the doc:
+- **A named villain** — "the Context Tax" — introduced in the opening one-liner and recurring through the problem, stakes, and team sections, so every cost in the doc ladders to one memorable antagonist.
+- **The problem restated on three levels** — what it takes from your wallet/clock, what it takes from your head, and why it's simply wrong — under the villain heading.
+- **Empathy before authority** in the guide section: "We paid the Context Tax every morning too…" now leads; the 568-tests/benchmarks/provenance authority bullets follow.
+- **A named plan — "The 30-Second Memory Plan"** — re-sequenced around the v1.14 seeder: Install → Seed (30s) → Ask. Step 3 now cites the real-repo benchmark numbers (recall@5 75–98%) instead of the synthetic estimate. Followed by three explicit promises: local, redacted, auditable.
+- **A from→to transformation table** at the top of "What changes after you install": *the engineer who re-explains the project every morning → the engineer whose AI already knows, with receipts*.
+- **Direct call-to-action tightened** ("Get started" now walks install → seed → first search in 5 minutes) and the Marketplace `description` one-liner rewritten to the problem → solution → result formula: "GitHub Copilot forgets everything between chats. GHCP-MEM gives it a local, auditable memory — seeded from your git history in 30 seconds — so every chat starts where the last one ended."
+
+### Fixed — defensive guard for the followup 'label' error class
+`provideFollowups` now filters out any chip whose label is empty/whitespace before handing it to VS Code — a bad registry entry degrades to a missing chip instead of the hard "Expected 'label' to be a non-empty string" Runtime Status error. (The known instance of that error — the MCP contribution missing its `label` — was fixed in v1.16.1; an audit this release confirmed no other contribution carries an empty label. If you still see the error, your installed build predates v1.16.1: update the extension and reload the window.)
+
+### Test count
+568 tests, unchanged — no behavior changes beyond the defensive filter.
+
+---
+
 ## [1.16.1] — 2026-06-28
 
 Hotfix for the activation error visible in the extension's Runtime Status panel: **`Expected 'label' to be a non-empty string`** (reported from a live install).

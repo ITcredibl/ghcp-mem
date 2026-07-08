@@ -1,8 +1,8 @@
 {
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
-  "description": "A local, auditable session-memory layer for VS Code and GitHub Copilot, built for engineers who need persistent project context without relying on a cloud memory backend.",
-  "version": "1.16.1",
+  "description": "GitHub Copilot forgets everything between chats. GHCP-MEM gives it a local, auditable memory — seeded from your git history in 30 seconds — so every chat starts where the last one ended. No cloud backend, secrets redacted, every claim cited.",
+  "version": "1.16.2",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",

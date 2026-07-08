@@ -2,17 +2,18 @@
 
 ### You ship features. Your AI shouldn't have to relearn your project every morning.
 
-> **GHCP-MEM is a local, auditable engineering memory layer for GitHub Copilot
-> in VS Code.** It captures the decisions you made, the fixes you shipped, the
-> repo context you've already explained, and the deployment history you'd
-> otherwise have to recite to a fresh chat — **without sending any of it to a
-> third-party memory backend.**
+> **Every Copilot chat starts from zero — you pay the Context Tax: ten minutes
+> and thousands of tokens re-explaining a project you already explained
+> yesterday.** GHCP-MEM ends it. It gives Copilot a **local, auditable
+> engineering memory** — seeded from your git history in 30 seconds — so every
+> chat starts where the last one ended, and every claim shows its receipts.
 >
-> Every stored claim cites the events that produced it. Cloud identifiers are
-> redacted before they hit disk. Terminal commands are captured as metadata,
-> not full arguments. Routes most "what / why / how" questions to a
-> millisecond local lookup instead of a fresh Copilot completion — so your
-> token budget goes to shipping, not catching up.
+> Nothing leaves your machine: no cloud memory backend, secrets and cloud
+> identifiers redacted before they hit disk, optional AES-256-GCM encryption
+> at rest. Every stored decision cites the events that produced it. Most
+> "what / why / how" questions route to a millisecond local lookup instead of
+> a fresh Copilot completion — your token budget goes to shipping, not
+> catching up.
 
 **Local-first · Copilot chat participant · MCP stdio · Redaction-first**
 
@@ -45,23 +46,27 @@
 
 ---
 
-## The problem you're actually solving
+## The villain: the Context Tax
 
-Every new Copilot chat is a fresh amnesia, and it costs you in several ways:
+Every new Copilot chat is a fresh amnesia. The Context Tax is what it collects from you, every single day:
 
+**What it takes from your wallet and your clock**
 - Copilot re-reads files just to figure out *"what is this project?"* — 2,000–10,000 tokens before you've asked a real question.
 - You re-explain the same architecture decisions, week after week.
-- Even when memory tools "remember" something, you can't audit *why* — so when the AI is subtly wrong, you don't know it.
+
+**What it takes from your head**
 - The first ten minutes of every chat feel like onboarding the same intern, again.
-- You start second-guessing AI suggestions because they might be from a memory layer that's hallucinating context you can't verify.
+- You start second-guessing AI suggestions because they might come from a memory layer that's hallucinating context you can't verify.
 - You stop trusting the tool — and silently revert to copy-paste prompting.
-- **AI should remember the work you've already done — and prove what it remembers.** A coding assistant without provenance is a coworker with confident amnesia: the worst kind to work with.
+
+**Why it's simply wrong**
+- **A tool that forgets your work disrespects your work.** AI should remember what you've already done — and prove what it remembers. A coding assistant without provenance is a coworker with confident amnesia: the worst kind to work with.
 
 ---
 
 ## Why we built this
 
-We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything, a market full of "memory" tools that wanted ports, sidecars, vector databases, or cloud sync — and not one of them showing receipts for what they claimed to remember.
+We paid the Context Tax every morning too. We know the exact feeling of typing the same architecture explanation for the fourth Monday in a row — and the quiet distrust when a "memory" tool confidently asserted something we couldn't verify. We shopped the market and found tools that wanted ports, sidecars, vector databases, or cloud sync — and not one of them showing receipts for what they claimed to remember.
 
 **GHCP-MEM is what we shipped instead.** It's the memory layer we wanted: **local-first, evidence-grounded, self-routing.** Built specifically for VS Code + Copilot, then extended to every MCP-compatible agent (Cursor, Cline, Windsurf, Claude Desktop, Copilot CLI) through one stdio server.
 
@@ -75,18 +80,19 @@ We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything
 
 ---
 
-## Up and running in 3 steps
+## The 30-Second Memory Plan
 
 | Step | What you do | What GHCP-MEM does |
 |---|---|---|
 | **1. Install** | One click from the Marketplace, or `code --install-extension ITcredibl.ghcp-mem` | Activates on next VS Code launch. Zero config required. |
-| **2. Code normally** | Edit files, run terminals, push commits — your usual day | Captures events locally, redacts secrets, compresses sessions through your own Copilot subscription |
-| **3. Open a new chat** | Type `@mem` or just ask your usual question | Copilot starts with the prior session's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent* — which is where the headline token-cost reduction comes from. The synthetic benchmark estimates 5–20× savings on this query class; results on your real repo will vary with query mix. |
+| **2. Seed** | Accept the one-click prompt (or run **`GHCP-MEM: Seed Memory from Git History...`**) | Mines your repo's last 200 commits into searchable, redacted sessions in ~30 seconds — months of decisions, fixes, and deploys, remembered on day one |
+| **3. Ask** | Open Copilot Chat: `@mem /search why did we switch to X` — or just ask your usual question | Copilot starts with your project's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent*. On [real-repo benchmarks](docs/BENCHMARKS-REAL.md): recall@5 of 75–98%, p95 under 40ms at 10,000 sessions. |
+
+From then on it just captures as you work — edits, terminals, diagnostics, deploys — and every new chat starts caught up.
+
+**Our three promises while it runs:** everything stays **local** (no memory backend, zero open ports) · everything is **redacted** before it touches disk (26 rules + entropy catch-all + optional encryption at rest) · everything is **auditable** (every claim cites its evidence; `/compliance` prints the proof).
 
 That's it. No daemon to keep running. No cloud account to register. No vector DB to provision.
-
-> [!TIP]
-> **Don't want to wait for memory to accumulate?** Run **`GHCP-MEM: Seed Memory from Git History...`** (v1.14+) — it mines your repo's last 200 commits into searchable, redacted sessions in ~30 seconds. `@mem /search why did we switch to X` works on day one.
 
 <p align="center">
   <a href="https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem">
@@ -98,7 +104,7 @@ That's it. No daemon to keep running. No cloud account to register. No vector DB
 
 ## The cost of doing nothing
 
-Without a memory layer that proves itself, the cost compounds session by session:
+Ignore it, and the Context Tax doesn't stay flat — it compounds, session by session:
 
 | If you don't act | What it costs you |
 |---|---|
@@ -111,6 +117,13 @@ Without a memory layer that proves itself, the cost compounds session by session
 ---
 
 ## What changes after you install
+
+| Before | After |
+|---|---|
+| The engineer who re-explains the project every morning | The engineer whose AI already knows — with receipts |
+| "Let me find that decision…" (20 minutes of git archaeology) | `@mem /search why did we switch` (500 tokens, 2 seconds) |
+| Trusting AI memory on faith | Auditing AI memory on evidence — every claim cites its source |
+| Paying the Context Tax daily | Spending those tokens on shipping |
 
 With GHCP-MEM in place:
 
@@ -263,12 +276,12 @@ Or connect the bundled MCP server from clients like Cursor, Cline, Windsurf, Cla
 
 ## Get started
 
-Stop burning tokens on catch-up. Install GHCP-MEM and capture your first snapshot:
+Stop paying the Context Tax. Five minutes from install to proof:
 
 1. Install **GHCP-MEM**
-2. Open any workspace
-3. Run **`GHCP-MEM: Capture Session Snapshot Now`**
-4. Open Copilot Chat and try **`@mem /recent`**
+2. Open any workspace with git history and accept the **Seed from Git History** prompt (~30s)
+3. Open Copilot Chat and try **`@mem /search <something you shipped last month>`**
+4. Run **`GHCP-MEM: Capture Session Snapshot Now`** to capture today's work too
 5. Run **`@mem /savings`** after a few sessions to see session-by-session and lifetime token-savings _estimates_
 
 <details>
@@ -292,14 +305,14 @@ If your machine is locked down, air-gapped, or subject to data residency rules, 
 
 ## Why teams need this
 
-Without persistent session memory, every session charges the same hidden tax:
+Without persistent session memory, the Context Tax bills every engineer on the team, every session:
 
 - tokens burned re-explaining what the project does
 - tokens burned re-establishing architecture and patterns
 - tokens burned re-learning why a decision was made
 - more tokens spent on the same work, slower progress, worse answers
 
-GHCP-MEM eliminates that tax. **The tokens you stop wasting on catch-up are the tokens that get your work done.**
+GHCP-MEM ends that tax. **The tokens you stop wasting on catch-up are the tokens that get your work done.**
 
 ---
 
@@ -759,4 +772,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.16.1** · local-first memory for Copilot</sub>
+<sub>**v1.16.2** · local-first memory for Copilot</sub>

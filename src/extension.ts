@@ -30,6 +30,11 @@ import { MemoryTimelinePanel } from './timelinePanel';
 import { SessionCodeLensProvider } from './sessionCodeLens';
 import { refreshPolicyRedactionRules } from './policySource';
 import { getRepoScope } from './repoScope';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { gitLogArgs, parseGitLog, commitsToSessions } from './gitHistorySeeder';
+
+const execFileAsync = promisify(execFile);
 
 let capture: SessionCapture;
 let compressor: ContextCompressor;
@@ -104,6 +109,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
   await syncPolicySource();
   await maybeShowPrivacyWizard(context);
+  // v1.14.0: kill the cold-start problem. If the store is empty and this
+  // workspace is a git repo, offer to backfill memory from git history so
+  // `@mem` answers real questions 30 seconds after install instead of after
+  // days of live capture. Fire-and-forget: never blocks activation.
+  void maybeOfferGitHistorySeed(context);
 
   capture.start();
   provider.register();
@@ -1104,6 +1114,22 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // v1.14.0: git-history seeding — palette entry point.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ghcpMem.seedFromGitHistory', async () => {
+      const raw = await vscode.window.showInputBox({
+        prompt: 'How many commits back should GHCP-MEM mine? (1–1000)',
+        value: '200',
+        validateInput: (v) =>
+          /^\d+$/.test(v.trim()) && +v.trim() >= 1 && +v.trim() <= 1000
+            ? undefined
+            : 'Enter a number between 1 and 1000',
+      });
+      if (!raw) return;
+      await seedFromGitHistory(Number.parseInt(raw.trim(), 10));
+    }),
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand('ghcpMem.auditSensitiveData', async () => {
       const { runWorkspaceAudit, formatAuditReport, sensitiveDataRule } =
@@ -1674,6 +1700,96 @@ function updateStatusBar(): void {
     `Total redactions: ${stats.totalRedactions}`,
     'Click to capture a snapshot',
   ].join('\n');
+}
+
+/**
+ * v1.14.0 first-run offer: when the store is empty and the workspace is a
+ * git repo, offer a one-click backfill from git history. Asked at most once
+ * per repo (keyed on repoScope in globalState) so it never nags.
+ */
+async function maybeOfferGitHistorySeed(context: vscode.ExtensionContext): Promise<void> {
+  try {
+    if (store.getAllSessions().length > 0) return;
+    const scope = await getRepoScope();
+    if (!scope.id || scope.id === 'no-workspace') return;
+    const key = `ghcpMem.gitSeedOffered.${scope.id}`;
+    if (context.globalState.get<boolean>(key)) return;
+    await context.globalState.update(key, true);
+    const choice = await vscode.window.showInformationMessage(
+      'GHCP-MEM: memory is empty, but your git history already holds months of decisions and fixes. Seed memory from it now? (~30s, fully local, redacted)',
+      'Seed from Git History',
+      'Not now',
+    );
+    if (choice === 'Seed from Git History') {
+      await seedFromGitHistory(200);
+    }
+  } catch {
+    /* first-run offer is best-effort — never surface errors on activation */
+  }
+}
+
+/**
+ * Mine the current repo's git log into redacted, deduped sessions.
+ * Idempotent: seeded sessions carry deterministic content hashes, and
+ * ContextStore.addSession dedups on contentHash — re-running is a no-op.
+ */
+async function seedFromGitHistory(maxCommits: number): Promise<void> {
+  const wsF = vscode.workspace.workspaceFolders?.[0];
+  if (!wsF) {
+    vscode.window.showWarningMessage('GHCP-MEM: No workspace open.');
+    return;
+  }
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'GHCP-MEM: mining git history…',
+      cancellable: false,
+    },
+    async (progress) => {
+      let stdout: string;
+      try {
+        ({ stdout } = await execFileAsync('git', gitLogArgs(maxCommits), {
+          cwd: wsF.uri.fsPath,
+          maxBuffer: 32 * 1024 * 1024,
+        }));
+      } catch {
+        vscode.window.showWarningMessage(
+          'GHCP-MEM: `git log` failed — is this workspace a git repository?',
+        );
+        return;
+      }
+      const commits = parseGitLog(stdout);
+      if (commits.length === 0) {
+        vscode.window.showInformationMessage('GHCP-MEM: No commits found to seed from.');
+        return;
+      }
+      progress.report({ message: `classifying ${commits.length} commits…` });
+      const scope = await getRepoScope();
+      const result = commitsToSessions(commits, {
+        workspaceId: wsF.uri.toString(),
+        workspaceName: wsF.name,
+        repoScope: scope.id !== 'no-workspace' ? scope.id : undefined,
+        repoScopeLabel: scope.label,
+      });
+      progress.report({ message: `storing ${result.sessions.length} sessions…` });
+      const before = store.getAllSessions().length;
+      // Oldest-first so the store's newest-wins ordering matches reality.
+      for (const s of [...result.sessions].sort((a, b) => a.startTime - b.startTime)) {
+        await store.addSession(s);
+      }
+      const added = store.getAllSessions().length - before;
+      tree.refresh();
+      updateStatusBar();
+      const skipNote =
+        result.commitsSkipped > 0 ? ` (${result.commitsSkipped} low-signal commits skipped)` : '';
+      const redactNote =
+        result.redactionCount > 0 ? ` ${result.redactionCount} secret(s) redacted.` : '';
+      vscode.window.showInformationMessage(
+        `GHCP-MEM: Seeded ${added} session(s) from ${result.commitsConsidered} commits${skipNote}.${redactNote} Try: @mem /search <topic>`,
+      );
+      if (added > 0) void recordSuccessAndMaybePromptForRating();
+    },
+  );
 }
 
 async function maybeShowPrivacyWizard(context: vscode.ExtensionContext): Promise<void> {

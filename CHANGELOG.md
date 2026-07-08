@@ -6,6 +6,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.14.0] — 2026-06-28
+
+**The cold-start killer.** Until now GHCP-MEM was worthless on day one: value accrued only after days of live capture, but users decide whether to keep an extension in the first five minutes. Meanwhile the repo's own git history already holds months of decisions, fixes, and deployment context. v1.14.0 mines it.
+
+### Added — `GHCP-MEM: Seed Memory from Git History...`
+New palette command (and one-time first-run offer when the store is empty in a git repo): mines the last N commits (default 200, max 1000) into ready-to-search sessions in ~30 seconds, fully local. `@mem /search why did we switch to X` answers on the day you install.
+
+How the mining works (`src/gitHistorySeeder.ts`, pure vscode-free module):
+- **One session per (calendar day × author) streak, not per commit** — a day of commits reads like a real captured session and keeps the seeded row count well under `maxStoredSessions`.
+- **Conventional-commit classification** — `feat:`→feature, `fix:`/`revert:`→bugfix, `ci:`→infra, `release:`→deployment, etc., with keyword heuristics for free-form subjects (CVE/security, terraform/k8s→infra, …). Seeded and live-captured sessions filter identically.
+- **Decision extraction** — subjects/bodies matching decision-bearing phrasing ("switch to", "instead of", "migrate from", "standardize on", "drop support", …) are promoted into `decisions`; merge-PR commits read the body, not the "Merge pull request #N" boilerplate.
+- **Full redaction** — every summary/decision passes through the same redactor as live capture (named rules + high-entropy detector), so a secret pasted into a commit message years ago never reaches the store. The seeded sessions carry an accurate `redactionCount`.
+- **Idempotent by construction** — deterministic content hashes + the store's existing contentHash dedup mean re-running the seeder is a no-op. Same guarantee the Azure demo seeder has.
+- **Honestly labelled** — seeded sessions are `compressorMode: 'fallback'` with confidence 0.55 and tags `git-history`/`seeded`, so live evidence-grounded memory outranks reconstructed history when both match a query, and users can filter or bulk-delete seeded rows by tag.
+
+### Added — first-run seed offer
+On activation with an empty store in a git repo, a one-time notification offers the seed (tracked per-repo in globalState — it never re-nags). The in-product rating prompt now also fires after a successful seed, i.e. at the wow-moment rather than after N days.
+
+### Security posture
+- `git log` runs via `execFile` (no shell), with the format string and parser co-located (`gitLogArgs()`) so they can't drift.
+- Seeded sessions respect the pre-persist quality gate and all existing store limits (count cap, size cap, retention).
+
+### Test count
+**547 tests** (was 532 → +15 in `src/test/gitHistorySeeder.test.ts`: log parsing incl. malformed records, conventional + heuristic classification, decision extraction incl. merge-PR body handling, day×author grouping, deterministic-hash idempotency, secret redaction in commit messages, low-signal skipping, maxSessions cap, honest-labelling assertions).
+
+---
+
 ## [1.13.0] — 2026-06-28
 
 Enterprise-trust hardening. Seven independent items from a thorough external review of v1.12.0 — each item closes a real disclosure surface, lowers default capture noise, or makes operational state visible to security reviewers. **Breaking** for two defaults (terminal capture mode + Azure context preservation); both shift toward the safer posture and have explicit opt-out flags. All 532 tests pass.

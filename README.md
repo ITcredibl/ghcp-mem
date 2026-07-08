@@ -67,7 +67,7 @@ We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything
 
 **Why it's worth your trust:**
 
-- **532 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **547 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Nine documented engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -84,6 +84,9 @@ We built GHCP-MEM because we hit the same wall: a Copilot that forgot everything
 | **3. Open a new chat** | Type `@mem` or just ask your usual question | Copilot starts with the prior session's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent* — which is where the headline token-cost reduction comes from. The synthetic benchmark estimates 5–20× savings on this query class; results on your real repo will vary with query mix. |
 
 That's it. No daemon to keep running. No cloud account to register. No vector DB to provision.
+
+> [!TIP]
+> **Don't want to wait for memory to accumulate?** Run **`GHCP-MEM: Seed Memory from Git History...`** (v1.14+) — it mines your repo's last 200 commits into searchable, redacted sessions in ~30 seconds. `@mem /search why did we switch to X` works on day one.
 
 <p align="center">
   <a href="https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem">
@@ -756,4 +759,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.13.0** · local-first memory for Copilot</sub>
+<sub>**v1.14.0** · local-first memory for Copilot</sub>

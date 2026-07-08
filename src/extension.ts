@@ -163,19 +163,39 @@ export async function activate(context: vscode.ExtensionContext) {
   const lmAny = vscode.lm as any;
   if (typeof lmAny.registerMcpServerDefinitionProvider === 'function') {
     const mcpBin = context.asAbsolutePath('out/mcpServer.js');
+    // Build one stdio definition in the OFFICIAL API shape. v1.16.0 and
+    // earlier implemented a nonexistent `resolve()` method returning a
+    // nested `{command: {command, args}}` object — VS Code never called it,
+    // and the missing contribution `label` surfaced as "Expected 'label' to
+    // be a non-empty string" in Runtime Status at every activation (v1.16.1
+    // fix). The correct surface is `provideMcpServerDefinitions()` returning
+    // flat definitions, ideally via the McpStdioServerDefinition class.
+    const buildDefinition = () => {
+      // With encryption on, the headless MCP server needs the key to read the
+      // sessions.json envelope. Passed via child-process env only — never
+      // written to any config file on disk.
+      const env: Record<string, string> = storageEncryptionActive
+        ? { GHCP_MEM_KEY: storageEncryptionActive.key.toString('hex') }
+        : {};
+      const StdioDef = (vscode as unknown as Record<string, any>).McpStdioServerDefinition;
+      if (typeof StdioDef === 'function') {
+        return new StdioDef('GHCP-MEM Session Memory', process.execPath, [mcpBin], env);
+      }
+      // Older hosts without the class accept a structurally-equivalent object.
+      return {
+        label: 'GHCP-MEM Session Memory',
+        command: process.execPath,
+        args: [mcpBin],
+        env,
+      };
+    };
     context.subscriptions.push(
       lmAny.registerMcpServerDefinitionProvider('ghcp-mem.mcp', {
-        resolve() {
-          // With encryption on, the headless MCP server needs the key to read
-          // the sessions.json envelope. Passed via env to the child process —
-          // never written to any config file on disk.
-          const env = storageEncryptionActive
-            ? { GHCP_MEM_KEY: storageEncryptionActive.key.toString('hex') }
-            : undefined;
-          return {
-            label: 'GHCP-MEM',
-            command: { command: process.execPath, args: [mcpBin], ...(env ? { env } : {}) },
-          };
+        provideMcpServerDefinitions() {
+          return [buildDefinition()];
+        },
+        resolveMcpServerDefinition(server: unknown) {
+          return server;
         },
       }),
     );

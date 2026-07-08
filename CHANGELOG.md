@@ -6,6 +6,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.16.1] — 2026-06-28
+
+Hotfix for the activation error visible in the extension's Runtime Status panel: **`Expected 'label' to be a non-empty string`** (reported from a live install).
+
+### Fixed — MCP server definition provider was mis-registered (two related bugs)
+- **`package.json`**: the `mcpServerDefinitionProviders` contribution declared only an `id` — the contribution point requires a `label`, and VS Code surfaced the missing field as an activation error message on every startup. Now: `"label": "GHCP-MEM Session Memory"`.
+- **`src/extension.ts`**: the provider object implemented a nonexistent `resolve()` method returning a nested `{ command: { command, args } }` shape. VS Code never calls that method — meaning the extension-registered MCP definition list was silently empty (external clients configured by hand were unaffected, which is why this went unnoticed). Rewritten to the official surface: `provideMcpServerDefinitions()` returning a flat definition built with the `McpStdioServerDefinition` class when the host provides it (structurally-equivalent plain object on older hosts), plus a pass-through `resolveMcpServerDefinition()`.
+- The v1.16.0 `GHCP_MEM_KEY` env injection for encrypted stores now rides the corrected definition shape (child-process env only — never written to disk).
+
+### Impact
+After updating, the Runtime Status error disappears and VS Code's native MCP integration can actually discover the GHCP-MEM stdio server from the extension — including on encrypted stores.
+
+---
+
 ## [1.16.0] — 2026-06-28
 
 **Encrypted local storage — the last enterprise blocker, closed.** Every review since v1.6 raised the same objection: session records sit in plaintext in `~/.ghcp-mem/sessions.json`, the globalState SQLite, and rolling backups. All three surfaces are now AES-256-GCM envelopes when `ghcpMem.storageEncryption` is enabled.

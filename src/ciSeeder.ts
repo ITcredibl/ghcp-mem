@@ -27,6 +27,12 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { redact } from './redactor';
+import {
+  isEncryptedEnvelope,
+  deserializeDb,
+  serializeDb,
+  parseEnvelopeHeader,
+} from './storageCrypto';
 import type { ContextDatabase, CompressedSession, ObservationType } from './types';
 
 interface CISeedPayload {
@@ -72,9 +78,31 @@ async function main(): Promise<void> {
     const storePath = join(storeDir, 'sessions.json');
 
     let db: ContextDatabase;
+    // v1.16.0: the store may be an encrypted envelope (ghcpMem.storageEncryption).
+    // Never clobber it with plaintext: with GHCP_MEM_KEY we decrypt-merge-reencrypt;
+    // without it we abort loudly so a CI misconfiguration can't destroy data.
+    let encKey: Buffer | undefined;
+    let encMode: 'os-keychain' | 'passphrase' | undefined;
+    let encSalt: Buffer | undefined;
     try {
       const content = await fs.readFile(storePath, 'utf-8');
-      db = JSON.parse(content);
+      if (isEncryptedEnvelope(content)) {
+        const hex = process.env.GHCP_MEM_KEY?.trim();
+        encKey = hex && /^[0-9a-f]{64}$/i.test(hex) ? Buffer.from(hex, 'hex') : undefined;
+        const parsed = encKey ? deserializeDb<ContextDatabase>(content, encKey) : null;
+        if (!parsed) {
+          console.error(
+            '[GHCP-MEM-CI] sessions.json is encrypted but GHCP_MEM_KEY is missing or wrong. Refusing to overwrite. Aborting.',
+          );
+          process.exit(1);
+        }
+        const header = parseEnvelopeHeader(content);
+        encMode = header?.mode;
+        encSalt = header?.salt ? Buffer.from(header.salt, 'hex') : undefined;
+        db = parsed;
+      } else {
+        db = JSON.parse(content);
+      }
     } catch {
       // Initialize fresh store if file doesn't exist or is unreadable
       db = { version: 1, sessions: [], lastUpdated: Date.now(), observations: [] };
@@ -154,7 +182,10 @@ async function main(): Promise<void> {
     }
 
     const tmpPath = `${storePath}.${process.pid}.tmp`;
-    await fs.writeFile(tmpPath, JSON.stringify(db, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    await fs.writeFile(tmpPath, serializeDb(db, encKey, encMode, encSalt), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
     await fs.rename(tmpPath, storePath);
 
     try {

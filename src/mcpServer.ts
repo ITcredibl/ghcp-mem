@@ -47,6 +47,7 @@ import { buildMermaidGraph } from './graphExport';
 import { recommend } from './router';
 import { rankLessons } from './lessons';
 import { redact } from './redactor';
+import { deserializeDb, isEncryptedEnvelope } from './storageCrypto';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'ghcp-mem';
@@ -136,12 +137,42 @@ function storePath(): string {
 // file atomically via rename, so mtime changes monotonically per write.
 let dbCache: { mtimeMs: number; db: StoredDatabase } | undefined;
 
+let warnedEncryptedNoKey = false;
+
+/**
+ * Resolve the store decryption key for the headless server. With
+ * `ghcpMem.storageEncryption` enabled, the VS Code extension injects
+ * GHCP_MEM_KEY (hex) into the MCP server definition it registers; external
+ * clients (Claude Desktop, Cursor configured by hand) must set it in their
+ * server env block — `GHCP-MEM: Show External MCP Client Config` explains how.
+ */
+function storeKeyFromEnv(): Buffer | undefined {
+  const hex = process.env.GHCP_MEM_KEY?.trim();
+  if (!hex || !/^[0-9a-f]{64}$/i.test(hex)) return undefined;
+  return Buffer.from(hex, 'hex');
+}
+
 async function loadDatabase(): Promise<StoredDatabase> {
   const p = storePath();
   try {
     const stat = await fs.stat(p);
     if (dbCache && dbCache.mtimeMs === stat.mtimeMs) return dbCache.db;
     const raw = await fs.readFile(p, 'utf8');
+    if (isEncryptedEnvelope(raw)) {
+      const parsedEnc = deserializeDb<StoredDatabase>(raw, storeKeyFromEnv());
+      if (!parsedEnc) {
+        if (!warnedEncryptedNoKey) {
+          warnedEncryptedNoKey = true;
+          console.error(
+            '[ghcp-mem-mcp] sessions.json is encrypted (ghcpMem.storageEncryption) but GHCP_MEM_KEY is missing or wrong. ' +
+              'Set GHCP_MEM_KEY (64 hex chars) in this MCP server\'s env block — run "GHCP-MEM: Show External MCP Client Config" in VS Code for the exact snippet.',
+          );
+        }
+        return { version: 2, sessions: [], lastUpdated: 0 };
+      }
+      dbCache = { mtimeMs: stat.mtimeMs, db: parsedEnc };
+      return parsedEnc;
+    }
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.sessions)) {
       dbCache = { mtimeMs: stat.mtimeMs, db: parsed };

@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "A local, auditable session-memory layer for VS Code and GitHub Copilot, built for engineers who need persistent project context without relying on a cloud memory backend.",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -210,6 +210,11 @@
         "command": "ghcpMem.seedFromGitHistory",
         "title": "GHCP-MEM: Seed Memory from Git History...",
         "icon": "$(git-commit)"
+      },
+      {
+        "command": "ghcpMem.copyMcpEncryptionKey",
+        "title": "GHCP-MEM: Copy MCP Encryption Key (GHCP_MEM_KEY)...",
+        "icon": "$(key)"
       }
     ],
     "viewsContainers": {
@@ -749,6 +754,21 @@
           ],
           "default": "summary-only",
           "markdownDescription": "How much of the auto-captured Azure control-plane context to preserve on disk. **Default `summary-only` (since v1.13.0)**: subscriptionId/tenantId/RG/resource IDs are stored as opaque tags, but the human-readable subsystems list + notes stay. Use **`full`** to restore pre-v1.13 capture (audit risk for regulated teams); use **`none`** to skip Azure context entirely."
+        },
+        "ghcpMem.storageEncryption": {
+          "type": "string",
+          "enum": [
+            "off",
+            "os-keychain",
+            "passphrase"
+          ],
+          "enumDescriptions": [
+            "Plaintext store (pre-v1.16 behavior).",
+            "AES-256-GCM with a random key held in VS Code Secret Storage (OS keychain–backed). No prompts after first enable. Recommended.",
+            "AES-256-GCM with a key derived from a passphrase you enter once per VS Code session (scrypt). If you forget the passphrase the store is unrecoverable."
+          ],
+          "default": "off",
+          "markdownDescription": "Encrypt the memory store at rest (v1.16.0+): the globalState payload, `~/.ghcp-mem/sessions.json`, and rolling backups become AES-256-GCM envelopes. Migration is automatic in both directions. **External MCP clients need `GHCP_MEM_KEY` in their env block once this is on** — run `GHCP-MEM: Show External MCP Client Config` for the snippet. Losing the OS-keychain entry or forgetting the passphrase makes the store unrecoverable (use `GHCP-MEM: Clear All Stored Context` to start fresh)."
         },
         "ghcpMem.qualityPersistFloor": {
           "type": "number",

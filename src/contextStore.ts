@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { CompressedSession, ContextDatabase, ObservationType, getConfig } from './types';
 import { cosineSim, EmbeddingFn } from './embeddings';
 import { redact } from './redactor';
+import { serializeDb, deserializeDb, EncryptionMode } from './storageCrypto';
 import {
   extractTerms as sharedExtractTerms,
   keywordScore as sharedKeywordScore,
@@ -36,6 +37,10 @@ import {
 } from './adaptiveWeights';
 import { Lesson } from './lessons';
 const DB_KEY = 'ghcpMem.contextDatabase';
+// Encrypted-at-rest variant (v1.16.0): a string envelope replaces the plain
+// object under this separate key so up/downgrades between modes can never
+// mistake one format for the other.
+const DB_KEY_ENC = 'ghcpMem.contextDatabase.enc';
 const ADAPTIVE_KEY = 'ghcpMem.adaptiveWeights';
 const DB_VERSION = 2;
 const MAX_BACKUPS = 5;
@@ -103,9 +108,18 @@ export class ContextStore implements vscode.Disposable {
   /** Queue to serialize syncToDisk calls and prevent interleaved writes. */
   private syncQueue: Promise<void> = Promise.resolve();
 
+  /**
+   * Set when the stored payload is encrypted but no (or the wrong) key was
+   * supplied. Every write path becomes a no-op so a locked-out session can
+   * never clobber the encrypted data with an empty database. activate()
+   * verifies the key before construction, so this is a defensive backstop.
+   */
+  private encryptionLockedOut = false;
+
   constructor(
     private readonly globalState: vscode.Memento,
     private readonly backupDir?: vscode.Uri,
+    private readonly encryption?: { key: Buffer; mode: EncryptionMode; salt?: Buffer },
   ) {
     this.db = this.load();
     // Chunk index rebuild to avoid blocking the extension host on large stores.
@@ -136,7 +150,57 @@ export class ContextStore implements vscode.Disposable {
     return !!this.embedder;
   }
 
+  /** True when writes are suspended to protect an undecryptable store. */
+  get isEncryptionLockedOut(): boolean {
+    return this.encryptionLockedOut;
+  }
+
+  /**
+   * Serialize the current db in the store's active format — encrypted
+   * envelope when a key is configured, compact JSON otherwise. Single choke
+   * point shared by globalState, the disk mirror, and backups.
+   */
+  private serializeDbString(db: ContextDatabase = this.db): string {
+    return serializeDb(db, this.encryption?.key, this.encryption?.mode, this.encryption?.salt);
+  }
+
+  /** Parse a raw payload in either format (used by backup restore + tests). */
+  parseSerializedDb(raw: string): ContextDatabase | null {
+    return deserializeDb<ContextDatabase>(raw, this.encryption?.key);
+  }
+
+  /** Route every globalState write through the format-aware path. */
+  private async writeGlobalState(): Promise<void> {
+    if (this.encryptionLockedOut) return;
+    if (this.encryption) {
+      await this.globalState.update(DB_KEY_ENC, this.serializeDbString());
+      // Remove the plaintext copy — this is the migration step. Runs on every
+      // encrypted write, which makes it idempotent and crash-safe.
+      await this.globalState.update(DB_KEY, undefined);
+    } else {
+      await this.globalState.update(DB_KEY, this.db);
+      await this.globalState.update(DB_KEY_ENC, undefined);
+    }
+  }
+
   private load(): ContextDatabase {
+    // Encrypted payload takes precedence — its presence means the last
+    // writer had encryption on.
+    const enc = this.globalState.get<string>(DB_KEY_ENC);
+    if (typeof enc === 'string' && enc.length > 0) {
+      const parsed = deserializeDb<ContextDatabase>(enc, this.encryption?.key);
+      if (parsed && Array.isArray(parsed.sessions)) {
+        if (parsed.version === DB_VERSION) return parsed;
+        return { version: DB_VERSION, sessions: parsed.sessions, lastUpdated: Date.now() };
+      }
+      // Encrypted data exists but we can't read it: fail CLOSED. Suspend all
+      // writes so this session can never overwrite the real store.
+      this.encryptionLockedOut = true;
+      console.error(
+        '[GHCP-MEM] store is encrypted but no valid key was supplied — running read-less and write-suspended. Check ghcpMem.storageEncryption.',
+      );
+      return { version: DB_VERSION, sessions: [], lastUpdated: Date.now() };
+    }
     const stored = this.globalState.get<ContextDatabase>(DB_KEY);
     if (stored && stored.version === DB_VERSION) return stored;
     // Migration path — best effort
@@ -227,7 +291,7 @@ export class ContextStore implements vscode.Disposable {
           const current = this.db.sessions.find((s) => s.id === targetId);
           if (!current) return; // evicted between scheduling and resolution
           current.embedding = vec;
-          this.globalState.update(DB_KEY, this.db).then(undefined, () => {});
+          this.writeGlobalState().then(undefined, () => {});
         })
         .catch(() => {});
     }
@@ -1450,12 +1514,13 @@ export class ContextStore implements vscode.Disposable {
   }
 
   private async persist(): Promise<void> {
+    if (this.encryptionLockedOut) return; // never clobber an unreadable encrypted store
     try {
       await this.writeBackup(this.db);
     } catch (err) {
       console.warn('[GHCP-MEM] backup failed:', err);
     }
-    await this.globalState.update(DB_KEY, this.db);
+    await this.writeGlobalState();
     // Best-effort mirror to ~/.ghcp-mem/sessions.json so the standalone
     // MCP server (used by Cursor/Cline/Windsurf) can read our store.
     // Serialised through a queue to prevent interleaved writes from rapid
@@ -1508,7 +1573,8 @@ export class ContextStore implements vscode.Disposable {
       }
       const finalPath = path.join(dir, 'sessions.json');
       const tmpPath = `${finalPath}.${process.pid}.tmp`;
-      await fs.writeFile(tmpPath, JSON.stringify(this.db), { encoding: 'utf8', mode: 0o600 });
+      if (this.encryptionLockedOut) return;
+      await fs.writeFile(tmpPath, this.serializeDbString(), { encoding: 'utf8', mode: 0o600 });
       await fs.rename(tmpPath, finalPath);
       // Ensure permissions if the file already existed with wrong mode.
       try {
@@ -1535,7 +1601,7 @@ export class ContextStore implements vscode.Disposable {
       const now = new Date();
       const stamp = now.toISOString().replace(/[:.]/g, '-');
       const file = vscode.Uri.joinPath(this.backupDir, `ghcp-mem-${stamp}.json`);
-      await vscode.workspace.fs.writeFile(file, Buffer.from(JSON.stringify(db), 'utf-8'));
+      await vscode.workspace.fs.writeFile(file, Buffer.from(this.serializeDbString(db), 'utf-8'));
       // Prune old backups
       const entries = await vscode.workspace.fs.readDirectory(this.backupDir);
       const backups = entries
@@ -1572,9 +1638,12 @@ export class ContextStore implements vscode.Disposable {
   /** Restore the database from a backup file. Replaces current contents. */
   async restoreFromBackup(uri: vscode.Uri): Promise<number> {
     const bytes = await vscode.workspace.fs.readFile(uri);
-    const parsed = JSON.parse(Buffer.from(bytes).toString('utf-8')) as ContextDatabase;
+    // Backups written since v1.16.0 may be encrypted envelopes.
+    const parsed = this.parseSerializedDb(Buffer.from(bytes).toString('utf-8'));
     if (!parsed || !Array.isArray(parsed.sessions)) {
-      throw new Error('Invalid backup file');
+      throw new Error(
+        'Invalid backup file (or an encrypted backup without the matching key — check ghcpMem.storageEncryption)',
+      );
     }
     // Re-run redaction on restore — consistent with importFromJson and importPack.
     const r = (txt: string) => redact(txt, { redactSecrets: true, honorPrivateTags: true }).text;
@@ -1589,7 +1658,7 @@ export class ContextStore implements vscode.Disposable {
     );
     this.db = { version: DB_VERSION, sessions: sanitized, lastUpdated: Date.now() };
     await this.rebuildIndexAsync();
-    await this.globalState.update(DB_KEY, this.db);
+    await this.writeGlobalState();
     this.onChangeEmitter.fire();
     return this.db.sessions.length;
   }

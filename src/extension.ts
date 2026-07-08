@@ -33,6 +33,13 @@ import { getRepoScope } from './repoScope';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { gitLogArgs, parseGitLog, commitsToSessions } from './gitHistorySeeder';
+import {
+  generateKey,
+  generateSalt,
+  deriveKeyFromPassphrase,
+  deserializeDb,
+  EncryptionMode,
+} from './storageCrypto';
 
 const execFileAsync = promisify(execFile);
 
@@ -56,6 +63,11 @@ let lastActivityMs = Date.now();
 let persistPromptSuppressedThisSession = false;
 let statusBarItem: vscode.StatusBarItem;
 let autosave: AutosaveTrigger | undefined;
+/** Active storage-encryption material (v1.16.0), or null when mode is 'off'. */
+let storageEncryptionActive: { key: Buffer; mode: EncryptionMode; salt?: Buffer } | null = null;
+const ENC_SECRET_KEY = 'ghcpMem.storageEncryption.key';
+const ENC_SALT_STATE_KEY = 'ghcpMem.storageEncryption.salt';
+const DB_KEY_ENC_STATE = 'ghcpMem.contextDatabase.enc';
 let reviewStateStore: vscode.Memento | undefined;
 /** Last content hash written to session-memory.instructions.md — skip write if unchanged. */
 let lastStartupContextHash: string | undefined;
@@ -101,7 +113,15 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const backupDir = vscode.Uri.joinPath(context.globalStorageUri, 'backups');
   recoveryFile = vscode.Uri.joinPath(context.globalStorageUri, 'pending-events.json');
-  store = new ContextStore(context.globalState, backupDir);
+  // v1.16.0: acquire the storage-encryption key BEFORE constructing the store
+  // so load() can decrypt (or fail closed without ever clobbering data).
+  const encryption = await acquireStorageEncryption(context);
+  if (encryption === 'abort') {
+    log('ERROR', 'Storage encryption key unavailable — extension disabled for this session.');
+    return;
+  }
+  storageEncryptionActive = encryption;
+  store = new ContextStore(context.globalState, backupDir, encryption ?? undefined);
   compressor = new ContextCompressor();
   capture = new SessionCapture();
   provider = new ContextProvider(store);
@@ -146,7 +166,16 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       lmAny.registerMcpServerDefinitionProvider('ghcp-mem.mcp', {
         resolve() {
-          return { label: 'GHCP-MEM', command: { command: process.execPath, args: [mcpBin] } };
+          // With encryption on, the headless MCP server needs the key to read
+          // the sessions.json envelope. Passed via env to the child process —
+          // never written to any config file on disk.
+          const env = storageEncryptionActive
+            ? { GHCP_MEM_KEY: storageEncryptionActive.key.toString('hex') }
+            : undefined;
+          return {
+            label: 'GHCP-MEM',
+            command: { command: process.execPath, args: [mcpBin], ...(env ? { env } : {}) },
+          };
         },
       }),
     );
@@ -1130,6 +1159,35 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // v1.16.0: hand the MCP decryption key to external clients (Claude Desktop,
+  // Cursor configured by hand). Clipboard-only on explicit user action — the
+  // key is never written to any file by the extension.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ghcpMem.copyMcpEncryptionKey', async () => {
+      if (!storageEncryptionActive) {
+        vscode.window.showInformationMessage(
+          'GHCP-MEM: storage encryption is off — external MCP clients need no key.',
+        );
+        return;
+      }
+      const confirm = await vscode.window.showWarningMessage(
+        'Copy the storage-encryption key to the clipboard?',
+        {
+          modal: true,
+          detail:
+            "Paste it as GHCP_MEM_KEY in your external MCP client's env block, then clear the clipboard. Anyone with this key can read your memory store.",
+        },
+        'Copy Key',
+      );
+      if (confirm !== 'Copy Key') return;
+      await vscode.env.clipboard.writeText(storageEncryptionActive.key.toString('hex'));
+      vscode.window.setStatusBarMessage(
+        '$(key) GHCP-MEM: encryption key copied — paste into your MCP client env, then clear the clipboard.',
+        8000,
+      );
+    }),
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand('ghcpMem.auditSensitiveData', async () => {
       const { runWorkspaceAudit, formatAuditReport, sensitiveDataRule } =
@@ -1700,6 +1758,140 @@ function updateStatusBar(): void {
     `Total redactions: ${stats.totalRedactions}`,
     'Click to capture a snapshot',
   ].join('\n');
+}
+
+/**
+ * v1.16.0: resolve storage-encryption key material before store construction.
+ *
+ * Returns:
+ *   - null                → encryption off, no encrypted data present (plaintext path)
+ *   - {key, mode, salt}   → encryption active, verified against existing data
+ *   - 'abort'             → key unavailable (user cancelled passphrase, keychain
+ *                           failure); caller must NOT construct a writable store.
+ *
+ * Fail-closed rules:
+ *   - A wrong passphrase re-prompts (3 attempts) — never returns a bad key.
+ *   - Mode 'off' with encrypted data present prompts to decrypt-migrate; if
+ *     the user declines we keep running ENCRYPTED (setting is flipped back)
+ *     rather than orphaning the data.
+ */
+async function acquireStorageEncryption(
+  context: vscode.ExtensionContext,
+): Promise<{ key: Buffer; mode: EncryptionMode; salt?: Buffer } | null | 'abort'> {
+  const cfg = getConfig();
+  const encBlob = context.globalState.get<string>(DB_KEY_ENC_STATE);
+  const hasEncryptedData = typeof encBlob === 'string' && encBlob.length > 0;
+
+  // Verify a candidate key against existing encrypted data (if any).
+  const keyOpens = (key: Buffer): boolean =>
+    !hasEncryptedData || deserializeDb(encBlob as string, key) !== null;
+
+  if (cfg.storageEncryption === 'os-keychain') {
+    try {
+      let hex = await context.secrets.get(ENC_SECRET_KEY);
+      if (!hex) {
+        hex = generateKey().toString('hex');
+        await context.secrets.store(ENC_SECRET_KEY, hex);
+        log('INFO', 'Storage encryption: generated new key in OS keychain.');
+      }
+      const key = Buffer.from(hex, 'hex');
+      if (!keyOpens(key)) {
+        void vscode.window.showErrorMessage(
+          'GHCP-MEM: the OS-keychain key does not open the encrypted store (keychain reset, or store copied from another machine?). Running disabled to protect the data. Use "Restore From Backup..." with the original key, or "Clear All Stored Context" to start fresh.',
+        );
+        return 'abort';
+      }
+      return { key, mode: 'os-keychain' };
+    } catch (err) {
+      void vscode.window.showErrorMessage(
+        `GHCP-MEM: OS keychain unavailable (${err instanceof Error ? err.message : String(err)}). Storage encryption cannot start; extension disabled this session.`,
+      );
+      return 'abort';
+    }
+  }
+
+  if (cfg.storageEncryption === 'passphrase') {
+    let saltHex = context.globalState.get<string>(ENC_SALT_STATE_KEY);
+    if (!saltHex) {
+      saltHex = generateSalt().toString('hex');
+      await context.globalState.update(ENC_SALT_STATE_KEY, saltHex);
+    }
+    const salt = Buffer.from(saltHex, 'hex');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const phrase = await vscode.window.showInputBox({
+        prompt: hasEncryptedData
+          ? 'GHCP-MEM: enter your storage-encryption passphrase'
+          : 'GHCP-MEM: choose a storage-encryption passphrase (min 8 chars — if you forget it, the store is unrecoverable)',
+        password: true,
+        ignoreFocusOut: true,
+        validateInput: (v) => (v.length >= 8 ? undefined : 'At least 8 characters'),
+      });
+      if (phrase === undefined) return 'abort'; // user cancelled
+      const key = deriveKeyFromPassphrase(phrase, salt);
+      if (keyOpens(key)) return { key, mode: 'passphrase', salt };
+      void vscode.window.showWarningMessage(
+        `GHCP-MEM: passphrase does not open the store (attempt ${attempt}/3).`,
+      );
+    }
+    return 'abort';
+  }
+
+  // Mode 'off' — but encrypted data exists: never orphan it silently.
+  if (hasEncryptedData) {
+    const choice = await vscode.window.showWarningMessage(
+      'GHCP-MEM: storage encryption was turned off, but the store is encrypted. Decrypt it back to plaintext?',
+      {
+        modal: true,
+        detail: 'Choosing "Keep Encrypted" re-enables the previous encryption setting.',
+      },
+      'Decrypt to Plaintext',
+      'Keep Encrypted',
+    );
+    const secretHex = await context.secrets.get(ENC_SECRET_KEY).then(
+      (v) => v,
+      () => undefined,
+    );
+    if (choice === 'Decrypt to Plaintext' && secretHex) {
+      const key = Buffer.from(secretHex, 'hex');
+      const parsed = deserializeDb<unknown>(encBlob as string, key);
+      if (parsed) {
+        await context.globalState.update('ghcpMem.contextDatabase', parsed);
+        await context.globalState.update(DB_KEY_ENC_STATE, undefined);
+        await context.secrets.delete(ENC_SECRET_KEY);
+        log('INFO', 'Storage encryption: store decrypted back to plaintext.');
+        return null;
+      }
+      void vscode.window.showErrorMessage(
+        'GHCP-MEM: decryption failed — keeping the store encrypted. Re-enable ghcpMem.storageEncryption.',
+      );
+      return 'abort';
+    }
+    // Keep encrypted (or passphrase-mode data where we can't silently decrypt):
+    // flip the setting back and resume with the previous mode.
+    const mode: EncryptionMode = secretHex ? 'os-keychain' : 'passphrase';
+    await vscode.workspace
+      .getConfiguration('ghcpMem')
+      .update('storageEncryption', mode, vscode.ConfigurationTarget.Global);
+    if (secretHex) return { key: Buffer.from(secretHex, 'hex'), mode: 'os-keychain' };
+    // Passphrase mode: fall through to a prompt on next activation path.
+    const salt = context.globalState.get<string>(ENC_SALT_STATE_KEY);
+    if (!salt) return 'abort';
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const phrase = await vscode.window.showInputBox({
+        prompt: 'GHCP-MEM: enter your storage-encryption passphrase',
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (phrase === undefined) return 'abort';
+      const key = deriveKeyFromPassphrase(phrase, Buffer.from(salt, 'hex'));
+      if (deserializeDb(encBlob as string, key) !== null) {
+        return { key, mode: 'passphrase', salt: Buffer.from(salt, 'hex') };
+      }
+    }
+    return 'abort';
+  }
+
+  return null;
 }
 
 /**

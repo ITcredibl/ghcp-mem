@@ -440,6 +440,16 @@ export interface PluginConfig {
    * `qualityFloor` which only excludes from injection. v1.13.0+. Default 0.
    */
   qualityPersistFloor: number;
+  /**
+   * Encryption-at-rest for the memory store (v1.16.0).
+   *  - 'off': plaintext (pre-v1.16 behavior).
+   *  - 'os-keychain': random 256-bit key held in VS Code SecretStorage
+   *    (OS keychain–backed); zero prompts after first enable.
+   *  - 'passphrase': scrypt-derived key; prompted once per VS Code session.
+   * Covers globalState payload, ~/.ghcp-mem/sessions.json, and backups
+   * with AES-256-GCM envelopes.
+   */
+  storageEncryption: 'off' | 'os-keychain' | 'passphrase';
 }
 
 /** A user-defined redaction rule injected via `ghcpMem.customRedactionRules`. */
@@ -525,6 +535,7 @@ export function getConfig(): PluginConfig {
     // to [0,1] regardless of what's in settings.json — a value > 1 would
     // accidentally drop every capture.
     qualityPersistFloor: clampNum(cfg.get('qualityPersistFloor', 0), 0, 1, 0),
+    storageEncryption: normalizeStorageEncryption(cfg.get<string>('storageEncryption', 'off')),
   };
 }
 
@@ -552,6 +563,11 @@ export function resolveCaptureTerminalMode(
   if (raw === false) return 'off';
   if (raw === 'off' || raw === 'metadata-only' || raw === 'full') return raw;
   return 'metadata-only';
+}
+
+function normalizeStorageEncryption(raw: unknown): 'off' | 'os-keychain' | 'passphrase' {
+  if (raw === 'os-keychain' || raw === 'passphrase') return raw;
+  return 'off';
 }
 
 function normalizeCloudContextLevel(raw: unknown): 'full' | 'summary-only' | 'none' {

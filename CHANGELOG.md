@@ -6,6 +6,31 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.16.0] — 2026-06-28
+
+**Encrypted local storage — the last enterprise blocker, closed.** Every review since v1.6 raised the same objection: session records sit in plaintext in `~/.ghcp-mem/sessions.json`, the globalState SQLite, and rolling backups. All three surfaces are now AES-256-GCM envelopes when `ghcpMem.storageEncryption` is enabled.
+
+### Added — `ghcpMem.storageEncryption`: `off` | `os-keychain` | `passphrase`
+- **`os-keychain` (recommended)** — random 256-bit key held in VS Code Secret Storage (OS keychain–backed: macOS Keychain, Windows Credential Manager, libsecret). Zero prompts after first enable; zero native deps (Secret Storage is a VS Code API).
+- **`passphrase`** — key derived via scrypt (N=2¹⁵, r=8, p=1 — memory-hard, ~50ms) with a per-store random salt; prompted once per VS Code session. Forgetting the passphrase makes the store unrecoverable — the prompt says so before first enable.
+- **`off` (default)** — pre-v1.16 plaintext behavior. Default stays off because enabling changes the on-disk format that external MCP clients read; turning it on is a deliberate, documented step.
+
+### Design
+- **One envelope, three surfaces** (`src/storageCrypto.ts`, pure Node crypto, zero vscode imports): versioned self-describing JSON envelope (AES-256-GCM, fresh IV per write, auth tag → tamper-evident) shared by the globalState payload, the disk mirror, and rolling backups via a single serialization choke point — the formats cannot diverge.
+- **Fail-closed lockout**: if the stored payload is encrypted and the key is missing/wrong, the store suspends every write path — a locked-out session can never clobber the encrypted data with an empty database. Pinned by a dedicated test.
+- **Transparent migration both directions**: plaintext → encrypted happens on the first persist after enabling (idempotent, crash-safe: the plaintext copy is deleted only after the envelope write). Encrypted → plaintext prompts explicitly on startup when the setting is turned off; declining re-enables the previous mode rather than orphaning data.
+- **Wrong-passphrase handling**: 3 verification attempts against the existing envelope before the extension disables itself for the session (never runs with a bad key).
+
+### MCP + CI interop
+- The **VS Code–registered MCP server** gets `GHCP_MEM_KEY` injected into its process env automatically — external tools using VS Code's MCP integration keep working with zero setup.
+- **External clients** (Claude Desktop, Cursor configured by hand): new `GHCP-MEM: Copy MCP Encryption Key (GHCP_MEM_KEY)...` command copies the hex key to the clipboard after a modal warning; paste into the client's env block. The MCP server prints a precise one-time stderr error when it meets an envelope without a valid key — and serves an empty store rather than crashing.
+- **CI seeder** refuses to overwrite an encrypted store without `GHCP_MEM_KEY` (fail-closed), and decrypt-merges + re-encrypts when the key is present.
+
+### Test count
+**568 tests** (was 554 → +14 in `src/test/storageCrypto.test.ts`: envelope round-trip incl. unicode, detection negatives, ciphertext-opacity, fresh-IV, wrong-key throw, tamper throw, null-not-throw contract, scrypt determinism + salt-in-header re-derivation, serializeDb dispatch, store round-trip with plaintext-copy removal, fail-closed lockout with clobber-protection, plaintext→encrypted migration, dual-format backup parsing).
+
+---
+
 ## [1.15.0] — 2026-06-28
 
 **Real-world benchmarks — and the two real bugs they caught on day one.** Every prior benchmark ran on synthetic sessions with invented vocabulary; external reviewers correctly discounted those numbers. This release ships a reproducible harness that measures the shipped retrieval pipeline against sessions mined from real git histories — and its first run immediately exposed two shipping bugs, both fixed here. That is the argument for the harness in one sentence.

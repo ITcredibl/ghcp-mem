@@ -204,6 +204,17 @@ export interface CompressedSession {
   /** Git branch name at time of session capture (e.g. "feat/auth", "main"). */
   branchName?: string;
   /**
+   * When this session ENTERED the store, for rows whose startTime/endTime
+   * deliberately reflect historical events rather than capture time —
+   * git-history seeds (v1.14) and imported memory packs. Age-based retention
+   * uses `max(endTime, importedAt)`: without this, a seeded session dated
+   * 2 years ago was culled by the startup retention pass on the very next
+   * VS Code reload, silently deleting the just-seeded memory (found by the
+   * bench-real harness, v1.15.0). Live-captured sessions never set it —
+   * their endTime IS their store-entry time.
+   */
+  importedAt?: number;
+  /**
    * Parallel array to `decisions` — `decisionEvidence[i]` is the evidence list
    * for `decisions[i]`. Length always matches `decisions.length` when set.
    * Sessions captured before the grounding layer landed will not have this.

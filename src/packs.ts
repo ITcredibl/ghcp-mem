@@ -223,6 +223,9 @@ export async function importPack(
     const tagged: CompressedSession = {
       ...raw,
       userTags: Array.from(new Set([...(raw.userTags ?? []), packTag])),
+      // Imported packs often carry historical session times; retention must
+      // age them from import time, not event time (same fix as git seeding).
+      importedAt: Date.now(),
       summary: r(raw.summary),
       decisions: (raw.decisions ?? []).map(r),
       problemsSolved: (raw.problemsSolved ?? []).map(r),

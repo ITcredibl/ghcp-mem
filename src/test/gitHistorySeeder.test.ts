@@ -243,3 +243,13 @@ test('commitsToSessions: topics from conventional scopes and top-level dirs', ()
   assert.ok(sessions[0].keyTopics.includes('checkout'));
   assert.ok(sessions[0].keyTopics.includes('src'));
 });
+
+test('commitsToSessions: stamps importedAt so retention ages from store entry, not commit date', () => {
+  const NOW = 1_800_000_000_000;
+  const { sessions } = commitsToSessions(
+    [mkCommit({ atSec: 1_600_000_000, hash: 'a'.repeat(40) })], // years-old commit
+    { ...BASE_OPTS, now: NOW },
+  );
+  assert.equal(sessions[0].importedAt, NOW);
+  assert.ok(sessions[0].endTime < NOW, 'endTime stays historical (timeline value)');
+});

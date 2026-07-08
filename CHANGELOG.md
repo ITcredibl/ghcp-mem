@@ -6,6 +6,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.15.0] — 2026-06-28
+
+**Real-world benchmarks — and the two real bugs they caught on day one.** Every prior benchmark ran on synthetic sessions with invented vocabulary; external reviewers correctly discounted those numbers. This release ships a reproducible harness that measures the shipped retrieval pipeline against sessions mined from real git histories — and its first run immediately exposed two shipping bugs, both fixed here. That is the argument for the harness in one sentence.
+
+### Added — `npm run bench:real` (`scripts/bench-real.js`)
+Mines real repos with the shipped v1.14 `gitHistorySeeder` (the corpus generator IS the product code path), loads a real `ContextStore`, and measures:
+- **Retrieval quality** — recall@5 / MRR / nDCG@5 over gold queries built from the 3 rarest informative tokens of each sampled session summary. Ambiguous queries (duplicate-content sessions like "update dev dependencies" × N, or queries with no discriminating token) are excluded and the exclusion count reported — a self-query against duplicate content has no determinate answer.
+- **Redaction canaries** — synthetic commits carrying real secret shapes (AWS key, GitHub PAT, Azure connection string, password-style high-entropy token) injected into the stream; the serialized store is scanned for raw values. **Hard gate: any leak fails the run.**
+- **Stale-memory rejection** — retracted sessions must never surface. **Hard gate.**
+- **Latency** — p50/p95/p99 at natural size, then padded with real-vocabulary clones to 1,000 and 10,000 rows. **Hard gate: p95 @10k ≤ 100ms.**
+
+Default run uses the current repo only (no network). `--full` shallow-clones the public set (express, flask, terraform, react — `--bare --filter=blob:none --depth 400`, a few MB each, cached in gitignored `.bench-cache/`). `--write-doc` regenerates `docs/BENCHMARKS-REAL.md`.
+
+### Added — `docs/BENCHMARKS-REAL.md`
+Published results across 5 real repos: **recall@5 75–98% (hybrid), MRR 0.70–0.91, 0 canary leaks, 0 stale surfaced, p95 ≤ 38ms at 10,000 rows.** Methodology, honest caveats (self-query construction, no competitor numbers yet), and a one-command repro line are in the doc.
+
+### Fixed — password-style secrets escaped the entropy detector (bench catch #1)
+The high-entropy token scan's alphabet (`[A-Za-z0-9_+/=-]`) split secrets containing shell specials (`zX9$kQ2!mP7@…`) at every `$ ! @ # % ^ & *` into fragments too short to scan — a real false-negative class. New second pass in `src/redactor.ts`: wider alphabet including common password specials, compensated with STRICTER gates (all four character classes required + same entropy floor). Code expressions stay safe — dots/brackets/parens are excluded from the alphabet, so `Math.pow(2,-x)` fragments before reaching the length gate. 3 new adversarial tests.
+
+### Fixed — startup retention silently deleted seeded git history (bench catch #2, flagship-breaking)
+`enforceRetention()` culled by `endTime` alone. Seeded sessions carry **historical commit dates by design** — so on any repo whose history spans more than `retentionDays` (90 by default), the v1.14 flagship feature worked for one session and then **silently vanished on the next VS Code restart**. Flask's benchmark recall was 8% before this fix and 98% after. Fix: new `CompressedSession.importedAt` field (stamped by the git seeder AND by memory-pack import, which had the same latent bug); retention now ages by `max(endTime, importedAt)` — i.e. by time-in-store, not event time. Timeline value is preserved (startTime/endTime stay historical). 4 new regression tests.
+
+### Test count
+**554 tests** (was 547 → +3 password-style entropy, +3 retention semantics, +1 importedAt stamp).
+
+---
+
 ## [1.14.0] — 2026-06-28
 
 **The cold-start killer.** Until now GHCP-MEM was worthless on day one: value accrued only after days of live capture, but users decide whether to keep an extension in the first five minutes. Meanwhile the repo's own git history already holds months of decisions, fixes, and deployment context. v1.14.0 mines it.

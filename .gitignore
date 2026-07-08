@@ -49,3 +49,4 @@ images/demo/medium-*.gif
 ghcp_mem_promo.*
 CLAUDE.md
 .cursor/rules
+.bench-cache/

@@ -246,14 +246,21 @@ export class ContextStore implements vscode.Disposable {
     await this.persist();
   }
 
-  /** Age-based retention. */
+  /**
+   * Age-based retention. Ages by time-IN-STORE, not event time: seeded
+   * git-history sessions and imported pack sessions carry historical
+   * endTimes by design (that's their timeline value), so they age from
+   * `importedAt` instead. Before v1.15.0 this filter used endTime alone,
+   * which silently deleted every seeded session older than retentionDays
+   * on the next startup — the bench-real harness caught it.
+   */
   async enforceRetention(): Promise<void> {
     const config = getConfig();
     if (!config.retentionDays || config.retentionDays <= 0) return;
     const cutoff = Date.now() - config.retentionDays * 24 * 60 * 60 * 1000;
     const before = this.db.sessions.length;
     this.db.sessions = this.db.sessions.filter((s) => {
-      if (s.endTime < cutoff) {
+      if (Math.max(s.endTime, s.importedAt ?? 0) < cutoff) {
         this.removeFromIndex(s);
         return false;
       }

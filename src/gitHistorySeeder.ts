@@ -49,6 +49,13 @@ export interface SeedOptions {
   maxSessions?: number;
   /** Skip commits whose subject is shorter than this after trimming. Default 8. */
   minSubjectLength?: number;
+  /**
+   * Store-entry timestamp stamped as `importedAt` on every produced session.
+   * Retention ages seeded rows from this instant, not from their historical
+   * commit times (see CompressedSession.importedAt). Injectable for
+   * deterministic tests; callers pass Date.now().
+   */
+  now?: number;
 }
 
 export interface SeedResult {
@@ -291,6 +298,9 @@ export function commitsToSessions(commits: ParsedCommit[], opts: SeedOptions): S
       // it below LM-compressed sessions so live memory outranks history when
       // both match a query.
       confidence: 0.55,
+      // Retention must age this row from when it entered the store — its
+      // endTime is a historical commit date by design.
+      importedAt: opts.now ?? Date.now(),
     });
   }
 

@@ -80,14 +80,35 @@ const ENTROPY_THRESHOLD = 4.0;
  */
 function redactHighEntropy(text: string): { text: string; hits: number } {
   let hits = 0;
-  const out = text.replace(HIGH_ENTROPY_TOKEN_RE, (m) => {
+  let out = text.replace(HIGH_ENTROPY_TOKEN_RE, (m) => {
     if (charClassCount(m) < 3) return m;
+    if (shannonEntropy(m) < ENTROPY_THRESHOLD) return m;
+    hits++;
+    return hashedTag('high-entropy', m);
+  });
+  // Second pass (v1.15.0): password-style secrets. The base alphabet above
+  // deliberately excludes shell-special characters, so a secret like
+  // `zX9$kQ2!mP7@vR4#…` was split at every `$ ! @ #` into fragments too short
+  // to scan — a real false-negative class our bench-real canary caught.
+  // This pass widens the alphabet to include common password specials
+  // (!@#$%^&*~?) but compensates with STRICTER gates: all four character
+  // classes required (lower + upper + digit + special) and the same entropy
+  // floor. Code expressions rarely survive: dots/brackets/parens are NOT in
+  // the alphabet, so `Math.pow(2,-x)` style text still breaks apart.
+  out = out.replace(PASSWORD_STYLE_TOKEN_RE, (m) => {
+    if (!/[!@#$%^&*~?]/.test(m)) return m; // must actually contain a special
+    if (!/[a-z]/.test(m) || !/[A-Z]/.test(m) || !/[0-9]/.test(m)) return m; // all 4 classes
     if (shannonEntropy(m) < ENTROPY_THRESHOLD) return m;
     hits++;
     return hashedTag('high-entropy', m);
   });
   return { text: out, hits };
 }
+
+// Password-style token scan: base alphabet + common password specials.
+// Deliberately excludes code punctuation (dots, brackets, parens, commas)
+// so expressions fragment instead of matching.
+const PASSWORD_STYLE_TOKEN_RE = /[A-Za-z0-9_+/=!@#$%^&*~?-]{20,128}/g;
 
 const RULES: RedactionRule[] = [
   {

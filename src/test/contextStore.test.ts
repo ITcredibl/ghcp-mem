@@ -419,3 +419,51 @@ test('Savings estimator — session and overall totals are calculatable', () => 
   assert.ok(total.rawTokens >= total.compactTokens);
   assert.ok(total.tokensSaved >= single.tokensSaved);
 });
+
+// ── v1.15.0: retention ages by time-in-store, not event time ──────────────
+// The bench-real harness caught seeded git-history sessions (historical
+// endTimes by design) being silently culled by the startup retention pass.
+
+test('enforceRetention: culls old live-captured sessions (no importedAt)', async () => {
+  const store = new ContextStore(new InMemoryMemento() as never);
+  const old = makeSession({ id: 'old-live', endTime: Date.now() - 400 * 86_400_000 });
+  const fresh = makeSession({ id: 'fresh-live' });
+  (store as never as { db: { sessions: CompressedSession[] } }).db.sessions.push(old, fresh);
+  await store.enforceRetention();
+  const ids = store.getAllSessions().map((s) => s.id);
+  assert.ok(!ids.includes('old-live'), 'stale live session must be culled');
+  assert.ok(ids.includes('fresh-live'));
+});
+
+test('enforceRetention: recently-imported historical session SURVIVES (importedAt wins)', async () => {
+  const store = new ContextStore(new InMemoryMemento() as never);
+  const seeded = makeSession({
+    id: 'seeded-2yr-old',
+    startTime: Date.now() - 700 * 86_400_000,
+    endTime: Date.now() - 700 * 86_400_000, // commit from 2 years ago
+    userTags: ['git-history', 'seeded'],
+  });
+  seeded.importedAt = Date.now(); // but it entered the store today
+  (store as never as { db: { sessions: CompressedSession[] } }).db.sessions.push(seeded);
+  await store.enforceRetention();
+  assert.ok(
+    store.getAllSessions().some((s) => s.id === 'seeded-2yr-old'),
+    'freshly-seeded historical session must survive the retention pass',
+  );
+});
+
+test('enforceRetention: seeded session whose importedAt has ALSO aged out is culled', async () => {
+  const store = new ContextStore(new InMemoryMemento() as never);
+  const seeded = makeSession({
+    id: 'seeded-long-ago',
+    endTime: Date.now() - 900 * 86_400_000,
+  });
+  seeded.importedAt = Date.now() - 400 * 86_400_000; // imported over a year ago too
+  (store as never as { db: { sessions: CompressedSession[] } }).db.sessions.push(seeded);
+  await store.enforceRetention();
+  assert.equal(
+    store.getAllSessions().some((s) => s.id === 'seeded-long-ago'),
+    false,
+    'retention still applies once the store-entry age exceeds the window',
+  );
+});

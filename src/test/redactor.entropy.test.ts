@@ -106,3 +106,29 @@ test('adversarial — 32-char lowercase hex git SHA is NOT flagged', () => {
   const r = redact(`commit ${sha}`, ON);
   assert.ok(r.text.includes(sha), 'lowercase hex git SHA must not be redacted');
 });
+
+// ── v1.15.0: password-style second pass (bench-real canary class) ─────────
+
+test('password-style secret with shell specials IS redacted (v1.15 second pass)', () => {
+  // The base entropy alphabet splits at $ ! @ # % ^ & * — this exact shape
+  // leaked through v1.13/v1.14 and was caught by the bench-real canary scan.
+  const secret = 'zX9$kQ2!mP7@vR4#nT8%wY3^bL6&cJ1*fH5';
+  const r = redact(`old value ${secret} must be scrubbed`, ON);
+  assert.ok(!r.text.includes(secret), 'password-style secret must be redacted');
+  assert.ok(r.categories.includes('high-entropy'));
+});
+
+test('password-style pass requires all four character classes', () => {
+  // lower+special only (no upper, no digit) — must NOT match the strict pass.
+  const notSecret = 'my-password!is@just#words$here';
+  const r = redact(`note: ${notSecret}`, ON);
+  assert.ok(r.text.includes(notSecret), '2-class password-ish text must be spared');
+});
+
+test('code expressions with dots/parens do NOT trip the password-style pass', () => {
+  // Dots, brackets, parens are excluded from the alphabet, so code fragments
+  // break apart before reaching the length gate.
+  const code = 'const y = Math.pow(2,-x)/norm_Y3 + arr[i]*scale_Q7;';
+  const r = redact(code, ON);
+  assert.ok(r.text.includes('Math.pow(2,-x)/norm_Y3'), 'code must survive intact');
+});

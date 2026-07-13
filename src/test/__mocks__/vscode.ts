@@ -33,14 +33,34 @@ export const workspace = {
   },
 };
 
-export const Uri = {
-  joinPath: (base: any, ...segments: string[]) => ({
-    fsPath: [base?.fsPath ?? '', ...segments].join('/'),
-    path: [base?.path ?? '', ...segments].join('/'),
-    toString: () => [base?.fsPath ?? '', ...segments].join('/'),
-  }),
-  file: (p: string) => ({ fsPath: p, path: p, toString: () => p }),
-};
+/**
+ * Class (not const object) so `vscode.Uri` works in BOTH value position
+ * (`Uri.file(...)`) and type position (`root: vscode.Uri`) — TypeScript 6's
+ * stricter test-compile resolution surfaces the type-position usages that
+ * TS 5 let slide (issue #18).
+ */
+export class Uri {
+  constructor(
+    public readonly fsPath: string,
+    public readonly path: string = fsPath,
+    public readonly scheme: string = 'file',
+  ) {}
+  toString(): string {
+    return this.scheme === 'file' ? this.fsPath : `${this.scheme}:${this.path}`;
+  }
+  static file(p: string): Uri {
+    return new Uri(p, p, 'file');
+  }
+  static parse(s: string): Uri {
+    const m = s.match(/^([a-z][a-z0-9+.-]*):\/\/(.*)$/i);
+    if (m) return new Uri(m[2], m[2], m[1]);
+    return new Uri(s, s, 'file');
+  }
+  static joinPath(base: Uri | { fsPath?: string; path?: string }, ...segments: string[]): Uri {
+    const fsPath = [base?.fsPath ?? '', ...segments].join('/');
+    return new Uri(fsPath, [(base as { path?: string })?.path ?? '', ...segments].join('/'));
+  }
+}
 
 export const window = {
   showInformationMessage: async (_m: string, ..._args: any[]) => undefined,

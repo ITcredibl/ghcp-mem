@@ -6,6 +6,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.17.1] — 2026-07-09
+
+Maintenance: TypeScript 6 migration for the test build. Closes [#18](https://github.com/ITcredibl/ghcp-mem/issues/18); unblocks Dependabot [#11](https://github.com/ITcredibl/ghcp-mem/pull/11).
+
+### Changed — TypeScript `5.9.3 → 6.0.3`
+Production builds already passed under TS 6; the test compile did not. The issue predicted a `baseUrl`/`paths` migration — the landed fix is simpler and more robust:
+- **`tsconfig.test.json` drops `baseUrl` AND the `paths` mapping entirely.** Under TS 5 the ambient `@types/vscode` module supplied compile-time types while `paths` (`vscode` → the mock) effectively only mattered at runtime. TS 6 makes the paths-mapped file authoritative for types too, which would have required hand-typing dozens of `vscode.*` type surfaces into the mock. Instead: compile-time types now come from the REAL `@types/vscode` ambient declaration (more accurate than any hand-rolled mock), and runtime substitution keeps working exactly as before via the stub that `scripts/setup-test-env.js` plants at `out-test/node_modules/vscode`.
+- **`"types": ["node", "vscode"]`** — fixes the `Cannot find name 'crypto'/'Buffer'` errors (`node`) while keeping the ambient vscode module visible (`vscode` — a bare `["node"]` would have excluded `@types/vscode` from auto-inclusion).
+- **Mock `Uri` upgraded from const object to a class** — now valid in both value and type position, and gains the previously-missing `Uri.parse()` that `validator.ts` calls (a latent runtime gap in the old stub).
+
+### Verified under TS 6
+`format:check` · `lint --max-warnings=0` · `typecheck` · **570/570 tests** · `eval:check` · `bundle:prod` · `npm audit` 0 vulns.
+
+### Dependency posture
+`@types/node` 20 and `@types/vscode` 1.93-line remain deliberately held (type packages should not run ahead of the supported VS Code engine / Node runtime — see PRs #13/#15).
+
+---
+
 ## [1.17.0] — 2026-07-08
 
 Closes the final open item from the prompt-injection review thread, and wires distribution to the second marketplace.

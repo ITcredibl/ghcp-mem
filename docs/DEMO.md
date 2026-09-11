@@ -334,11 +334,11 @@ Terminal (from the repo root):
 npm test
 ```
 
-You should see **138 tests pass**, covering: redactor + redactor-corpus, contextStore, types, azureDetect, ruleClassifier, health, packs, autosave, mcpServer + mcpServer schema, eval, validator, repoScope, markdownExport, contextCompressor, integration.
+You should see **597 tests pass**, covering: redactor + redactor-corpus, contextStore, types, azureDetect, ruleClassifier, health, packs, autosave, mcpServer + mcpServer schema, eval, validator, repoScope, markdownExport, contextCompressor, integration.
 
 ```
-ℹ tests 138
-ℹ pass 138
+ℹ tests 597
+ℹ pass 597
 ℹ fail 0
 ```
 

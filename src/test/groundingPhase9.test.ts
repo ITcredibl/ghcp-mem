@@ -193,3 +193,43 @@ test('buildStartupContext — primer absent when there are no sessions', () => {
   const provider = new ContextProvider(store);
   assert.equal(provider.buildStartupContext(), '');
 });
+
+// ─── Frontier #1: cache-aware injected layout ───────────────────────────────
+
+test('buildStartupContextParts — stable prefix is byte-identical as sessions change', async () => {
+  const mem = new InMemoryMemento() as any;
+  const store = new ContextStore(mem);
+  await store.addSession(makeSession({ id: 'one', summary: 'first session', endTime: Date.now() }));
+  const provider = new ContextProvider(store);
+
+  const first = provider.buildStartupContextParts();
+  assert.ok(first.stablePrefix.length > 0, 'stable prefix should be non-empty with a session');
+  assert.match(first.stablePrefix, /How to gather context cheaply/);
+  assert.match(first.stablePrefix, /<<< BEGIN UNTRUSTED MEMORY CONTENT >>>/);
+  // The volatile suffix carries the episodic card + closing fence, not the primer.
+  assert.match(first.volatileSuffix, /first session/);
+  assert.match(first.volatileSuffix, /<<< END UNTRUSTED MEMORY CONTENT >>>/);
+  assert.doesNotMatch(first.stablePrefix, /first session/);
+
+  // Add a second, newer session. The cacheable prefix must not shift by a byte.
+  await store.addSession(
+    makeSession({ id: 'two', summary: 'second session', endTime: Date.now() + 1000 }),
+  );
+  const second = provider.buildStartupContextParts();
+  assert.equal(
+    second.stablePrefix,
+    first.stablePrefix,
+    'stable prefix must be invariant to session set changes for prefix caching',
+  );
+  assert.match(second.volatileSuffix, /second session/);
+});
+
+test('buildStartupContextParts — parts recombine to the exact buildStartupContext output', async () => {
+  const mem = new InMemoryMemento() as any;
+  const store = new ContextStore(mem);
+  await store.addSession(makeSession({ id: 'x', summary: 'a session', decisions: ['chose X'] }));
+  const provider = new ContextProvider(store);
+  const parts = provider.buildStartupContextParts();
+  const combined = `${parts.stablePrefix}\n${parts.volatileSuffix}`;
+  assert.equal(combined, provider.buildStartupContext());
+});

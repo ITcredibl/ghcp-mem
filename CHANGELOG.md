@@ -6,9 +6,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.18.0] — 2026-09-11
 
-Retrieval-quality and startup-efficiency work landed on `integrate/v1.10.0`, plus honesty upgrades to the token-savings surface. Not yet cut to a version tag.
+Retrieval-quality and startup-efficiency work landed on `integrate/v1.10.0`, plus honesty upgrades to the token-savings surface.
 
 ### Added — optional LM reranker over the fused top-K
 `fuseRanks` still produces the default ordering offline; when a chat model is available an optional rerank pass reorders only the top-K candidates. On the self-repo real-world bench this lifts MRR and nDCG@5 from 0.90 to 0.97 with recall@5 unchanged at 96.6% — a reordering win, not a recall win, which is exactly what a reranker should buy. Offline fusion remains the shipped default so the feature degrades to a no-op without a model.
@@ -36,7 +36,7 @@ Writes to the `~/.ghcp-mem` JSON mirror are debounced to coalesce bursts, cuttin
 - Weekly janitor pass now backfills any missing embeddings so hybrid retrieval coverage self-heals over time.
 
 ### Tests
-Suite grows to **597** (from 570), including a retrieval-stage ablation added to the real-world bench (`scripts/bench-real.js`) that quantifies the marginal lift of each signal on the shipped code paths, isolated from the latency corpus so embedding backfill can't perturb the padded 10k timing.
+Suite grows to **624** (from 570), including a retrieval-stage ablation added to the real-world bench (`scripts/bench-real.js`) that quantifies the marginal lift of each signal on the shipped code paths, isolated from the latency corpus so embedding backfill can't perturb the padded 10k timing, plus unit coverage for the extracted `contextProviderFormat`, session-render, and `extensionReports` builders.
 
 ---
 

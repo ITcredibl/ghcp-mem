@@ -1733,7 +1733,7 @@ function startJanitorTimer(): void {
       });
       log(
         'INFO',
-        `janitor: rescored=${r.rescored} flagged=${r.flagged} unflagged=${r.unflagged} pruned=${r.pruned}`,
+        `janitor: rescored=${r.rescored} flagged=${r.flagged} unflagged=${r.unflagged} pruned=${r.pruned} embedded=${r.embeddingsBackfilled}`,
       );
     } catch (err) {
       log('WARN', `janitor failed: ${err instanceof Error ? err.message : String(err)}`);

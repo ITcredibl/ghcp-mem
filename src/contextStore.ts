@@ -165,6 +165,49 @@ export class ContextStore implements vscode.Disposable {
     return !!this.embedder;
   }
 
+  /**
+   * Backfill dense embeddings for sessions captured before an embedder was
+   * wired in (or whose best-effort embed failed at capture time). Hybrid
+   * search only ranks by cosine similarity for rows that actually carry a
+   * vector, so a store seeded from git history — or upgraded from a build
+   * without embeddings — silently degrades to keyword+recency-only until
+   * those rows are embedded. The weekly janitor calls this to close the gap.
+   *
+   * Bounded by `limit` per pass so a large cold store amortises the embed
+   * cost across several janitor runs instead of stalling one. Persists once
+   * at the end. Returns the number of rows embedded.
+   */
+  async backfillEmbeddings(limit = 200): Promise<number> {
+    if (!this.embedder || this.encryptionLockedOut) return 0;
+    const pending = this.db.sessions.filter((s) => !s.embedding).slice(0, limit);
+    if (pending.length === 0) return 0;
+    let embedded = 0;
+    for (const s of pending) {
+      const text = [
+        s.summary,
+        ...s.keyTopics,
+        ...s.keyFiles,
+        ...s.decisions,
+        ...s.problemsSolved,
+      ].join(' ');
+      let vec: number[] | undefined;
+      try {
+        vec = await this.embedder(text);
+      } catch {
+        vec = undefined;
+      }
+      if (!vec) continue;
+      // Re-resolve from the live db: a concurrent prune/evict may have dropped
+      // the row between scheduling and resolution.
+      const current = this.db.sessions.find((row) => row.id === s.id);
+      if (!current) continue;
+      current.embedding = vec;
+      embedded++;
+    }
+    if (embedded > 0) await this.flush();
+    return embedded;
+  }
+
   /** True when writes are suspended to protect an undecryptable store. */
   get isEncryptionLockedOut(): boolean {
     return this.encryptionLockedOut;

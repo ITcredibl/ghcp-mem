@@ -24,6 +24,7 @@ export interface JanitorReport {
   pruned: number;
   lessonsCreated: number;
   lessonsReinforced: number;
+  embeddingsBackfilled: number;
 }
 
 export async function runJanitor(
@@ -37,6 +38,7 @@ export async function runJanitor(
     pruned: 0,
     lessonsCreated: 0,
     lessonsReinforced: 0,
+    embeddingsBackfilled: 0,
   };
   const sessions = store.getAllSessions();
   const now = Date.now();
@@ -110,6 +112,15 @@ export async function runJanitor(
   }
   report.lessonsCreated = created;
   report.lessonsReinforced = reinforced;
+
+  // Backfill dense embeddings for rows that never got one (git-seeded stores,
+  // pre-embedding upgrades, or capture-time embed failures) so hybrid search
+  // ranks the whole store, not just recently-captured sessions.
+  try {
+    report.embeddingsBackfilled = await store.backfillEmbeddings();
+  } catch {
+    // Non-fatal: embedding is a best-effort enhancement, never a janitor blocker.
+  }
 
   return report;
 }

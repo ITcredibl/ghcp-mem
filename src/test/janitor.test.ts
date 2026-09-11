@@ -158,3 +158,24 @@ test('janitor — drifted-but-unflipped qualityScore triggers exactly one flush'
   await runJanitor(store, { qualityFloor: 0.0, pruneAfterDays: 0 });
   assert.equal(flushCalls, 1, `expected exactly one flush call, got ${flushCalls}`);
 });
+
+test('janitor — backfills embeddings for rows captured without a vector', async () => {
+  const store = new ContextStore(new InMemoryMemento() as any);
+  // Capture two sessions with NO embedder wired, so neither gets a vector.
+  await store.addSession(makeSession({ id: 'e1', summary: 'alpha embed backfill' }));
+  await store.addSession(makeSession({ id: 'e2', summary: 'beta embed backfill' }));
+  assert.equal(store.getById('e1')?.embedding, undefined);
+  assert.equal(store.getById('e2')?.embedding, undefined);
+
+  // Now wire a deterministic embedder and run the janitor.
+  store.setEmbedder(async (text: string) => [text.length, 1, 0]);
+  const report = await runJanitor(store, { qualityFloor: 0.0, pruneAfterDays: 0 });
+
+  assert.equal(report.embeddingsBackfilled, 2);
+  assert.ok(store.getById('e1')?.embedding, 'e1 should now carry an embedding');
+  assert.ok(store.getById('e2')?.embedding, 'e2 should now carry an embedding');
+
+  // A second pass has nothing left to backfill.
+  const report2 = await runJanitor(store, { qualityFloor: 0.0, pruneAfterDays: 0 });
+  assert.equal(report2.embeddingsBackfilled, 0);
+});

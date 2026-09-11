@@ -617,12 +617,51 @@ export class ContextProvider implements vscode.Disposable, CommandContext {
   }
 
   buildStartupContext(): string {
+    return this.assembleStartupContext().lines.join('\n');
+  }
+
+  /**
+   * Cache-aware split of the injected startup context (Frontier #1).
+   *
+   * The injected block is deliberately laid out most-stable-first so an LLM
+   * provider's prompt-prefix cache can reuse the leading bytes turn-to-turn:
+   *
+   *   stablePrefix   — header + binding project rules + routing primer +
+   *                    untrusted-fence preamble. Byte-identical across sessions
+   *                    for a given repo (until rules change), so it is a
+   *                    cacheable prefix.
+   *   volatileSuffix — consolidated lessons + episodic session cards + the
+   *                    closing fence. Changes on every capture.
+   *
+   * Splitting here lets callers measure the cacheable fraction and lets the
+   * regression test lock the invariant that adding/removing sessions never
+   * perturbs a single byte of the stable prefix.
+   */
+  buildStartupContextParts(): { stablePrefix: string; volatileSuffix: string } {
+    const { lines, boundaryIndex } = this.assembleStartupContext();
+    if (lines.length === 0) return { stablePrefix: '', volatileSuffix: '' };
+    return {
+      stablePrefix: lines.slice(0, boundaryIndex).join('\n'),
+      volatileSuffix: lines.slice(boundaryIndex).join('\n'),
+    };
+  }
+
+  /**
+   * Assemble the injected startup context as an ordered line array plus the
+   * index at which the cacheable stable prefix ends and the volatile suffix
+   * (lessons + session cards) begins. `buildStartupContext` joins the whole
+   * array — so the emitted bytes are unchanged — while `buildStartupContextParts`
+   * uses `boundaryIndex` to expose the two regions separately.
+   */
+  private assembleStartupContext(): { lines: string[]; boundaryIndex: number } {
     const config = getConfig();
     const recent = this.store.getStartupCandidates(config.startupContextSessionCount);
     const rulesBlock = this.buildProjectRulesBlock();
     const lessonsBlock = renderLessonsForInjection(rankLessons(this.store.getLessons()));
     // Nothing to inject? Signal the caller to remove any stale generated file.
-    if (recent.length === 0 && !rulesBlock && !lessonsBlock) return '';
+    if (recent.length === 0 && !rulesBlock && !lessonsBlock) {
+      return { lines: [], boundaryIndex: 0 };
+    }
 
     const lines = ['## Previous Session Context (auto-injected by GHCP-MEM)', ''];
 
@@ -682,6 +721,11 @@ export class ContextProvider implements vscode.Disposable, CommandContext {
         '',
       );
     }
+
+    // Everything above is the cacheable stable prefix; everything from here on
+    // (lessons + episodic session cards) is volatile and changes each capture.
+    const boundaryIndex = lines.length;
+
     // Consolidated semantic + procedural lessons go right after the routing
     // primer and before the raw session cards: durable, distilled knowledge
     // first, then the episodic detail it was drawn from.
@@ -721,7 +765,7 @@ export class ContextProvider implements vscode.Disposable, CommandContext {
     if (recent.length > 0 || lessonsBlock) {
       lines.push('<<< END UNTRUSTED MEMORY CONTENT >>>');
     }
-    return lines.join('\n');
+    return { lines, boundaryIndex };
   }
 
   /**

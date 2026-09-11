@@ -11,10 +11,15 @@ import { formatAgo, renderIndexRow, renderCompact, renderFull } from '../session
 import { getConfig } from '../types';
 import { computeHealth } from '../health';
 import { matchFilePath } from '../pathMatch';
-import { estimateSessionTokenSavings, estimateTokenSavingsUsd } from '../savings';
+import {
+  estimateSessionTokenSavings,
+  estimateTokenSavingsUsd,
+  aggregateTokenSavingsMeasured,
+} from '../savings';
 import { buildEntityRecord, renderEntityMarkdown } from '../entity';
 import { getCausalNeighbors, renderCausalNeighbors } from '../causalGraph';
 import { parseInlineFilters, synthesize } from '../contextProviderFormat';
+import { emitSavedQuery } from '../otelBridge';
 
 export async function status(
   ctx: CommandContext,
@@ -123,6 +128,23 @@ export async function search(
   }
 
   stream.markdown(`\n---\n### Synthesized Context\n\n${synthesize(results, query)}`);
+
+  // Outbound OTel: this query was answered from local memory rather than by
+  // re-expanding files into the model context. Export the token savings (no-op
+  // unless the user configured an OTLP endpoint). Fire-and-forget, never throws.
+  // Uses the real model tokenizer when wired, else the chars/4 heuristic.
+  const agg = await aggregateTokenSavingsMeasured(results);
+  emitSavedQuery(
+    {
+      operation: 'search',
+      query: cleaned,
+      tokensSaved: agg.tokensSaved,
+      rawTokens: agg.rawTokens,
+      compactTokens: agg.compactTokens,
+      resultCount: results.length,
+    },
+    getConfig().otel,
+  );
 }
 
 export async function timeline(

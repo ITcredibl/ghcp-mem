@@ -48,6 +48,8 @@ const { ContextStore } = require(OUT('contextStore.js'));
 const { InMemoryMemento } = require(OUT('test/__mocks__/vscode.js'));
 const { gitLogArgs, parseGitLog, commitsToSessions } = require(OUT('gitHistorySeeder.js'));
 const { ndcgAtK } = require(OUT('eval.js'));
+const { keywordScore, computeAvgDocLen, extractTerms } = require(OUT('searchCore.js'));
+const { makeLocalEmbedder } = require(OUT('embeddings.js'));
 
 const ARGS = process.argv.slice(2);
 const FULL = ARGS.includes('--full');
@@ -199,6 +201,112 @@ async function evalRuns(store, queries) {
   return runs;
 }
 
+/**
+ * Retrieval-stage ablation: measure the marginal contribution of each ranking
+ * signal by turning them on one at a time, always through the SHIPPED code
+ * paths (searchCore exports + the real ContextStore methods) — never a
+ * bench-only reimplementation of the scorer.
+ *
+ *   recency-only        — sort by endTime (the trivial "most recent wins" baseline)
+ *   bm25-only           — searchCore.keywordScore, no recency/fusion
+ *   keyword+recency RRF — store.search (the offline default)
+ *   + embeddings        — store.searchWithEmbedding with a local lexical embedder + backfill
+ *   + rerank (proxy)    — same, plus a reranker that reorders the fused top-K by
+ *                         query-term overlap. Offline stand-in for the LM reranker,
+ *                         labelled so the number is never mistaken for a real cross-encoder.
+ */
+async function ablationRuns(store, queries, sessions) {
+  const K = 5;
+  const avgDocLen = computeAvgDocLen(sessions);
+  const score = (top, rel) => ({
+    recall: recallAtK(top, rel, K),
+    mrr: mrrOf(top, rel),
+    ndcg: ndcgAtK(top, rel, K),
+  });
+  const mean = (rows) => {
+    const n = rows.length || 1;
+    return rows.reduce(
+      (a, r) => ({
+        recall: a.recall + r.recall / n,
+        mrr: a.mrr + r.mrr / n,
+        ndcg: a.ndcg + r.ndcg / n,
+      }),
+      { recall: 0, mrr: 0, ndcg: 0 },
+    );
+  };
+
+  const recencyOnly = (q) => [...sessions].sort((a, b) => b.endTime - a.endTime).slice(0, 20);
+  const bm25Only = (q) => {
+    const terms = extractTerms(q);
+    return [...sessions]
+      .map((s) => ({ s, k: keywordScore(s, terms, undefined, avgDocLen) }))
+      .sort((a, b) => b.k - a.k || b.s.endTime - a.s.endTime)
+      .slice(0, 20)
+      .map((x) => x.s);
+  };
+
+  // Wire the hybrid signals through the real store, then restore state.
+  const hadEmbedder = store.hasEmbedder?.() ?? false;
+  const hadReranker = store.hasReranker?.() ?? false;
+  store.setEmbedder(makeLocalEmbedder());
+  await store.backfillEmbeddings(sessions.length);
+
+  const lexicalReranker = async (q, candidates) => {
+    const terms = extractTerms(q);
+    return [...candidates]
+      .map((c) => {
+        const ct = extractTerms(c.text);
+        let overlap = 0;
+        for (const t of terms) if (ct.has(t)) overlap++;
+        return { id: c.id, overlap };
+      })
+      .sort((a, b) => b.overlap - a.overlap)
+      .map((c) => c.id);
+  };
+
+  const ladder = [];
+  // recency-only
+  ladder.push([
+    'recency-only',
+    mean(queries.map((gq) => score(recencyOnly(gq.q), new Set(gq.relevant)))),
+  ]);
+  // bm25-only
+  ladder.push([
+    'bm25-only',
+    mean(queries.map((gq) => score(bm25Only(gq.q), new Set(gq.relevant)))),
+  ]);
+  // keyword+recency RRF (offline default)
+  ladder.push([
+    'keyword+recency (RRF)',
+    mean(queries.map((gq) => score(store.search(gq.q, {}, 20), new Set(gq.relevant)))),
+  ]);
+  // + embeddings (hybrid)
+  {
+    const rows = [];
+    for (const gq of queries) {
+      const top = await store.searchWithEmbedding(gq.q, {}, 20);
+      rows.push(score(top, new Set(gq.relevant)));
+    }
+    ladder.push(['+ embeddings (hybrid)', mean(rows)]);
+  }
+  // + rerank (lexical proxy for the LM reranker)
+  {
+    store.setReranker(lexicalReranker);
+    const rows = [];
+    for (const gq of queries) {
+      const top = await store.searchWithEmbedding(gq.q, {}, 20);
+      rows.push(score(top, new Set(gq.relevant)));
+    }
+    ladder.push(['+ rerank (lexical proxy)', mean(rows)]);
+  }
+
+  // Restore the store to its pre-ablation configuration.
+  store.setReranker(hadReranker ? lexicalReranker : undefined);
+  if (!hadEmbedder) store.setEmbedder(undefined);
+
+  return Object.fromEntries(ladder);
+}
+
 function percentiles(latencies) {
   latencies.sort((a, b) => a - b);
   const pct = (p) =>
@@ -273,6 +381,14 @@ async function benchRepo(repo) {
   const { queries: gold, ambiguous } = buildGoldQueries(seed.sessions, GOLD_QUERIES);
   const runs = await evalRuns(store, gold);
 
+  // 1b) Retrieval-stage ablation: marginal lift of each signal, on the shipped
+  // code paths. Runs on a throwaway store seeded from the same sessions so its
+  // embedding backfill never mutates the corpus the latency pass later clones.
+  const ablStore = new ContextStore(new InMemoryMemento());
+  for (const s of seed.sessions) ablStore.db.sessions.push({ ...s });
+  await ablStore.rebuildIndexAsync();
+  const ablation = await ablationRuns(ablStore, gold, ablStore.db.sessions);
+
   // 3) Stale-memory rejection: retract 5 sampled sessions, re-run their queries.
   const sample = gold.slice(0, Math.min(5, gold.length));
   for (const gq of sample) {
@@ -309,12 +425,16 @@ async function benchRepo(repo) {
     staleSurfaced,
     staleSample: sample.length,
     runs,
+    ablation,
     latency: { natural: latNatural, at1k: lat1k, at10k: lat10k, naturalSize: seed.sessions.length },
   };
 
   const fmt = (r) =>
     `recall@5 ${(r.recall * 100).toFixed(0)}% · MRR ${r.mrr.toFixed(2)} · nDCG@5 ${r.ndcg.toFixed(2)}`;
   for (const [label, r] of Object.entries(runs)) console.log(`  ${label}: ${fmt(r)}`);
+  console.log('  ── ablation (marginal lift per stage) ──');
+  for (const [label, r] of Object.entries(ablation))
+    console.log(`    ${label.padEnd(24)} ${fmt(r)}`);
   console.log(
     `  redaction canaries leaked: ${leaks.length === 0 ? '0 ✅' : leaks.join(', ') + ' ❌'}`,
   );
@@ -368,6 +488,31 @@ function renderDoc(results) {
     '- The hybrid column shows the shipped default; the keyword column is the ablation baseline.',
     '',
   );
+
+  // Per-repo retrieval-stage ablation: what each ranking signal actually adds.
+  if (results.some((r) => r.ablation)) {
+    lines.push(
+      '## Retrieval-stage ablation',
+      '',
+      'Each signal turned on one at a time, always through the shipped code paths',
+      '(`searchCore` exports + the real `ContextStore` methods). `+ rerank` uses a',
+      'lexical-overlap proxy for the LM reranker so the row is reproducible offline —',
+      'it is a lower bound on, not a substitute for, a real cross-encoder.',
+      '',
+    );
+    for (const r of results) {
+      if (!r.ablation) continue;
+      lines.push(`### ${r.repo}`, '');
+      lines.push('| Stage | Recall@5 | MRR | nDCG@5 |', '|---|---|---|---|');
+      for (const [label, m] of Object.entries(r.ablation)) {
+        lines.push(
+          `| ${label} | ${(m.recall * 100).toFixed(0)}% | ${m.mrr.toFixed(2)} | ${m.ndcg.toFixed(2)} |`,
+        );
+      }
+      lines.push('');
+    }
+  }
+
   return lines.join('\n');
 }
 

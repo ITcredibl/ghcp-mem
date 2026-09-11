@@ -7,7 +7,7 @@
 - MRR
 - Stale-memory rejection rate
 - Redaction accuracy
-- Token reduction estimate
+- Token reduction (measured)
 - Search latency
 - Activation time
 - Extension host memory usage
@@ -18,8 +18,8 @@ Results should come from a fixed sample repository set and repeatable tasks. Cla
 
 See the current sample results in [BENCHMARK_REPORT.md](./BENCHMARK_REPORT.md).
 
-## Token-savings estimator
+## Token-savings counter
 
-- Per-session savings = estimated raw tokens captured for the session minus estimated compact tokens stored in the summary.
+- Per-session savings = raw tokens captured for the session minus compact tokens stored in the summary.
 - Overall savings = sum of all per-session savings across the selected session set.
-- The estimator uses the same 4-chars-per-token heuristic and fixed capture overhead everywhere in the product, so chat output, stats, and benchmarks stay aligned.
+- The shared counter measures with the active Copilot model's tokenizer when a chat model is available, and falls back to a 4-chars-per-token heuristic (plus a fixed capture overhead) offline. The same counter backs chat output, stats, and benchmarks, so all three stay aligned.

@@ -6,6 +6,40 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.18.0] — 2026-09-11
+
+Retrieval-quality and startup-efficiency work landed on `integrate/v1.10.0`, plus honesty upgrades to the token-savings surface.
+
+### Added — optional LM reranker over the fused top-K
+`fuseRanks` still produces the default ordering offline; when a chat model is available an optional rerank pass reorders only the top-K candidates. On the self-repo real-world bench this lifts MRR and nDCG@5 from 0.90 to 0.97 with recall@5 unchanged at 96.6% — a reordering win, not a recall win, which is exactly what a reranker should buy. Offline fusion remains the shipped default so the feature degrades to a no-op without a model.
+
+### Added — cache-aware stable/volatile split of injected startup context
+The startup context now exposes a stable prefix (the routing primer + durable lessons) separate from the volatile session tail, so a host that supports prompt caching can reuse the stable region across turns instead of re-sending it.
+
+### Added — sleep-time idle consolidation
+Between weekly janitor ticks, idle time is used to warm lessons and embeddings incrementally rather than paying the whole cost in one janitor pass.
+
+### Added — outbound OpenTelemetry token-savings bridge
+Token-savings measurements can be emitted to an OTel collector for teams that want to track the Context-Tax reduction centrally. Off by default; local-first and zero-open-port constraints are unchanged (outbound only, opt-in).
+
+### Changed — token savings are now measured, not estimated
+`/savings` counts tokens with the active Copilot model's tokenizer when a chat model is available, falling back to a chars/4 heuristic offline. The copy across README and the command help no longer describes the numbers as estimates.
+
+### Changed — trimmed static startup inject to the primer plus top-3 sessions
+The default static injection is now the primer plus the three most-relevant recent sessions, shrinking the always-on context footprint; deeper history stays one `@mem` query away.
+
+### Fixed — unified MCP and in-process rank fusion
+The stdio MCP server and the in-process retrieval path now share a single `fuseRanks` implementation, so both surfaces rank identically.
+
+### Performance — debounced disk mirror
+Writes to the `~/.ghcp-mem` JSON mirror are debounced to coalesce bursts, cutting redundant serialization during rapid capture.
+- Weekly janitor pass now backfills any missing embeddings so hybrid retrieval coverage self-heals over time.
+
+### Tests
+Suite grows to **624** (from 570), including a retrieval-stage ablation added to the real-world bench (`scripts/bench-real.js`) that quantifies the marginal lift of each signal on the shipped code paths, isolated from the latency corpus so embedding backfill can't perturb the padded 10k timing, plus unit coverage for the extracted `contextProviderFormat`, session-render, and `extensionReports` builders.
+
+---
+
 ## [1.17.1] — 2026-07-09
 
 Maintenance: TypeScript 6 migration for the test build. Closes [#18](https://github.com/ITcredibl/ghcp-mem/issues/18); unblocks Dependabot [#11](https://github.com/ITcredibl/ghcp-mem/pull/11).

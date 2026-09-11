@@ -1,6 +1,6 @@
 # GHCP-MEM Threat Model
 
-> Status: **v1.6.0**, June 2026 · maintained alongside [SECURITY.md](../SECURITY.md)
+> Status: **v1.17.1**, September 2026 · maintained alongside [SECURITY.md](../SECURITY.md)
 >
 > This document complements `SECURITY.md` (which is the reporting / disclosure / security-model summary) with a formal threat enumeration. The goal is to make every attack surface and every mitigation explicit, so enterprise reviewers can map our controls onto their own risk register without guessing.
 
@@ -15,7 +15,7 @@ We use a lightweight STRIDE pass over each major data-flow boundary. Where a mit
 │   ┌──────────────────────────────────────────────────────────┐  │
 │   │  VS Code extension host process                          │  │
 │   │   • src/sessionCapture.ts (event hooks)                  │  │
-│   │   • src/redactor.ts        (26-rule SHA-256 hashing)     │  │
+│   │   • src/redactor.ts        (30-rule SHA-256 hashing)     │  │
 │   │   • src/contextCompressor  (vscode.lm)                   │  │
 │   │   • src/contextStore.ts    (globalState + mirror)        │  │
 │   │   • src/policySource.ts    (HTTPS fetch)                 │  │
@@ -62,7 +62,7 @@ Boundaries we cross:
 | Threat | Mitigation | Residual risk |
 |---|---|---|
 | **T1** Spoofing — malicious workspace tricks extension into capturing a file outside the workspace | All capture paths flow through `vscode.workspace.asRelativePath` and `excludeGlobs`. No raw filesystem reads from arbitrary paths. | Low |
-| **T2** Information disclosure — secrets in code, diffs, or terminal output captured then compressed | `src/redactor.ts` runs **before** any buffering. 24 rules cover AWS / GitHub / OpenAI / Anthropic / Stripe / npm / Slack / JWT / Bearer / DB URL / PEM / Azure (storage/SAS/keys/conn-strings/SP/sub-GUIDs). Each match is replaced with `[REDACTED:<label>]#<sha256-hash>`, never the raw bytes. `<private>...</private>` blocks are stripped pre-buffer. A second pass runs on the LM output. | Pattern coverage is finite — secret types not in the rule list are not redacted. Mitigated by `ghcpMem.customRedactionRules` + corporate `policySource`. |
+| **T2** Information disclosure — secrets in code, diffs, or terminal output captured then compressed | `src/redactor.ts` runs **before** any buffering. 30 rules cover AWS / GitHub / OpenAI / Anthropic / Stripe / npm / Slack / JWT / Bearer / DB URL / PEM / Azure (storage/SAS/keys/conn-strings/SP/sub-GUIDs/resource-paths). Each match is replaced with `[REDACTED:<label>]#<sha256-hash>`, never the raw bytes. `<private>...</private>` blocks are stripped pre-buffer. A second pass runs on the LM output. | Pattern coverage is finite — secret types not in the rule list are not redacted. Mitigated by `ghcpMem.customRedactionRules` + corporate `policySource`. |
 | **T3** DoS — huge file paste or runaway terminal output blows extension-host memory | `sessionCapture.ts` enforces `MAX_VOLATILE_BYTES = 5 * 1024 * 1024` and `MAX_EVENTS = 5000`; oldest events are dropped on every `pushEvent`. File-edit batch flushes every 5 seconds. | Low |
 | **T4** Tampering — workspace mutates a file during capture to confuse the analyzer | `semanticTextSignature()` is whitespace-normalised + SHA-256-keyed, so race-window edits yield a different signature on the next event and the loop converges. | Low |
 | **T5** Repudiation — user later claims a memory was never created | Every stored session has a UUID, content hash, and timestamps; the audit command shows the full lineage. | Low |

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎬 GHCP-MEM v1.17.1 — Live Demo
+# 🎬 GHCP-MEM v1.18.0 — Live Demo
 
 ### A 6-minute walkthrough that exercises every capability
 
@@ -11,7 +11,7 @@
 </div>
 
 > [!NOTE]
-> **Prereqs:** GHCP-MEM v1.17.1 installed (Marketplace search **GHCP-MEM**, or `code --install-extension ITcredibl.ghcp-mem`) and VS Code reloaded. Open any workspace. No Azure subscription needed — the Azure steps degrade gracefully if `az` isn't installed or signed in.
+> **Prereqs:** GHCP-MEM v1.18.0 installed (Marketplace search **GHCP-MEM**, or `code --install-extension ITcredibl.ghcp-mem`) and VS Code reloaded. Open any workspace. No Azure subscription needed — the Azure steps degrade gracefully if `az` isn't installed or signed in.
 
 ---
 
@@ -19,7 +19,7 @@
 
 ```mermaid
 timeline
-    title GHCP-MEM v1.17.1 — 6-minute live demo
+    title GHCP-MEM v1.18.0 — 6-minute live demo
     section 🩺 Health
         0. Sanity check (10s)              : status bar glyph
         1. Seed Azure sessions (15s)       : Seed Azure Demo Sessions
@@ -239,7 +239,7 @@ sequenceDiagram
     participant MCP as 🔌 mcpServer.js
     participant STORE as 🗂️ ~/.ghcp-mem/<br/>sessions.json
     CLI->>MCP: initialize (JSON-RPC 2024-11-05)
-    MCP-->>CLI: serverInfo { name: ghcp-mem, version: 1.6.0 }
+    MCP-->>CLI: serverInfo { name: ghcp-mem, version: 1.17.1 }
     CLI->>MCP: notifications/initialized
     CLI->>MCP: tools/list
     MCP->>STORE: mtime check (cached)
@@ -334,11 +334,11 @@ Terminal (from the repo root):
 npm test
 ```
 
-You should see **138 tests pass**, covering: redactor + redactor-corpus, contextStore, types, azureDetect, ruleClassifier, health, packs, autosave, mcpServer + mcpServer schema, eval, validator, repoScope, markdownExport, contextCompressor, integration.
+You should see **597 tests pass**, covering: redactor + redactor-corpus, contextStore, types, azureDetect, ruleClassifier, health, packs, autosave, mcpServer + mcpServer schema, eval, validator, repoScope, markdownExport, contextCompressor, integration.
 
 ```
-ℹ tests 138
-ℹ pass 138
+ℹ tests 597
+ℹ pass 597
 ℹ fail 0
 ```
 
@@ -376,6 +376,6 @@ Plus the CI pipeline runs three additional gates: `npm run lint` → `npm test` 
 
 [← Back to README](../README.md) · [Competitive analysis](COMPARISON.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Demo script for GHCP-MEM v1.17.1** · 386 tests · zero native deps · zero ports · CI ubuntu × windows × node 20 · `npm audit` 0 vulns · Prettier-gated</sub>
+<sub>**Demo script for GHCP-MEM v1.18.0** · 386 tests · zero native deps · zero ports · CI ubuntu × windows × node 20 · `npm audit` 0 vulns · Prettier-gated</sub>
 
 </div>

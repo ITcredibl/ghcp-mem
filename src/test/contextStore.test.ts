@@ -40,6 +40,80 @@ test('ContextStore — addSession stores a new session', async () => {
   assert.equal(store.getAllSessions().length, 1);
 });
 
+test('ContextStore — disk mirror coalesces a burst into one write, flush forces it', async () => {
+  const mem = new InMemoryMemento() as any;
+  const store = new ContextStore(mem);
+  let writes = 0;
+  // Replace the real ~/.ghcp-mem mirror with a counter so the test never
+  // touches the developer's home directory and can observe coalescing.
+  (store as any).syncToDisk = async () => {
+    writes += 1;
+  };
+  // A burst of three writes should schedule the debounce but not fire it yet.
+  await store.addSession(makeSession({ summary: 'burst a' }));
+  await store.addSession(makeSession({ summary: 'burst b' }));
+  await store.addSession(makeSession({ summary: 'burst c' }));
+  assert.equal(writes, 0, 'debounced mirror must not fire synchronously');
+  // Forcing the pending mirror collapses the burst into a single write.
+  await store.flushDiskNow();
+  assert.equal(writes, 1, 'burst of three persists must coalesce to one disk write');
+  // A subsequent change + flush writes exactly once more.
+  await store.addSession(makeSession({ summary: 'burst d' }));
+  await store.flushDiskNow();
+  assert.equal(writes, 2);
+});
+
+test('ContextStore — optional reranker reorders the fused top-K, absent by default', async () => {
+  const mem = new InMemoryMemento() as any;
+  const store = new ContextStore(mem);
+  await store.addSession(
+    makeSession({ id: 'r1', summary: 'alpha token match here', keyTopics: ['topic-one'] }),
+  );
+  await store.addSession(
+    makeSession({ id: 'r2', summary: 'alpha token match here too', keyTopics: ['topic-two'] }),
+  );
+  await store.addSession(
+    makeSession({ id: 'r3', summary: 'alpha token match again', keyTopics: ['topic-three'] }),
+  );
+
+  // No reranker wired: retrieval stays on the offline fusion baseline.
+  assert.equal(store.hasReranker(), false);
+  const baseline = await store.searchWithEmbedding('alpha', {}, 3);
+  assert.equal(baseline.length, 3);
+
+  // Wire a reranker that forces r3 to the front regardless of fusion order.
+  store.setReranker(async (_q, cands) => {
+    const ids = cands.map((c) => c.id);
+    return ['r3', ...ids.filter((id) => id !== 'r3')];
+  });
+  assert.equal(store.hasReranker(), true);
+  const reranked = await store.searchWithEmbedding('alpha', {}, 3);
+  assert.equal(reranked[0].id, 'r3', 'reranker should promote r3 to the top');
+  assert.equal(reranked.length, 3);
+});
+
+test('ContextStore — reranker that throws falls back to fusion order', async () => {
+  const mem = new InMemoryMemento() as any;
+  const store = new ContextStore(mem);
+  await store.addSession(
+    makeSession({ id: 'f1', summary: 'gamma match one', keyTopics: ['g-one'] }),
+  );
+  await store.addSession(
+    makeSession({ id: 'f2', summary: 'gamma match two', keyTopics: ['g-two'] }),
+  );
+  const baseline = await store.searchWithEmbedding('gamma', {}, 2);
+
+  store.setReranker(async () => {
+    throw new Error('reranker unavailable');
+  });
+  const afterThrow = await store.searchWithEmbedding('gamma', {}, 2);
+  assert.deepEqual(
+    afterThrow.map((s) => s.id),
+    baseline.map((s) => s.id),
+    'a throwing reranker must not change or drop results',
+  );
+});
+
 test('ContextStore — dedup on identical contentHash', async () => {
   const mem = new InMemoryMemento() as any;
   const store = new ContextStore(mem);

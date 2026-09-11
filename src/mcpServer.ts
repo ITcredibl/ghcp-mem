@@ -28,8 +28,23 @@ import { promises as fs } from 'fs';
 import { randomUUID } from 'crypto';
 // Import shared types to avoid duplicating interface definitions.
 import type { CompressedSession, ContextDatabase } from './types';
-// Shared keyword scorer — single source of truth shared with ContextStore.
-import { extractTerms, keywordScore, computeAvgDocLen } from './searchCore';
+// Shared keyword scorer + rank fusion — single source of truth shared with
+// ContextStore so the stdio path and the in-VS-Code @mem path rank identically.
+import {
+  extractTerms,
+  computeAvgDocLen,
+  computeTermStats,
+  keywordScoreFromStats,
+  SessionTermStats,
+  fuseRanks,
+  FusionInput,
+  FusionWeights,
+  FUSION_RANK_MISS,
+} from './searchCore';
+// Intent classification + decayed confidence — reused so MCP fusion carries the
+// same intent reweighting and confidence signal as the chat participant.
+import { classifyIntent, intentWeights } from './queryIntent';
+import { effectiveConfidence } from './decay';
 // Phase 7: reuse pure helpers from the chat-side modules so MCP retrieval
 // stays at full parity with the chat participant.
 import { buildEntityRecord } from './entity';
@@ -186,7 +201,16 @@ async function loadDatabase(): Promise<StoredDatabase> {
   }
 }
 
-/** RRF-fused search with recency decay. Mirrors ContextStore.search. */
+/**
+ * RRF-fused search that shares ONE fusion formula with ContextStore.search
+ * (see searchCore.fuseRanks). Before v1.17.x this path carried a stripped-down
+ * fusion (RRF + recency only), so external MCP clients silently got worse
+ * ranking than the in-VS-Code participant — no confidence, supersession,
+ * reinforcement, match-ratio or intent reweighting. This now folds in all of
+ * those signals. Query-embedding rerank is skipped (the headless server has no
+ * LM to embed the query) and near-duplicate collapse / query expansion remain
+ * chat-side only — tracked as MCP follow-ups.
+ */
 function searchSessions(
   db: StoredDatabase,
   query: string,
@@ -200,6 +224,9 @@ function searchSessions(
   limit = 5,
 ): StoredSession[] {
   let candidates = [...db.sessions];
+  // Retracted sessions are kept on disk for audit but never surfaced — mirror
+  // the in-process search which filters them out before ranking.
+  candidates = candidates.filter((s) => !s.retracted);
   if (filters.type) candidates = candidates.filter((s) => s.observationType === filters.type);
   if (filters.tag) candidates = candidates.filter((s) => s.userTags.includes(filters.tag!));
   if (filters.sinceDays) {
@@ -215,15 +242,20 @@ function searchSessions(
   }
 
   const terms = extractTerms(query ?? '');
+  const termCount = terms.size;
   const avgDocLen = computeAvgDocLen(candidates);
-  const kScored = candidates.map((s) => ({ s, k: keywordScore(s, terms, undefined, avgDocLen) }));
+  // Tokenise each candidate once and reuse the stats for both the BM25 score
+  // and the per-session match-ratio signal.
+  const statsById = new Map<string, SessionTermStats>();
+  for (const s of candidates) statsById.set(s.id, computeTermStats(s));
+  const kScored = candidates.map((s) => ({
+    s,
+    k: keywordScoreFromStats(statsById.get(s.id)!, terms, false, avgDocLen),
+  }));
 
   // When the user supplied a query AND at least one candidate has a positive
   // keyword score, drop the zero-score candidates so unrelated sessions can't
   // outrank a clear match through tiny differences in RRF rank position.
-  // Without this guard the previous logic could (and did) return 'ui tweaks'
-  // ahead of 'authentication rework' for the query 'authentication' purely
-  // because both sessions had identical recency.
   let scoped = candidates;
   if (terms.size > 0 && kScored.some((e) => e.k > 0)) {
     const positive = new Set(kScored.filter((e) => e.k > 0).map((e) => e.s.id));
@@ -237,16 +269,45 @@ function searchSessions(
   const rRank = new Map<string, number>();
   recencyRanked.forEach((s, i) => rRank.set(s.id, i));
 
-  const K = 60;
-  const HALF_LIFE = 7 * 24 * 60 * 60 * 1000;
-  const now = Date.now();
-  const fused = scoped.map((s) => {
-    const rrf = 1 / (K + (kRank.get(s.id) ?? K * 10)) + 1 / (K + (rRank.get(s.id) ?? K * 10));
-    const decay = Math.pow(2, -(now - s.endTime) / HALF_LIFE) * 0.3;
-    return { s, score: rrf + decay };
+  // Fold intent reweighting into the shared fusion weights. Learned adaptive
+  // weights live only in the extension host, so the headless server uses the
+  // neutral 1.0 multipliers for confidence/reinforcement/feedback.
+  const iw = intentWeights(classifyIntent(query ?? ''));
+  const fusionWeights: FusionWeights = {
+    keyword: iw.keywordWeight,
+    recencyMultiplier: iw.recencyMultiplier,
+    confidence: 1,
+    reinforcement: 1,
+    feedback: 1,
+    decisionBoost: iw.decisionBoost,
+    problemBoost: iw.problemBoost,
+  };
+
+  const byId = new Map(scoped.map((s) => [s.id, s]));
+  const fusionInputs: FusionInput[] = scoped.map((s) => {
+    const stats = statsById.get(s.id)!;
+    let matched = 0;
+    for (const t of terms) if (stats.wtf.has(t)) matched++;
+    return {
+      id: s.id,
+      endTime: s.endTime,
+      keywordRank: kRank.get(s.id) ?? FUSION_RANK_MISS,
+      recencyRank: rRank.get(s.id) ?? FUSION_RANK_MISS,
+      embeddingRank: undefined,
+      workspaceMatch: !!filters.workspaceId && s.workspaceId === filters.workspaceId,
+      matchRatio: termCount > 0 ? matched / termCount : 0,
+      confidence: effectiveConfidence(s) ?? 0.5,
+      retrieved: s.usage?.retrieved ?? 0,
+      accepted: s.usage?.accepted ?? 0,
+      rejected: s.usage?.rejected ?? 0,
+      superseded: !!s.supersededBy,
+      hasDecisions: s.decisions.length > 0,
+      hasProblems: s.problemsSolved.length > 0,
+    };
   });
-  fused.sort((a, b) => b.score - a.score || b.s.endTime - a.s.endTime);
-  return fused.slice(0, limit).map((e) => e.s);
+
+  const scored = fuseRanks(fusionInputs, fusionWeights, { now: Date.now() });
+  return scored.slice(0, limit).map((r) => byId.get(r.id)!);
 }
 
 function summarizeForMcp(s: StoredSession): any {

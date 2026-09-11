@@ -9,6 +9,10 @@ import {
   computeTermStats,
   keywordScoreFromStats,
   SessionTermStats,
+  fuseRanks,
+  FusionInput,
+  FusionWeights,
+  FUSION_RANK_MISS,
 } from './searchCore';
 import { validateSessions } from './validator';
 import { getRepoScopeSync } from './repoScope';
@@ -68,6 +72,18 @@ export interface SearchFilters {
 }
 
 /**
+ * Optional semantic reranker. Given the query and the fused top-K candidates
+ * (id + a short text blob), returns the candidate ids in the model's preferred
+ * order. Ids omitted from the result keep their original relative order after
+ * the ranked ones. Any throw/empty result falls back to the fusion order, so a
+ * reranker can never make retrieval *worse* than the offline baseline.
+ */
+export type RerankFn = (
+  query: string,
+  candidates: { id: string; text: string }[],
+) => Promise<string[]>;
+
+/**
  * Persistent store with an in-memory inverted index for fast text search.
  * Improvements over claude-mem:
  *   - No SQLite/Bun/Chroma native dependencies — uses VS Code globalState
@@ -104,9 +120,27 @@ export class ContextStore implements vscode.Disposable {
    * can't accidentally replace it with an incompatible function shape.
    */
   private embedder?: EmbeddingFn;
+  /**
+   * Optional LM reranker (v1.18): when wired, `searchWithEmbedding` reorders
+   * the top-K fused candidates with a semantic reranker before freshness
+   * filtering. Off by default — the offline BM25 + RRF + recency fusion stays
+   * the deterministic baseline, so retrieval never *requires* a model round-trip.
+   */
+  private reranker?: RerankFn;
   private lastBackupAt = 0;
   /** Queue to serialize syncToDisk calls and prevent interleaved writes. */
   private syncQueue: Promise<void> = Promise.resolve();
+  /**
+   * Disk-mirror coalescing (v1.18): a burst of addSession/tag/delete calls
+   * used to each re-serialize the WHOLE database and write it to
+   * `~/.ghcp-mem/sessions.json`. globalState (the source of truth) is still
+   * written on every persist, but the disk mirror — the expensive full-DB
+   * JSON serialize + tmp-write + rename — is now debounced so a rapid burst
+   * collapses into a single write. `flush()` and `dispose()` force it out.
+   */
+  private diskDirty = false;
+  private diskFlushTimer?: ReturnType<typeof setTimeout>;
+  private static readonly DISK_DEBOUNCE_MS = 400;
 
   /**
    * Set when the stored payload is encrypted but no (or the wrong) key was
@@ -148,6 +182,101 @@ export class ContextStore implements vscode.Disposable {
   /** Whether an embedder has been wired in. */
   hasEmbedder(): boolean {
     return !!this.embedder;
+  }
+
+  /** Wire in an optional LM reranker. Retrieval stays offline until this is set. */
+  setReranker(fn: RerankFn): void {
+    this.reranker = fn;
+  }
+
+  /** Whether a reranker has been wired in. */
+  hasReranker(): boolean {
+    return !!this.reranker;
+  }
+
+  /**
+   * Reorder the fused candidates with the wired reranker over the top-K only.
+   * Returns the input unchanged when no reranker is set, the query is empty,
+   * or the reranker throws / returns nothing — so it is always safe to call.
+   */
+  private async applyRerank(
+    query: string,
+    fused: CompressedSession[],
+    topK = 20,
+  ): Promise<CompressedSession[]> {
+    if (!this.reranker || !query.trim() || fused.length < 2) return fused;
+    const head = fused.slice(0, topK);
+    const tail = fused.slice(topK);
+    try {
+      const order = await this.reranker(
+        query,
+        head.map((s) => ({
+          id: s.id,
+          text: `${s.summary} ${s.keyTopics.join(' ')} ${s.decisions.join(' ')}`.slice(0, 512),
+        })),
+      );
+      if (!order || order.length === 0) return fused;
+      const byId = new Map(head.map((s) => [s.id, s]));
+      const ranked: CompressedSession[] = [];
+      const seen = new Set<string>();
+      for (const id of order) {
+        const s = byId.get(id);
+        if (s && !seen.has(id)) {
+          ranked.push(s);
+          seen.add(id);
+        }
+      }
+      // Preserve any head candidates the reranker dropped, in fusion order.
+      for (const s of head) {
+        if (!seen.has(s.id)) ranked.push(s);
+      }
+      return ranked.concat(tail);
+    } catch {
+      return fused;
+    }
+  }
+
+  /**
+   * Backfill dense embeddings for sessions captured before an embedder was
+   * wired in (or whose best-effort embed failed at capture time). Hybrid
+   * search only ranks by cosine similarity for rows that actually carry a
+   * vector, so a store seeded from git history — or upgraded from a build
+   * without embeddings — silently degrades to keyword+recency-only until
+   * those rows are embedded. The weekly janitor calls this to close the gap.
+   *
+   * Bounded by `limit` per pass so a large cold store amortises the embed
+   * cost across several janitor runs instead of stalling one. Persists once
+   * at the end. Returns the number of rows embedded.
+   */
+  async backfillEmbeddings(limit = 200): Promise<number> {
+    if (!this.embedder || this.encryptionLockedOut) return 0;
+    const pending = this.db.sessions.filter((s) => !s.embedding).slice(0, limit);
+    if (pending.length === 0) return 0;
+    let embedded = 0;
+    for (const s of pending) {
+      const text = [
+        s.summary,
+        ...s.keyTopics,
+        ...s.keyFiles,
+        ...s.decisions,
+        ...s.problemsSolved,
+      ].join(' ');
+      let vec: number[] | undefined;
+      try {
+        vec = await this.embedder(text);
+      } catch {
+        vec = undefined;
+      }
+      if (!vec) continue;
+      // Re-resolve from the live db: a concurrent prune/evict may have dropped
+      // the row between scheduling and resolution.
+      const current = this.db.sessions.find((row) => row.id === s.id);
+      if (!current) continue;
+      current.embedding = vec;
+      embedded++;
+    }
+    if (embedded > 0) await this.flush();
+    return embedded;
   }
 
   /** True when writes are suspended to protect an undecryptable store. */
@@ -938,97 +1067,48 @@ export class ContextStore implements vscode.Disposable {
       embRanked.forEach((e, i) => embRankById!.set(e.s.id, i));
     }
 
-    const K = 60;
-    const now = Date.now();
-    // 7-day half-life for recency decay
-    const HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
     const termCount = baseTerms.size;
-    // Reinforcement normaliser — divides log(1 + max retrieved) so the
-    // strongest-used memory caps the boost at a fixed weight.
-    let maxRetrieved = 1;
-    for (const s of candidates) {
-      const r = s.usage?.retrieved ?? 0;
-      if (r > maxRetrieved) maxRetrieved = r;
-    }
-    const reinforcementNorm = Math.log(1 + maxRetrieved) || 1;
+    const now = Date.now();
 
     // Phase 5: pull learned weight multipliers. When learning hasn't yet
     // collected enough samples this returns 1.0 across the board and
     // ranking matches the static behaviour.
     const learned = this.adaptiveState.weights ?? defaultWeights();
+    // Fold intent weights + learned adaptation into the shared fusion weights
+    // so the in-process path and the MCP path score through ONE formula.
+    const fusionWeights: FusionWeights = {
+      keyword: weights.keywordWeight * learned.keyword,
+      recencyMultiplier: weights.recencyMultiplier * learned.recency,
+      confidence: learned.confidence,
+      reinforcement: learned.reinforcement,
+      feedback: learned.feedback,
+      decisionBoost: weights.decisionBoost,
+      problemBoost: weights.problemBoost,
+    };
 
-    const fused = candidates.map((s) => {
-      const kRank = keywordRankById.get(s.id) ?? K * 10;
-      const rRank = recencyRankById.get(s.id) ?? K * 10;
-      const kComponent = (1 / (K + kRank)) * weights.keywordWeight * learned.keyword;
-      const rComponent = 1 / (K + rRank);
-      let rrf = kComponent + rComponent;
-      if (embRankById) {
-        const eRank = embRankById.get(s.id) ?? K * 10;
-        rrf += 1 / (K + eRank);
-      }
-      // Exponential decay: 2^(-age/halfLife) weighted at 0.3 — intent
-      // weights can multiply this up for "recent"-flavoured queries.
-      const ageMs = Math.max(0, now - s.endTime);
-      const recencyValue = Math.pow(2, -ageMs / HALF_LIFE_MS);
-      const decay = recencyValue * 0.3 * weights.recencyMultiplier * learned.recency;
-      // Workspace boost
-      const wsBoost = wsId && s.workspaceId === wsId ? 0.15 : 0;
-      // Match-ratio boost: rewards sessions that hit more of the query
-      // terms. Caps the soft-union recall lift so a 1-of-4 match doesn't
-      // outrank a 4-of-4 match purely on recency.
-      const matchRatio = termCount > 0 ? (termMatchCount.get(s.id) ?? 0) / termCount : 0;
-      const matchBoost = matchRatio * 0.25;
-      // Confidence weight: low-confidence memories (no evidence, fallback
-      // compressor, heavy redaction) get gently down-ranked. Defaults to
-      // 0.5 for legacy sessions without a confidence score. Phase 3 uses
-      // the decayed effective confidence so stale memories also fade.
-      const confValue = effectiveConfidence(s) ?? 0.5;
-      const confBoost = (confValue - 0.5) * 0.1 * learned.confidence;
-      // Intent-driven decision/problem boosts (decision queries lift
-      // sessions with non-empty decisions, etc.).
-      const decisionBoost =
-        weights.decisionBoost > 0 && s.decisions.length > 0 ? weights.decisionBoost : 0;
-      const problemBoost =
-        weights.problemBoost > 0 && s.problemsSolved.length > 0 ? weights.problemBoost : 0;
-      // Supersession penalty — keeps the older row visible but well below
-      // its replacement.
-      const supersededPenalty = s.supersededBy ? -0.3 : 0;
-      // Local reinforcement: log-normalised retrieval count plus a
-      // tie-breaker for explicit accept/reject feedback.
-      const retrieved = s.usage?.retrieved ?? 0;
-      const reinforcementValue = Math.log(1 + retrieved) / reinforcementNorm;
-      const reinforcement = reinforcementValue * 0.1 * learned.reinforcement;
-      const accepted = s.usage?.accepted ?? 0;
-      const rejected = s.usage?.rejected ?? 0;
-      const feedbackValue = accepted - rejected;
-      const feedback = feedbackValue * 0.05 * learned.feedback;
-      // Snapshot the per-signal values so a later accept/reject can feed
-      // them back into the adaptive learner.
-      this.lastRetrievalSignals.set(s.id, {
-        keyword: 1 / (K + kRank),
-        recency: recencyValue,
-        confidence: confValue,
-        reinforcement: reinforcementValue,
-        feedback: feedbackValue,
-      });
-      return {
-        s,
-        score:
-          rrf +
-          decay +
-          wsBoost +
-          matchBoost +
-          confBoost +
-          decisionBoost +
-          problemBoost +
-          supersededPenalty +
-          reinforcement +
-          feedback,
-      };
-    });
+    const byId = new Map(candidates.map((s) => [s.id, s]));
+    const fusionInputs: FusionInput[] = candidates.map((s) => ({
+      id: s.id,
+      endTime: s.endTime,
+      keywordRank: keywordRankById.get(s.id) ?? FUSION_RANK_MISS,
+      recencyRank: recencyRankById.get(s.id) ?? FUSION_RANK_MISS,
+      embeddingRank: embRankById ? (embRankById.get(s.id) ?? FUSION_RANK_MISS) : undefined,
+      workspaceMatch: !!wsId && s.workspaceId === wsId,
+      matchRatio: termCount > 0 ? (termMatchCount.get(s.id) ?? 0) / termCount : 0,
+      confidence: effectiveConfidence(s) ?? 0.5,
+      retrieved: s.usage?.retrieved ?? 0,
+      accepted: s.usage?.accepted ?? 0,
+      rejected: s.usage?.rejected ?? 0,
+      superseded: !!s.supersededBy,
+      hasDecisions: s.decisions.length > 0,
+      hasProblems: s.problemsSolved.length > 0,
+    }));
 
-    fused.sort((a, b) => b.score - a.score || b.s.endTime - a.s.endTime);
+    const scored = fuseRanks(fusionInputs, fusionWeights, { now });
+    // Snapshot the per-signal values so a later accept/reject can feed them
+    // back into the adaptive learner.
+    for (const r of scored) this.lastRetrievalSignals.set(r.id, r.signals);
+    const fused = scored.map((r) => ({ s: byId.get(r.id)!, score: r.score }));
 
     // Near-duplicate collapse: drop entries whose keyTopics Jaccard ≥ 0.9 with
     // an earlier (higher-ranked) kept entry. Keeps the top-ranked representative.
@@ -1072,7 +1152,8 @@ export class ContextStore implements vscode.Disposable {
     // Over-fetch so post-filtering by freshness still yields ~limit results.
     const overFetch = Math.max(limit * 3, limit + 5);
     const raw = this.search(query, filters, overFetch, vec);
-    return this.filterByFreshness(raw, limit);
+    const reranked = await this.applyRerank(query, raw);
+    return this.filterByFreshness(reranked, limit);
   }
 
   /**
@@ -1523,10 +1604,47 @@ export class ContextStore implements vscode.Disposable {
     await this.writeGlobalState();
     // Best-effort mirror to ~/.ghcp-mem/sessions.json so the standalone
     // MCP server (used by Cursor/Cline/Windsurf) can read our store.
-    // Serialised through a queue to prevent interleaved writes from rapid
-    // successive addSession / tag / delete calls.
-    this.syncQueue = this.syncQueue.then(() => this.syncToDisk()).catch(() => {});
+    // Debounced (see scheduleDiskSync) so a burst of writes coalesces into a
+    // single full-DB serialize; globalState above already captured the change
+    // for crash recovery, so the mirror can lag a few hundred ms safely.
+    this.scheduleDiskSync();
     this.onChangeEmitter.fire();
+  }
+
+  /**
+   * Coalesce disk mirror writes. Marks the mirror dirty and (re)arms a short
+   * debounce timer; the actual serialize+write runs once the burst settles.
+   */
+  private scheduleDiskSync(): void {
+    this.diskDirty = true;
+    if (this.diskFlushTimer) return;
+    this.diskFlushTimer = setTimeout(() => {
+      this.diskFlushTimer = undefined;
+      this.flushDiskSync();
+    }, ContextStore.DISK_DEBOUNCE_MS);
+    // Don't keep the event loop (or test process) alive just for the mirror.
+    (this.diskFlushTimer as { unref?: () => void }).unref?.();
+  }
+
+  /** Enqueue the actual disk mirror if it is dirty. Returns the write promise. */
+  private flushDiskSync(): Promise<void> {
+    if (!this.diskDirty) return this.syncQueue;
+    this.diskDirty = false;
+    this.syncQueue = this.syncQueue.then(() => this.syncToDisk()).catch(() => {});
+    return this.syncQueue;
+  }
+
+  /**
+   * Force any pending debounced disk mirror out immediately and await it.
+   * Used by flush() and dispose() so the mirror is never left stale at a
+   * checkpoint the caller explicitly asked to durably persist.
+   */
+  async flushDiskNow(): Promise<void> {
+    if (this.diskFlushTimer) {
+      clearTimeout(this.diskFlushTimer);
+      this.diskFlushTimer = undefined;
+    }
+    await this.flushDiskSync();
   }
 
   /**
@@ -1544,6 +1662,7 @@ export class ContextStore implements vscode.Disposable {
    */
   async flush(): Promise<void> {
     await this.persist();
+    await this.flushDiskNow();
   }
 
   /**
@@ -1664,6 +1783,13 @@ export class ContextStore implements vscode.Disposable {
   }
 
   dispose(): void {
+    if (this.diskFlushTimer) {
+      clearTimeout(this.diskFlushTimer);
+      this.diskFlushTimer = undefined;
+    }
+    // Force any pending disk mirror out so a close mid-debounce doesn't lose
+    // the last write from the ~/.ghcp-mem mirror (globalState already has it).
+    void this.flushDiskSync();
     this.onChangeEmitter.dispose();
   }
 }

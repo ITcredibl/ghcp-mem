@@ -24,6 +24,49 @@ export interface JanitorReport {
   pruned: number;
   lessonsCreated: number;
   lessonsReinforced: number;
+  embeddingsBackfilled: number;
+}
+
+export interface IdleConsolidationReport {
+  lessonsCreated: number;
+  lessonsReinforced: number;
+  embeddingsBackfilled: number;
+}
+
+/**
+ * Sleep-time consolidation: the two cheap, side-effect-safe passes the weekly
+ * janitor also runs — lesson distillation and embedding backfill — but without
+ * the expensive full rescore/prune sweep. Meant to be triggered opportunistically
+ * while the developer is idle so hybrid search and durable lessons stay warm
+ * between weekly janitor ticks. Pure of any timer/UI concerns.
+ */
+export async function runIdleConsolidation(
+  store: ContextStore,
+  opts: { lessonMinSupport?: number } = {},
+): Promise<IdleConsolidationReport> {
+  const report: IdleConsolidationReport = {
+    lessonsCreated: 0,
+    lessonsReinforced: 0,
+    embeddingsBackfilled: 0,
+  };
+
+  const surviving = store.getAllSessions();
+  const { lessons, created, reinforced } = deriveLessons(surviving, store.getLessons(), {
+    minSupport: opts.lessonMinSupport ?? 2,
+  });
+  if (created > 0 || reinforced > 0) {
+    await store.setLessons(lessons);
+  }
+  report.lessonsCreated = created;
+  report.lessonsReinforced = reinforced;
+
+  try {
+    report.embeddingsBackfilled = await store.backfillEmbeddings();
+  } catch {
+    // Non-fatal: embedding is best-effort, never blocks idle consolidation.
+  }
+
+  return report;
 }
 
 export async function runJanitor(
@@ -37,6 +80,7 @@ export async function runJanitor(
     pruned: 0,
     lessonsCreated: 0,
     lessonsReinforced: 0,
+    embeddingsBackfilled: 0,
   };
   const sessions = store.getAllSessions();
   const now = Date.now();
@@ -110,6 +154,15 @@ export async function runJanitor(
   }
   report.lessonsCreated = created;
   report.lessonsReinforced = reinforced;
+
+  // Backfill dense embeddings for rows that never got one (git-seeded stores,
+  // pre-embedding upgrades, or capture-time embed failures) so hybrid search
+  // ranks the whole store, not just recently-captured sessions.
+  try {
+    report.embeddingsBackfilled = await store.backfillEmbeddings();
+  } catch {
+    // Non-fatal: embedding is a best-effort enhancement, never a janitor blocker.
+  }
 
   return report;
 }

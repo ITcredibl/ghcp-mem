@@ -72,8 +72,8 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 **Why it's worth your trust:**
 
-- **570 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
-- **Nine documented engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
+- **597 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **Documented, versioned engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
 - **`/compliance` chat command** prints a one-shot audit report (grounding coverage, trust distribution, conflict counts, redaction stats) — built for the security reviewers in your org, not just for engineers.
@@ -86,11 +86,11 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 |---|---|---|
 | **1. Install** | One click from the Marketplace, or `code --install-extension ITcredibl.ghcp-mem` | Activates on next VS Code launch. Zero config required. |
 | **2. Seed** | Accept the one-click prompt (or run **`GHCP-MEM: Seed Memory from Git History...`**) | Mines your repo's last 200 commits into searchable, redacted sessions in ~30 seconds — months of decisions, fixes, and deploys, remembered on day one |
-| **3. Ask** | Open Copilot Chat: `@mem /search why did we switch to X` — or just ask your usual question | Copilot starts with your project's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent*. On [real-repo benchmarks](docs/BENCHMARKS-REAL.md): recall@5 of 75–98%, p95 under 40ms at 10,000 sessions. |
+| **3. Ask** | Open Copilot Chat: `@mem /search why did we switch to X` — or just ask your usual question | Copilot starts with your project's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent*. On [real-repo benchmarks](docs/BENCHMARKS-REAL.md): recall@5 of 73–100%, p95 under 100ms at 10,000 sessions. |
 
 From then on it just captures as you work — edits, terminals, diagnostics, deploys — and every new chat starts caught up.
 
-**Our three promises while it runs:** everything stays **local** (no memory backend, zero open ports) · everything is **redacted** before it touches disk (26 rules + entropy catch-all + optional encryption at rest) · everything is **auditable** (every claim cites its evidence; `/compliance` prints the proof).
+**Our three promises while it runs:** everything stays **local** (no memory backend, zero open ports) · everything is **redacted** before it touches disk (30 rules + entropy catch-all + optional encryption at rest) · everything is **auditable** (every claim cites its evidence; `/compliance` prints the proof).
 
 That's it. No daemon to keep running. No cloud account to register. No vector DB to provision.
 
@@ -144,7 +144,7 @@ With GHCP-MEM in place:
 |---|---|---|
 | **🧠 Memory** | Persistent, structured record of what you changed, decided, fixed, deployed — captured locally from real editor events | `@mem /recent` · `@mem /entity src/<file>` |
 | **💰 Tokens** | Auto-routing primer in every Copilot session steers the agent to cheap MCP queries over file opens | `@mem /route <question>` shows the cost estimate |
-| **⚡ Performance** | Hybrid retrieval — BM25 + recency + embeddings + match-ratio + decayed confidence + reinforcement, tuned by per-user adaptive weights, gated by nDCG@K regression suite | `@mem /why <q> :: <id>` decomposes the score |
+| **⚡ Performance** | Hybrid retrieval — BM25 + recency + embeddings + match-ratio + decayed confidence + reinforcement, with an optional LM rerank on the top-K, tuned by per-user adaptive weights, gated by nDCG@K regression suite (marginal lift of each stage is published in the [real-world ablation](docs/BENCHMARKS-REAL.md)) | `@mem /why <q> :: <id>` decomposes the score |
 | **🤖 AI agentic coding** | Full MCP parity (14 tools), evidence-grounded decisions, conflict detection, score explainer, Mermaid graph export — for Cursor, Cline, Windsurf, Claude Desktop, Copilot CLI | `npx ghcp-mem-mcp` exposes all tools over stdio |
 
 It surfaces memory through:
@@ -166,7 +166,7 @@ It surfaces memory through:
 | **Runs with zero native dependencies** | No Bun, Python, SQLite binary, WASM, Chroma, or model downloads |
 | **Opens zero network ports** | No GHCP-MEM backend or telemetry. LM compression uses your existing Copilot subscription only |
 | **Stores data locally** | Memory stays on your machine under your control |
-| **Redacts secrets by default** | 26-rule dual-pass redaction + custom regex rules + custom-entity literal rules + `<private>...</private>` stripping |
+| **Redacts secrets by default** | 30-rule dual-pass redaction + custom regex rules + custom-entity literal rules + `<private>...</private>` stripping |
 | **Enterprise privacy controls** | Strict mode disables terminal capture, raw snippets, team export, and MCP write tools |
 | **Supports enterprise policy injection** | Optional remote policy URL appends centrally managed redaction rules on startup |
 | **Idle-triggered compression** | Auto-flush sessions when editor is inactive (configurable 0–300s timeout) |
@@ -282,7 +282,7 @@ Stop paying the Context Tax. Five minutes from install to proof:
 2. Open any workspace with git history and accept the **Seed from Git History** prompt (~30s)
 3. Open Copilot Chat and try **`@mem /search <something you shipped last month>`**
 4. Run **`GHCP-MEM: Capture Session Snapshot Now`** to capture today's work too
-5. Run **`@mem /savings`** after a few sessions to see session-by-session and lifetime token-savings _estimates_
+5. Run **`@mem /savings`** after a few sessions to see session-by-session and lifetime token-savings (measured with the model tokenizer when available)
 
 <details>
 <summary><b>📺 Watch the install in 5 seconds</b></summary>
@@ -348,14 +348,15 @@ Azure signals such as `azd`, `az`, `.bicep`, and `.tf` edits influence `deployme
 
 ### Secret redaction
 
-**18 generic patterns** including:
+**21 generic patterns** including:
 
 - AWS access key and secret
-- GitHub PATs
+- AWS account IDs and ARNs
+- GitHub PATs (classic and fine-grained)
 - npm tokens
 - OpenAI and Anthropic keys
 - Stripe live keys
-- Google API keys
+- Google API keys and GCP project IDs
 - Slack tokens
 - JWT and Bearer tokens
 - DB URL passwords
@@ -363,15 +364,16 @@ Azure signals such as `azd`, `az`, `.bicep`, and `.tf` edits influence `deployme
 - `password=` assignments
 - emails, IPv4 addresses, and credit cards
 
-**8 Azure-specific patterns** including:
+**9 Azure-specific patterns** including:
 
 - Storage, Service Bus, Cosmos, and SQL connection strings
 - SAS tokens
 - 88-character storage keys
 - service principal secrets
 - subscription and tenant GUIDs
+- Azure resource paths (`/subscriptions/.../resourceGroups/...`)
 
-Also strips user-tagged `<private>...</private>` blocks before persistence.
+**30 named rules in total**, plus an optional high-entropy catch-all. Also strips user-tagged `<private>...</private>` blocks before persistence.
 
 ### Hybrid retrieval
 
@@ -379,7 +381,7 @@ Also strips user-tagged `<private>...</private>` blocks before persistence.
   <img src="https://raw.githubusercontent.com/ITcredibl/ghcp-mem/main/images/diagrams/retrieval.png" alt="Hybrid retrieval with keyword, recency, embeddings, and rank fusion" width="800">
 </p>
 
-Retrieval blends keyword search, recency, embeddings when available, and deduplication so the right memories surface first.
+Retrieval blends keyword search (BM25), recency, embeddings when available, an optional LM rerank on the top-K candidates, and near-duplicate collapse so the right memories surface first. The benchmark harness publishes a per-stage ablation so the marginal lift of each signal is visible, not asserted.
 
 ### Progressive disclosure
 
@@ -409,7 +411,7 @@ A `📚 N sessions touched this file` lens appears at the top of every opened so
 | `@mem /recap [7d\|30d\|90d]` | Narrative engineering recap for sprint retros |
 | `@mem /related` | Sessions that touched the active file, grouped by recency |
 | `@mem /decisions [keyword]` | ADR-style decision log deduped across all sessions |
-| `@mem /savings` | Session and lifetime token-savings _estimates_ plus GPT-4o dollar-equivalent |
+| `@mem /savings` | Session and lifetime token-savings measurements plus GPT-4o dollar-equivalent |
 | `@mem /whereami` | Interruption-recovery brief: what you were doing, where you left off, your next step |
 | `@mem /debt` | Technical debt ledger — TODO/FIXME/HACK signals grouped by age and file |
 | `@mem /adr [topic]` | Formal Architecture Decision Record auto-generated from session history |
@@ -545,7 +547,7 @@ Copilot agent mode can call these without a separate MCP setup:
 | `/export` | `@mem /export a1b2c3d4` |
 | `/azure` | `@mem /azure key-vault` |
 | `/health` | `@mem /health` |
-| `/savings` | `@mem /savings` — per-session and lifetime token-savings _estimates_ with dollar-equivalent. Note: estimates derived from typical Copilot context windows, not measured against real Copilot sessions |
+| `/savings` | `@mem /savings` — per-session and lifetime token-savings with dollar-equivalent. Counts are **measured** with the active Copilot model's tokenizer when a chat model is available, falling back to a chars/4 heuristic offline |
 | `/related` | `@mem /related` — sessions touching the currently open file |
 | `/decisions` | `@mem /decisions` or `@mem /decisions auth` — ADR-style decision log |
 | `/standup` | `@mem /standup` or `@mem /standup yesterday` — AI daily standup note |
@@ -680,7 +682,7 @@ echo '...' | npx ghcp-mem-ci-seed --seed-label=prod-alert
 }
 ```
 
-All secrets are automatically redacted using the 26-rule set + any custom rules defined in settings.
+All secrets are automatically redacted using the 30-rule set + any custom rules defined in settings.
 
 ---
 
@@ -698,7 +700,7 @@ Key modules:
 
 | Module | Responsibility |
 |---|---|
-| `src/redactor.ts` | 26-rule secret and privacy redaction + user-defined regex rules |
+| `src/redactor.ts` | 30-rule secret and privacy redaction + user-defined regex rules |
 | `src/ciSeeder.ts` | Headless CLI for pre-seeding memory from CI/CD pipelines (reads JSON from stdin) |
 | `src/azureDetect.ts` | Azure subsystem detection |
 | `src/azureContext.ts` | `az` CLI snapshotting with cache and fallback |
@@ -772,4 +774,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.17.1** · local-first memory for Copilot</sub>
+<sub>**v1.18.0** · local-first memory for Copilot</sub>

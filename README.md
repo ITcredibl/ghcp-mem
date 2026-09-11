@@ -86,7 +86,7 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 |---|---|---|
 | **1. Install** | One click from the Marketplace, or `code --install-extension ITcredibl.ghcp-mem` | Activates on next VS Code launch. Zero config required. |
 | **2. Seed** | Accept the one-click prompt (or run **`GHCP-MEM: Seed Memory from Git History...`**) | Mines your repo's last 200 commits into searchable, redacted sessions in ~30 seconds — months of decisions, fixes, and deploys, remembered on day one |
-| **3. Ask** | Open Copilot Chat: `@mem /search why did we switch to X` — or just ask your usual question | Copilot starts with your project's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent*. On [real-repo benchmarks](docs/BENCHMARKS-REAL.md): recall@5 of 75–98%, p95 under 40ms at 10,000 sessions. |
+| **3. Ask** | Open Copilot Chat: `@mem /search why did we switch to X` — or just ask your usual question | Copilot starts with your project's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent*. On [real-repo benchmarks](docs/BENCHMARKS-REAL.md): recall@5 of 73–100%, p95 under 100ms at 10,000 sessions. |
 
 From then on it just captures as you work — edits, terminals, diagnostics, deploys — and every new chat starts caught up.
 

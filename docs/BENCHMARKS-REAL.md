@@ -4,7 +4,7 @@
 > real commit language, real file paths, real topic overlap. Reproduce with:
 > `npm run bench:real -- --full --write-doc` (shallow-clones the public repos, ~few MB each).
 
-_Generated 2026-07-08 · GHCP-MEM v1.14.0 · Node v25.9.0_
+_Generated 2026-09-11 · GHCP-MEM v1.17.1 · Node v25.2.1_
 
 ## Methodology
 
@@ -20,11 +20,11 @@ _Generated 2026-07-08 · GHCP-MEM v1.14.0 · Node v25.9.0_
 
 | Repo | Sessions | Gold (excl. ambiguous) | Recall@5 (kw / hybrid) | MRR (kw / hybrid) | nDCG@5 (kw / hybrid) | Canary leaks | Stale surfaced | p95 @natural / @1k / @10k |
 |---|---|---|---|---|---|---|---|---|
-| ghcp-mem (self) | 26 | 26 (0) | 85% / 85% | 0.79 / 0.83 | 0.80 / 0.83 | 0 | 0/5 | 0.1ms / 2.8ms / 33.7ms |
-| express | 150 | 40 (8) | 98% / 98% | 0.75 / 0.77 | 0.81 / 0.82 | 0 | 0/5 | 0.4ms / 3.4ms / 38.2ms |
-| flask | 150 | 40 (8) | 98% / 98% | 0.90 / 0.90 | 0.92 / 0.92 | 0 | 0/5 | 0.4ms / 3.3ms / 38.4ms |
-| terraform | 150 | 40 (3) | 75% / 75% | 0.69 / 0.70 | 0.70 / 0.71 | 0 | 0/5 | 0.3ms / 2.6ms / 30.3ms |
-| react | 150 | 40 (0) | 93% / 93% | 0.91 / 0.91 | 0.91 / 0.91 | 0 | 0/5 | 0.2ms / 1.8ms / 18.1ms |
+| ghcp-mem (self) | 29 | 29 (0) | 97% / 100% | 0.88 / 0.90 | 0.90 / 0.92 | 0 | 0/5 | 0.3ms / 6.6ms / 55.5ms |
+| express | 150 | 40 (7) | 98% / 98% | 0.75 / 0.75 | 0.81 / 0.81 | 0 | 0/5 | 0.4ms / 4.0ms / 47.2ms |
+| flask | 150 | 40 (9) | 95% / 95% | 0.81 / 0.82 | 0.85 / 0.85 | 0 | 0/5 | 0.9ms / 5.8ms / 52.2ms |
+| terraform | 150 | 40 (2) | 73% / 73% | 0.66 / 0.66 | 0.68 / 0.68 | 0 | 0/5 | 1.4ms / 6.5ms / 74.7ms |
+| react | 150 | 40 (0) | 95% / 95% | 0.86 / 0.91 | 0.89 / 0.92 | 0 | 0/5 | 0.6ms / 5.4ms / 45.9ms |
 
 ## Reading the numbers
 
@@ -32,3 +32,60 @@ _Generated 2026-07-08 · GHCP-MEM v1.14.0 · Node v25.9.0_
 - **Stale surfaced must be 0/5** — retracted memory must never reach retrieval.
 - Recall/MRR on real corpora runs lower than synthetic benches by construction: real commit vocabulary collides ("fix build", "update deps") in ways invented topic words never do. That is the point of this harness.
 - The hybrid column shows the shipped default; the keyword column is the ablation baseline.
+
+## Retrieval-stage ablation
+
+Each signal turned on one at a time, always through the shipped code paths
+(`searchCore` exports + the real `ContextStore` methods). `+ rerank` uses a
+lexical-overlap proxy for the LM reranker so the row is reproducible offline —
+it is a lower bound on, not a substitute for, a real cross-encoder.
+
+### ghcp-mem (self)
+
+| Stage | Recall@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| recency-only | 17% | 0.12 | 0.10 |
+| bm25-only | 100% | 1.00 | 1.00 |
+| keyword+recency (RRF) | 100% | 0.90 | 0.92 |
+| + embeddings (hybrid) | 100% | 0.90 | 0.92 |
+| + rerank (lexical proxy) | 100% | 1.00 | 1.00 |
+
+### express
+
+| Stage | Recall@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| recency-only | 13% | 0.08 | 0.07 |
+| bm25-only | 100% | 0.99 | 0.99 |
+| keyword+recency (RRF) | 98% | 0.76 | 0.82 |
+| + embeddings (hybrid) | 98% | 0.80 | 0.85 |
+| + rerank (lexical proxy) | 98% | 0.98 | 0.98 |
+
+### flask
+
+| Stage | Recall@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| recency-only | 10% | 0.05 | 0.05 |
+| bm25-only | 100% | 0.96 | 0.97 |
+| keyword+recency (RRF) | 95% | 0.82 | 0.85 |
+| + embeddings (hybrid) | 95% | 0.83 | 0.86 |
+| + rerank (lexical proxy) | 95% | 0.86 | 0.89 |
+
+### terraform
+
+| Stage | Recall@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| recency-only | 13% | 0.08 | 0.07 |
+| bm25-only | 100% | 1.00 | 1.00 |
+| keyword+recency (RRF) | 73% | 0.66 | 0.68 |
+| + embeddings (hybrid) | 73% | 0.66 | 0.68 |
+| + rerank (lexical proxy) | 73% | 0.73 | 0.73 |
+
+### react
+
+| Stage | Recall@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| recency-only | 13% | 0.09 | 0.07 |
+| bm25-only | 100% | 1.00 | 1.00 |
+| keyword+recency (RRF) | 95% | 0.93 | 0.93 |
+| + embeddings (hybrid) | 95% | 0.94 | 0.94 |
+| + rerank (lexical proxy) | 95% | 0.95 | 0.95 |

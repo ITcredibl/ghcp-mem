@@ -886,10 +886,10 @@
         },
         "ghcpMem.startupContextSessionCount": {
           "type": "number",
-          "default": 5,
+          "default": 3,
           "minimum": 1,
           "maximum": 20,
-          "description": "Number of recent sessions to include in the auto-injected instructions file."
+          "description": "Number of recent sessions to include in the auto-injected instructions file. Kept small on purpose: the routing primer plus the top few sessions are injected statically, and everything else is retrieved on demand via @mem /search and the ghcpMem_* tools."
         },
         "ghcpMem.projectRules": {
           "type": "boolean",

@@ -525,7 +525,7 @@ export function getConfig(): PluginConfig {
     localEmbeddings: cfg.get('localEmbeddings', true),
     excludeGlobs: cfg.get('excludeGlobs', []),
     autoInjectStartupContext: cfg.get('autoInjectStartupContext', true),
-    startupContextSessionCount: clampNum(cfg.get('startupContextSessionCount', 5), 1, 20, 5),
+    startupContextSessionCount: clampNum(cfg.get('startupContextSessionCount', 3), 1, 20, 3),
     projectRules: cfg.get('projectRules', true),
     scope: githubCompatibleMode ? 'repo' : scope,
     globalTags: normalizeGlobalTags(cfg.get<string[]>('globalTags', ['global'])),

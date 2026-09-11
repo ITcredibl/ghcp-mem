@@ -14,7 +14,7 @@ import { matchFilePath } from '../pathMatch';
 import {
   estimateSessionTokenSavings,
   estimateTokenSavingsUsd,
-  aggregateTokenSavings,
+  aggregateTokenSavingsMeasured,
 } from '../savings';
 import { buildEntityRecord, renderEntityMarkdown } from '../entity';
 import { getCausalNeighbors, renderCausalNeighbors } from '../causalGraph';
@@ -132,7 +132,8 @@ export async function search(
   // Outbound OTel: this query was answered from local memory rather than by
   // re-expanding files into the model context. Export the token savings (no-op
   // unless the user configured an OTLP endpoint). Fire-and-forget, never throws.
-  const agg = aggregateTokenSavings(results);
+  // Uses the real model tokenizer when wired, else the chars/4 heuristic.
+  const agg = await aggregateTokenSavingsMeasured(results);
   emitSavedQuery(
     {
       operation: 'search',

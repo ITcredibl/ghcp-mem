@@ -18,6 +18,7 @@ import {
   MemoryLessonsTool,
 } from './memoryTool';
 import { getEmbedder, makeLocalEmbedder } from './embeddings';
+import { setTokenCounter } from './savings';
 import { captureAzureContext, applyPreserveLevel } from './azureContext';
 import { AzureSubsystem } from './azureDetect';
 import { getConfig, CompressedSession, AzureContextMeta, SessionEvent } from './types';
@@ -223,6 +224,23 @@ export async function activate(context: vscode.ExtensionContext) {
         log('INFO', 'Embedding-based hybrid search enabled (local lexical fallback).');
       }
     });
+
+  // Measured token savings: wire VS Code's real model tokenizer so the OTel
+  // export reports exact counts instead of the chars/4 heuristic. Best effort —
+  // selecting a model for countTokens never prompts for consent (only
+  // sendRequest does), and any failure leaves the heuristic in place.
+  void (async () => {
+    try {
+      const models = await vscode.lm.selectChatModels();
+      const model = models[0];
+      if (model) {
+        setTokenCounter((text) => Promise.resolve(model.countTokens(text)));
+        log('INFO', 'Measured token savings enabled (vscode.lm tokenizer).');
+      }
+    } catch {
+      /* keep chars/4 heuristic */
+    }
+  })();
 
   startCompressionTimer(config.compressionIntervalMinutes, config.idleTimeoutSeconds);
   startJanitorTimer();

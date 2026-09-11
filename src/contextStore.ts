@@ -111,6 +111,17 @@ export class ContextStore implements vscode.Disposable {
   private lastBackupAt = 0;
   /** Queue to serialize syncToDisk calls and prevent interleaved writes. */
   private syncQueue: Promise<void> = Promise.resolve();
+  /**
+   * Disk-mirror coalescing (v1.18): a burst of addSession/tag/delete calls
+   * used to each re-serialize the WHOLE database and write it to
+   * `~/.ghcp-mem/sessions.json`. globalState (the source of truth) is still
+   * written on every persist, but the disk mirror — the expensive full-DB
+   * JSON serialize + tmp-write + rename — is now debounced so a rapid burst
+   * collapses into a single write. `flush()` and `dispose()` force it out.
+   */
+  private diskDirty = false;
+  private diskFlushTimer?: ReturnType<typeof setTimeout>;
+  private static readonly DISK_DEBOUNCE_MS = 400;
 
   /**
    * Set when the stored payload is encrypted but no (or the wrong) key was
@@ -1478,10 +1489,47 @@ export class ContextStore implements vscode.Disposable {
     await this.writeGlobalState();
     // Best-effort mirror to ~/.ghcp-mem/sessions.json so the standalone
     // MCP server (used by Cursor/Cline/Windsurf) can read our store.
-    // Serialised through a queue to prevent interleaved writes from rapid
-    // successive addSession / tag / delete calls.
-    this.syncQueue = this.syncQueue.then(() => this.syncToDisk()).catch(() => {});
+    // Debounced (see scheduleDiskSync) so a burst of writes coalesces into a
+    // single full-DB serialize; globalState above already captured the change
+    // for crash recovery, so the mirror can lag a few hundred ms safely.
+    this.scheduleDiskSync();
     this.onChangeEmitter.fire();
+  }
+
+  /**
+   * Coalesce disk mirror writes. Marks the mirror dirty and (re)arms a short
+   * debounce timer; the actual serialize+write runs once the burst settles.
+   */
+  private scheduleDiskSync(): void {
+    this.diskDirty = true;
+    if (this.diskFlushTimer) return;
+    this.diskFlushTimer = setTimeout(() => {
+      this.diskFlushTimer = undefined;
+      this.flushDiskSync();
+    }, ContextStore.DISK_DEBOUNCE_MS);
+    // Don't keep the event loop (or test process) alive just for the mirror.
+    (this.diskFlushTimer as { unref?: () => void }).unref?.();
+  }
+
+  /** Enqueue the actual disk mirror if it is dirty. Returns the write promise. */
+  private flushDiskSync(): Promise<void> {
+    if (!this.diskDirty) return this.syncQueue;
+    this.diskDirty = false;
+    this.syncQueue = this.syncQueue.then(() => this.syncToDisk()).catch(() => {});
+    return this.syncQueue;
+  }
+
+  /**
+   * Force any pending debounced disk mirror out immediately and await it.
+   * Used by flush() and dispose() so the mirror is never left stale at a
+   * checkpoint the caller explicitly asked to durably persist.
+   */
+  async flushDiskNow(): Promise<void> {
+    if (this.diskFlushTimer) {
+      clearTimeout(this.diskFlushTimer);
+      this.diskFlushTimer = undefined;
+    }
+    await this.flushDiskSync();
   }
 
   /**
@@ -1499,6 +1547,7 @@ export class ContextStore implements vscode.Disposable {
    */
   async flush(): Promise<void> {
     await this.persist();
+    await this.flushDiskNow();
   }
 
   /**
@@ -1619,6 +1668,13 @@ export class ContextStore implements vscode.Disposable {
   }
 
   dispose(): void {
+    if (this.diskFlushTimer) {
+      clearTimeout(this.diskFlushTimer);
+      this.diskFlushTimer = undefined;
+    }
+    // Force any pending disk mirror out so a close mid-debounce doesn't lose
+    // the last write from the ~/.ghcp-mem mirror (globalState already has it).
+    void this.flushDiskSync();
     this.onChangeEmitter.dispose();
   }
 }

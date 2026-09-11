@@ -40,6 +40,29 @@ test('ContextStore — addSession stores a new session', async () => {
   assert.equal(store.getAllSessions().length, 1);
 });
 
+test('ContextStore — disk mirror coalesces a burst into one write, flush forces it', async () => {
+  const mem = new InMemoryMemento() as any;
+  const store = new ContextStore(mem);
+  let writes = 0;
+  // Replace the real ~/.ghcp-mem mirror with a counter so the test never
+  // touches the developer's home directory and can observe coalescing.
+  (store as any).syncToDisk = async () => {
+    writes += 1;
+  };
+  // A burst of three writes should schedule the debounce but not fire it yet.
+  await store.addSession(makeSession({ summary: 'burst a' }));
+  await store.addSession(makeSession({ summary: 'burst b' }));
+  await store.addSession(makeSession({ summary: 'burst c' }));
+  assert.equal(writes, 0, 'debounced mirror must not fire synchronously');
+  // Forcing the pending mirror collapses the burst into a single write.
+  await store.flushDiskNow();
+  assert.equal(writes, 1, 'burst of three persists must coalesce to one disk write');
+  // A subsequent change + flush writes exactly once more.
+  await store.addSession(makeSession({ summary: 'burst d' }));
+  await store.flushDiskNow();
+  assert.equal(writes, 2);
+});
+
 test('ContextStore — dedup on identical contentHash', async () => {
   const mem = new InMemoryMemento() as any;
   const store = new ContextStore(mem);

@@ -183,3 +183,175 @@ export function keywordScoreFromStats(
   }
   return score;
 }
+
+// ---------------------------------------------------------------------------
+// Rank fusion — the single source of truth for how keyword / recency /
+// embedding ranks and the per-session boosts (confidence, reinforcement,
+// supersession, match-ratio, decision/problem intent) combine into one score.
+//
+// Extracted here so ContextStore.search (in-process) and mcpServer.searchSessions
+// (out-of-process stdio) share ONE fusion formula. Before this, the two paths
+// each carried their own fusion: the MCP path had a stripped RRF with no
+// confidence, supersession, reinforcement or match-ratio signals, so external
+// clients (Cursor / Cline / Claude Desktop) silently got worse ranking than the
+// in-VS-Code @mem participant. Same class of bug as the v1.1.5 dual-scorer.
+//
+// Kept vscode-free and dependency-free: callers precompute the ranks and the
+// plain-number signal inputs, so this module stays importable from a bare Node
+// process under stdio.
+// ---------------------------------------------------------------------------
+
+/** RRF fusion constant — rank offset `1/(K+rank)`. */
+export const FUSION_K = 60;
+/** Recency half-life for the exponential decay boost (ms). */
+export const FUSION_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Rank assigned to a session absent from a given rank map. */
+export const FUSION_RANK_MISS = FUSION_K * 10;
+
+/**
+ * Multipliers applied to the fusion components. Intent weights (from
+ * `queryIntent`) and adaptive learned weights are folded into these by the
+ * caller so this module needs no knowledge of either.
+ */
+export interface FusionWeights {
+  /** Multiplies the keyword RRF component (intent.keywordWeight × learned.keyword). */
+  keyword: number;
+  /** Multiplies the recency decay boost (intent.recencyMultiplier × learned.recency). */
+  recencyMultiplier: number;
+  /** Multiplies the confidence boost (learned.confidence). */
+  confidence: number;
+  /** Multiplies the reinforcement boost (learned.reinforcement). */
+  reinforcement: number;
+  /** Multiplies the accept/reject feedback boost (learned.feedback). */
+  feedback: number;
+  /** Additive boost when the session has decisions (intent.decisionBoost). */
+  decisionBoost: number;
+  /** Additive boost when the session has problemsSolved (intent.problemBoost). */
+  problemBoost: number;
+}
+
+/** Neutral weights: no intent reweighting, no learned adaptation, no intent boosts. */
+export const NEUTRAL_FUSION_WEIGHTS: FusionWeights = {
+  keyword: 1,
+  recencyMultiplier: 1,
+  confidence: 1,
+  reinforcement: 1,
+  feedback: 1,
+  decisionBoost: 0,
+  problemBoost: 0,
+};
+
+/** Precomputed per-session inputs to the fusion. All plain numbers/booleans. */
+export interface FusionInput {
+  id: string;
+  /** Session end time (ms) — recency decay + final tie-break. */
+  endTime: number;
+  /** 0-based rank in the keyword-score ordering. Use FUSION_RANK_MISS if absent. */
+  keywordRank: number;
+  /** 0-based rank in the recency ordering. Use FUSION_RANK_MISS if absent. */
+  recencyRank: number;
+  /** 0-based rank in the embedding-similarity ordering, or undefined when embeddings are off. */
+  embeddingRank?: number;
+  /** True when the session belongs to the active workspace. */
+  workspaceMatch: boolean;
+  /** Fraction of the (un-expanded) query terms this session matched, 0..1. */
+  matchRatio: number;
+  /** Effective (decayed) confidence, 0..1. Legacy sessions pass 0.5. */
+  confidence: number;
+  /** usage.retrieved count. */
+  retrieved: number;
+  /** usage.accepted count. */
+  accepted: number;
+  /** usage.rejected count. */
+  rejected: number;
+  /** Session is superseded by a newer one — down-rank but keep visible. */
+  superseded: boolean;
+  /** Session has at least one decision. */
+  hasDecisions: boolean;
+  /** Session has at least one solved problem. */
+  hasProblems: boolean;
+}
+
+/** Fused score plus the raw per-signal values (for the adaptive learner snapshot). */
+export interface FusionScored {
+  id: string;
+  score: number;
+  endTime: number;
+  /** Raw (pre-weight) signal values, identical to what search() snapshots. */
+  signals: {
+    keyword: number;
+    recency: number;
+    confidence: number;
+    reinforcement: number;
+    feedback: number;
+  };
+}
+
+/**
+ * Fuse ranks + boosts into a sorted score list (descending, tie-broken by
+ * endTime). Numerically identical to the formula ContextStore.search shipped
+ * before extraction — same RRF constants, same 0.3 decay weight, same 0.15
+ * workspace boost, 0.25 match boost, 0.1 confidence/reinforcement, 0.05
+ * feedback, and -0.3 supersession penalty.
+ */
+export function fuseRanks(
+  inputs: FusionInput[],
+  weights: FusionWeights,
+  opts: { now?: number; maxRetrieved?: number } = {},
+): FusionScored[] {
+  const now = opts.now ?? Date.now();
+  let maxRetrieved = opts.maxRetrieved ?? 1;
+  if (opts.maxRetrieved === undefined) {
+    for (const i of inputs) if (i.retrieved > maxRetrieved) maxRetrieved = i.retrieved;
+  }
+  const reinforcementNorm = Math.log(1 + maxRetrieved) || 1;
+
+  const scored = inputs.map((i) => {
+    const kRaw = 1 / (FUSION_K + i.keywordRank);
+    const rComponent = 1 / (FUSION_K + i.recencyRank);
+    let rrf = kRaw * weights.keyword + rComponent;
+    if (i.embeddingRank !== undefined) rrf += 1 / (FUSION_K + i.embeddingRank);
+
+    const ageMs = Math.max(0, now - i.endTime);
+    const recencyValue = Math.pow(2, -ageMs / FUSION_HALF_LIFE_MS);
+    const decay = recencyValue * 0.3 * weights.recencyMultiplier;
+
+    const wsBoost = i.workspaceMatch ? 0.15 : 0;
+    const matchBoost = i.matchRatio * 0.25;
+    const confBoost = (i.confidence - 0.5) * 0.1 * weights.confidence;
+    const decisionBoost = weights.decisionBoost > 0 && i.hasDecisions ? weights.decisionBoost : 0;
+    const problemBoost = weights.problemBoost > 0 && i.hasProblems ? weights.problemBoost : 0;
+    const supersededPenalty = i.superseded ? -0.3 : 0;
+
+    const reinforcementValue = Math.log(1 + i.retrieved) / reinforcementNorm;
+    const reinforcement = reinforcementValue * 0.1 * weights.reinforcement;
+    const feedbackValue = i.accepted - i.rejected;
+    const feedback = feedbackValue * 0.05 * weights.feedback;
+
+    return {
+      id: i.id,
+      endTime: i.endTime,
+      score:
+        rrf +
+        decay +
+        wsBoost +
+        matchBoost +
+        confBoost +
+        decisionBoost +
+        problemBoost +
+        supersededPenalty +
+        reinforcement +
+        feedback,
+      signals: {
+        keyword: kRaw,
+        recency: recencyValue,
+        confidence: i.confidence,
+        reinforcement: reinforcementValue,
+        feedback: feedbackValue,
+      },
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score || b.endTime - a.endTime);
+  return scored;
+}

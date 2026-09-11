@@ -9,6 +9,10 @@ import {
   computeTermStats,
   keywordScoreFromStats,
   SessionTermStats,
+  fuseRanks,
+  FusionInput,
+  FusionWeights,
+  FUSION_RANK_MISS,
 } from './searchCore';
 import { validateSessions } from './validator';
 import { getRepoScopeSync } from './repoScope';
@@ -938,97 +942,48 @@ export class ContextStore implements vscode.Disposable {
       embRanked.forEach((e, i) => embRankById!.set(e.s.id, i));
     }
 
-    const K = 60;
-    const now = Date.now();
-    // 7-day half-life for recency decay
-    const HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
     const termCount = baseTerms.size;
-    // Reinforcement normaliser — divides log(1 + max retrieved) so the
-    // strongest-used memory caps the boost at a fixed weight.
-    let maxRetrieved = 1;
-    for (const s of candidates) {
-      const r = s.usage?.retrieved ?? 0;
-      if (r > maxRetrieved) maxRetrieved = r;
-    }
-    const reinforcementNorm = Math.log(1 + maxRetrieved) || 1;
+    const now = Date.now();
 
     // Phase 5: pull learned weight multipliers. When learning hasn't yet
     // collected enough samples this returns 1.0 across the board and
     // ranking matches the static behaviour.
     const learned = this.adaptiveState.weights ?? defaultWeights();
+    // Fold intent weights + learned adaptation into the shared fusion weights
+    // so the in-process path and the MCP path score through ONE formula.
+    const fusionWeights: FusionWeights = {
+      keyword: weights.keywordWeight * learned.keyword,
+      recencyMultiplier: weights.recencyMultiplier * learned.recency,
+      confidence: learned.confidence,
+      reinforcement: learned.reinforcement,
+      feedback: learned.feedback,
+      decisionBoost: weights.decisionBoost,
+      problemBoost: weights.problemBoost,
+    };
 
-    const fused = candidates.map((s) => {
-      const kRank = keywordRankById.get(s.id) ?? K * 10;
-      const rRank = recencyRankById.get(s.id) ?? K * 10;
-      const kComponent = (1 / (K + kRank)) * weights.keywordWeight * learned.keyword;
-      const rComponent = 1 / (K + rRank);
-      let rrf = kComponent + rComponent;
-      if (embRankById) {
-        const eRank = embRankById.get(s.id) ?? K * 10;
-        rrf += 1 / (K + eRank);
-      }
-      // Exponential decay: 2^(-age/halfLife) weighted at 0.3 — intent
-      // weights can multiply this up for "recent"-flavoured queries.
-      const ageMs = Math.max(0, now - s.endTime);
-      const recencyValue = Math.pow(2, -ageMs / HALF_LIFE_MS);
-      const decay = recencyValue * 0.3 * weights.recencyMultiplier * learned.recency;
-      // Workspace boost
-      const wsBoost = wsId && s.workspaceId === wsId ? 0.15 : 0;
-      // Match-ratio boost: rewards sessions that hit more of the query
-      // terms. Caps the soft-union recall lift so a 1-of-4 match doesn't
-      // outrank a 4-of-4 match purely on recency.
-      const matchRatio = termCount > 0 ? (termMatchCount.get(s.id) ?? 0) / termCount : 0;
-      const matchBoost = matchRatio * 0.25;
-      // Confidence weight: low-confidence memories (no evidence, fallback
-      // compressor, heavy redaction) get gently down-ranked. Defaults to
-      // 0.5 for legacy sessions without a confidence score. Phase 3 uses
-      // the decayed effective confidence so stale memories also fade.
-      const confValue = effectiveConfidence(s) ?? 0.5;
-      const confBoost = (confValue - 0.5) * 0.1 * learned.confidence;
-      // Intent-driven decision/problem boosts (decision queries lift
-      // sessions with non-empty decisions, etc.).
-      const decisionBoost =
-        weights.decisionBoost > 0 && s.decisions.length > 0 ? weights.decisionBoost : 0;
-      const problemBoost =
-        weights.problemBoost > 0 && s.problemsSolved.length > 0 ? weights.problemBoost : 0;
-      // Supersession penalty — keeps the older row visible but well below
-      // its replacement.
-      const supersededPenalty = s.supersededBy ? -0.3 : 0;
-      // Local reinforcement: log-normalised retrieval count plus a
-      // tie-breaker for explicit accept/reject feedback.
-      const retrieved = s.usage?.retrieved ?? 0;
-      const reinforcementValue = Math.log(1 + retrieved) / reinforcementNorm;
-      const reinforcement = reinforcementValue * 0.1 * learned.reinforcement;
-      const accepted = s.usage?.accepted ?? 0;
-      const rejected = s.usage?.rejected ?? 0;
-      const feedbackValue = accepted - rejected;
-      const feedback = feedbackValue * 0.05 * learned.feedback;
-      // Snapshot the per-signal values so a later accept/reject can feed
-      // them back into the adaptive learner.
-      this.lastRetrievalSignals.set(s.id, {
-        keyword: 1 / (K + kRank),
-        recency: recencyValue,
-        confidence: confValue,
-        reinforcement: reinforcementValue,
-        feedback: feedbackValue,
-      });
-      return {
-        s,
-        score:
-          rrf +
-          decay +
-          wsBoost +
-          matchBoost +
-          confBoost +
-          decisionBoost +
-          problemBoost +
-          supersededPenalty +
-          reinforcement +
-          feedback,
-      };
-    });
+    const byId = new Map(candidates.map((s) => [s.id, s]));
+    const fusionInputs: FusionInput[] = candidates.map((s) => ({
+      id: s.id,
+      endTime: s.endTime,
+      keywordRank: keywordRankById.get(s.id) ?? FUSION_RANK_MISS,
+      recencyRank: recencyRankById.get(s.id) ?? FUSION_RANK_MISS,
+      embeddingRank: embRankById ? (embRankById.get(s.id) ?? FUSION_RANK_MISS) : undefined,
+      workspaceMatch: !!wsId && s.workspaceId === wsId,
+      matchRatio: termCount > 0 ? (termMatchCount.get(s.id) ?? 0) / termCount : 0,
+      confidence: effectiveConfidence(s) ?? 0.5,
+      retrieved: s.usage?.retrieved ?? 0,
+      accepted: s.usage?.accepted ?? 0,
+      rejected: s.usage?.rejected ?? 0,
+      superseded: !!s.supersededBy,
+      hasDecisions: s.decisions.length > 0,
+      hasProblems: s.problemsSolved.length > 0,
+    }));
 
-    fused.sort((a, b) => b.score - a.score || b.s.endTime - a.s.endTime);
+    const scored = fuseRanks(fusionInputs, fusionWeights, { now });
+    // Snapshot the per-signal values so a later accept/reject can feed them
+    // back into the adaptive learner.
+    for (const r of scored) this.lastRetrievalSignals.set(r.id, r.signals);
+    const fused = scored.map((r) => ({ s: byId.get(r.id)!, score: r.score }));
 
     // Near-duplicate collapse: drop entries whose keyTopics Jaccard ≥ 0.9 with
     // an earlier (higher-ranked) kept entry. Keeps the top-ranked representative.

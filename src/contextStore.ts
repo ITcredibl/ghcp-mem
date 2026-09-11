@@ -72,6 +72,18 @@ export interface SearchFilters {
 }
 
 /**
+ * Optional semantic reranker. Given the query and the fused top-K candidates
+ * (id + a short text blob), returns the candidate ids in the model's preferred
+ * order. Ids omitted from the result keep their original relative order after
+ * the ranked ones. Any throw/empty result falls back to the fusion order, so a
+ * reranker can never make retrieval *worse* than the offline baseline.
+ */
+export type RerankFn = (
+  query: string,
+  candidates: { id: string; text: string }[],
+) => Promise<string[]>;
+
+/**
  * Persistent store with an in-memory inverted index for fast text search.
  * Improvements over claude-mem:
  *   - No SQLite/Bun/Chroma native dependencies — uses VS Code globalState
@@ -108,6 +120,13 @@ export class ContextStore implements vscode.Disposable {
    * can't accidentally replace it with an incompatible function shape.
    */
   private embedder?: EmbeddingFn;
+  /**
+   * Optional LM reranker (v1.18): when wired, `searchWithEmbedding` reorders
+   * the top-K fused candidates with a semantic reranker before freshness
+   * filtering. Off by default — the offline BM25 + RRF + recency fusion stays
+   * the deterministic baseline, so retrieval never *requires* a model round-trip.
+   */
+  private reranker?: RerankFn;
   private lastBackupAt = 0;
   /** Queue to serialize syncToDisk calls and prevent interleaved writes. */
   private syncQueue: Promise<void> = Promise.resolve();
@@ -163,6 +182,58 @@ export class ContextStore implements vscode.Disposable {
   /** Whether an embedder has been wired in. */
   hasEmbedder(): boolean {
     return !!this.embedder;
+  }
+
+  /** Wire in an optional LM reranker. Retrieval stays offline until this is set. */
+  setReranker(fn: RerankFn): void {
+    this.reranker = fn;
+  }
+
+  /** Whether a reranker has been wired in. */
+  hasReranker(): boolean {
+    return !!this.reranker;
+  }
+
+  /**
+   * Reorder the fused candidates with the wired reranker over the top-K only.
+   * Returns the input unchanged when no reranker is set, the query is empty,
+   * or the reranker throws / returns nothing — so it is always safe to call.
+   */
+  private async applyRerank(
+    query: string,
+    fused: CompressedSession[],
+    topK = 20,
+  ): Promise<CompressedSession[]> {
+    if (!this.reranker || !query.trim() || fused.length < 2) return fused;
+    const head = fused.slice(0, topK);
+    const tail = fused.slice(topK);
+    try {
+      const order = await this.reranker(
+        query,
+        head.map((s) => ({
+          id: s.id,
+          text: `${s.summary} ${s.keyTopics.join(' ')} ${s.decisions.join(' ')}`.slice(0, 512),
+        })),
+      );
+      if (!order || order.length === 0) return fused;
+      const byId = new Map(head.map((s) => [s.id, s]));
+      const ranked: CompressedSession[] = [];
+      const seen = new Set<string>();
+      for (const id of order) {
+        const s = byId.get(id);
+        if (s && !seen.has(id)) {
+          ranked.push(s);
+          seen.add(id);
+        }
+      }
+      // Preserve any head candidates the reranker dropped, in fusion order.
+      for (const s of head) {
+        if (!seen.has(s.id)) ranked.push(s);
+      }
+      return ranked.concat(tail);
+    } catch {
+      return fused;
+    }
   }
 
   /**
@@ -1081,7 +1152,8 @@ export class ContextStore implements vscode.Disposable {
     // Over-fetch so post-filtering by freshness still yields ~limit results.
     const overFetch = Math.max(limit * 3, limit + 5);
     const raw = this.search(query, filters, overFetch, vec);
-    return this.filterByFreshness(raw, limit);
+    const reranked = await this.applyRerank(query, raw);
+    return this.filterByFreshness(reranked, limit);
   }
 
   /**

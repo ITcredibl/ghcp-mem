@@ -239,7 +239,7 @@ sequenceDiagram
     participant MCP as 🔌 mcpServer.js
     participant STORE as 🗂️ ~/.ghcp-mem/<br/>sessions.json
     CLI->>MCP: initialize (JSON-RPC 2024-11-05)
-    MCP-->>CLI: serverInfo { name: ghcp-mem, version: 1.6.0 }
+    MCP-->>CLI: serverInfo { name: ghcp-mem, version: 1.17.1 }
     CLI->>MCP: notifications/initialized
     CLI->>MCP: tools/list
     MCP->>STORE: mtime check (cached)

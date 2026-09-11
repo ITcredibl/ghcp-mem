@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { InMemoryMemento } from './__mocks__/vscode';
 import { ContextStore } from '../contextStore';
 import { CompressedSession, computeContentHash } from '../types';
-import { runJanitor } from '../janitor';
+import { runJanitor, runIdleConsolidation } from '../janitor';
 import { makePinnedLesson } from '../lessons';
 
 function makeSession(overrides: Partial<CompressedSession> = {}): CompressedSession {
@@ -178,4 +178,21 @@ test('janitor — backfills embeddings for rows captured without a vector', asyn
   // A second pass has nothing left to backfill.
   const report2 = await runJanitor(store, { qualityFloor: 0.0, pruneAfterDays: 0 });
   assert.equal(report2.embeddingsBackfilled, 0);
+});
+
+test('idle consolidation — backfills embeddings without rescoring or pruning', async () => {
+  const store = new ContextStore(new InMemoryMemento() as any);
+  await store.addSession(makeSession({ id: 'i1', summary: 'alpha idle warm' }));
+  await store.addSession(makeSession({ id: 'i2', summary: 'beta idle warm' }));
+  assert.equal(store.getById('i1')?.embedding, undefined);
+
+  store.setEmbedder(async (text: string) => [text.length, 1, 0]);
+  const r = await runIdleConsolidation(store);
+
+  assert.equal(r.embeddingsBackfilled, 2);
+  assert.ok(store.getById('i1')?.embedding, 'i1 should be warmed');
+  assert.ok(store.getById('i2')?.embedding, 'i2 should be warmed');
+
+  const r2 = await runIdleConsolidation(store);
+  assert.equal(r2.embeddingsBackfilled, 0, 'second idle pass has nothing left to warm');
 });

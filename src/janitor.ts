@@ -27,6 +27,48 @@ export interface JanitorReport {
   embeddingsBackfilled: number;
 }
 
+export interface IdleConsolidationReport {
+  lessonsCreated: number;
+  lessonsReinforced: number;
+  embeddingsBackfilled: number;
+}
+
+/**
+ * Sleep-time consolidation: the two cheap, side-effect-safe passes the weekly
+ * janitor also runs — lesson distillation and embedding backfill — but without
+ * the expensive full rescore/prune sweep. Meant to be triggered opportunistically
+ * while the developer is idle so hybrid search and durable lessons stay warm
+ * between weekly janitor ticks. Pure of any timer/UI concerns.
+ */
+export async function runIdleConsolidation(
+  store: ContextStore,
+  opts: { lessonMinSupport?: number } = {},
+): Promise<IdleConsolidationReport> {
+  const report: IdleConsolidationReport = {
+    lessonsCreated: 0,
+    lessonsReinforced: 0,
+    embeddingsBackfilled: 0,
+  };
+
+  const surviving = store.getAllSessions();
+  const { lessons, created, reinforced } = deriveLessons(surviving, store.getLessons(), {
+    minSupport: opts.lessonMinSupport ?? 2,
+  });
+  if (created > 0 || reinforced > 0) {
+    await store.setLessons(lessons);
+  }
+  report.lessonsCreated = created;
+  report.lessonsReinforced = reinforced;
+
+  try {
+    report.embeddingsBackfilled = await store.backfillEmbeddings();
+  } catch {
+    // Non-fatal: embedding is best-effort, never blocks idle consolidation.
+  }
+
+  return report;
+}
+
 export async function runJanitor(
   store: ContextStore,
   opts: JanitorOptions,

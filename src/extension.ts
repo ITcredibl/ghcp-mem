@@ -22,7 +22,7 @@ import { captureAzureContext, applyPreserveLevel } from './azureContext';
 import { AzureSubsystem } from './azureDetect';
 import { getConfig, CompressedSession, AzureContextMeta, SessionEvent } from './types';
 import { scoreSessionQuality } from './quality';
-import { runJanitor } from './janitor';
+import { runJanitor, runIdleConsolidation } from './janitor';
 import { computeHealth, formatHealthMarkdown, fillGlyph } from './health';
 import { buildPack, parsePack, importPack, uninstallPack, listInstalledPacks } from './packs';
 import { AutosaveTrigger } from './autosave';
@@ -52,6 +52,7 @@ let compressionTimer: NodeJS.Timeout | undefined;
 let janitorTimer: NodeJS.Timeout | undefined;
 let idleCheckTimer: NodeJS.Timeout | undefined;
 let lastActivityMs = Date.now();
+let lastIdleConsolidationMs = 0;
 /**
  * In-memory, session-scoped suppression for the persist-preview modal. Once the
  * user confirms a snapshot in the current VS Code session, we stop prompting for
@@ -1710,6 +1711,33 @@ function startCompressionTimer(intervalMinutes: number, idleSeconds = 30): void 
       if (capture.eventCount > 0 && Date.now() - lastActivityMs >= idleSeconds * 1000) {
         lastActivityMs = Date.now(); // reset so we don't fire again immediately
         await compressAndStore();
+        return;
+      }
+      // Sleep-time consolidation: when there is nothing pending to compress but
+      // the developer has gone idle, opportunistically warm lessons + embeddings
+      // so search stays sharp between weekly janitor ticks. Rate-limited to once
+      // per hour so it never competes with active work.
+      const IDLE_CONSOLIDATION_COOLDOWN_MS = 60 * 60 * 1000;
+      if (
+        capture.eventCount === 0 &&
+        Date.now() - lastActivityMs >= idleSeconds * 1000 &&
+        Date.now() - lastIdleConsolidationMs >= IDLE_CONSOLIDATION_COOLDOWN_MS
+      ) {
+        lastIdleConsolidationMs = Date.now();
+        try {
+          const r = await runIdleConsolidation(store);
+          if (r.lessonsCreated || r.lessonsReinforced || r.embeddingsBackfilled) {
+            log(
+              'INFO',
+              `idle-consolidation: lessons+${r.lessonsCreated}/~${r.lessonsReinforced} embedded=${r.embeddingsBackfilled}`,
+            );
+          }
+        } catch (err) {
+          log(
+            'WARN',
+            `idle consolidation failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }, 5_000);
   }

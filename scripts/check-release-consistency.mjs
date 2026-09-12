@@ -244,20 +244,30 @@ if (STRICT) {
     }
     if (typeof head === 'object' || typeof originMain === 'object') {
       fail('git refs', 'HEAD + origin/main resolvable', 'git error', 'run: git fetch origin');
-    } else if (head !== originMain) {
-      // Use a ref that always exists (HEAD) rather than `main`, which may not
-      // exist locally in detached-HEAD CI checkouts. Coerce the result so a
-      // git failure renders as a readable message instead of `[object Object]`.
-      const aheadResult = git('rev-list', '--count', 'origin/main..HEAD');
-      const ahead = typeof aheadResult === 'string' ? aheadResult : 'unknown';
-      fail(
-        'HEAD pushed to origin/main',
-        'origin/main = HEAD',
-        `local is ${ahead} commit(s) ahead of origin/main`,
-        'push to GitHub first — Marketplace + source-of-truth must match',
-      );
     } else {
-      pass('HEAD pushed to origin/main', head.substring(0, 8));
+      // v1.18.1: containment, not equality. The old `head === originMain`
+      // check broke tag-build RE-RUNS: the moment any commit lands on main
+      // after a release, the tagged commit no longer equals the main tip and
+      // the check became unsatisfiable by construction (hit re-running the
+      // v1.18.0 release after the VSCE_PAT rotation). What the gate actually
+      // guarantees is "the bits being published exist on the public main" —
+      // which is ancestry. A fresh tag still passes (a tip is its own
+      // ancestor); a genuinely unpushed commit still fails.
+      const ancestry = git('merge-base', '--is-ancestor', head, originMain);
+      const isAncestor = typeof ancestry === 'string'; // exit 0 → '' (string); non-zero → error object
+      if (!isAncestor) {
+        const aheadResult = git('rev-list', '--count', 'origin/main..HEAD');
+        const ahead = typeof aheadResult === 'string' ? aheadResult : 'unknown';
+        fail(
+          'HEAD pushed to origin/main',
+          'HEAD is an ancestor of origin/main',
+          `local is ${ahead} commit(s) ahead of origin/main`,
+          'push to GitHub first — Marketplace + source-of-truth must match',
+        );
+      } else {
+        const suffix = head === originMain ? '' : ' (origin/main has newer commits — ok)';
+        pass('HEAD pushed to origin/main', head.substring(0, 8) + suffix);
+      }
     }
 
     // 5c. tag vX.Y.Z exists locally

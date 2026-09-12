@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.18.1] — 2026-09-12
+
+Maintenance release: the batch of CI/security fixes that accumulated while re-publishing v1.18.0, plus the two release-gate bugs that re-publish attempt exposed. No product-surface changes — v1.18.0's features ship to the Marketplace via this tag.
+
+### Security
+- **All 16 open Dependabot alerts cleared** via `npm audit fix` — transitive dev-tree bumps only (brace-expansion, fast-uri, js-yaml, linkify-it, qs, undici, …). `npm audit`: 0 vulnerabilities at every severity.
+- **gitleaks allowlist for intentional fake-secret fixtures.** The v1.10 switch to full-directory OSS-CLI scans tripped on fixtures added in v1.13–v1.15 that deliberately look like real secrets (bench-real.js redaction canaries, gitHistorySeeder/mcpServer/v1_13_hardening tests) — failing the Security workflow on every push and PR. Filename-anchored allowlist entries cover the sources and their compiled copies.
+
+### Fixed — two release-gate correctness bugs
+- **Branch builds no longer demand tag-at-HEAD.** The strict gate (chained via `vscode:prepublish` inside `vsce package`) required a `vX.Y.Z` tag pointing at HEAD even on plain pushes to `main` — unsatisfiable from the first post-release commit onward, so CI's package step failed on every main push after every release. The v1.6.3 pull-request carve-out now covers all non-tag CI builds; tag builds keep the full strict surface.
+- **"HEAD pushed to origin/main" is now ancestry, not equality.** Re-running a tag's Release workflow after main had advanced could never pass `origin/main = HEAD` (hit re-running the v1.18.0 publish after the VSCE_PAT rotation). The gate now verifies the tagged commit is an ancestor of `origin/main` — the guarantee that actually matters ("the published bits exist on public main"); genuinely unpushed commits still fail.
+
+### CI
+- **Marketplace publish retries once** (30s backoff) on transient gallery failures — the 2026-09-11 `Request timeout: /_apis/gallery` blip masked the real expired-PAT error until a manual re-run.
+- Dependabot hygiene: merged #20 (`actions/upload-artifact` v7) and #24 (`actions/setup-node` v7); closed stale #11 (TypeScript 6 landed in v1.17.1); #21 sent for rebase. `@types/vscode` / `@types/node` 26 / eslint 10 remain deliberately held per the documented dependency posture.
+
+### Test count
+624 tests, unchanged.
+
+---
+
 ## [1.18.0] — 2026-09-11
 
 Retrieval-quality and startup-efficiency work landed on `integrate/v1.10.0`, plus honesty upgrades to the token-savings surface.

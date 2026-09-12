@@ -206,6 +206,43 @@ if (comparison) {
   }
 }
 
+// ── 4c. Test-count claim consistency (v1.18.2) ──────────────────────
+//
+// The Marketplace page once simultaneously claimed 597, 386, and (in the
+// comparison table) 624 tests — three different numbers on a product whose
+// pitch is auditability. Nobody notices claim drift until a reviewer does.
+// This check extracts every "N tests" claim from the user-facing docs and
+// fails unless they all agree. It cannot verify the number against the
+// actual suite (the doc gate must run without a compile), but cross-doc
+// agreement kills the visible-embarrassment class: update one count, the
+// gate forces you to update them all.
+// Scope: README.md + docs/DEMO.md. COMPARISON.md is excluded because its
+// table legitimately quotes OTHER products' test counts.
+{
+  const claimFiles = ['README.md', 'docs/DEMO.md'];
+  const claims = [];
+  for (const f of claimFiles) {
+    const text = readFile(f);
+    if (!text) continue;
+    for (const m of text.matchAll(/(\d{2,4})\s+tests?\b/g)) {
+      claims.push({ file: f, count: m[1] });
+    }
+  }
+  const distinct = [...new Set(claims.map((c) => c.count))];
+  if (distinct.length > 1) {
+    fail(
+      'test-count claims agree',
+      'one number everywhere',
+      distinct
+        .map((n) => `${n} (${claims.filter((c) => c.count === n).map((c) => c.file).join(', ')})`)
+        .join(' vs '),
+      'update every "N tests" claim in README.md + docs/DEMO.md to the current suite size',
+    );
+  } else if (claims.length > 0) {
+    pass('test-count claims agree', `${distinct[0]} tests × ${claims.length} mention(s)`);
+  }
+}
+
 // ── 5. STRICT-only: git state ───────────────────────────────────────
 if (STRICT) {
   // 5a. clean tree

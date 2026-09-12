@@ -20,4 +20,16 @@ description = "Intentional secret fixtures used to test the redaction engine"
 regexTarget = "match"
 paths = [
   '''(^|/)redactor\.[^/]*test\.(ts|js)$''',
+  # v1.14/v1.15 additions that carry deliberate fake-secret shapes:
+  # - bench-real.js: redaction canaries (AWS key / GitHub PAT / Azure conn
+  #   string / high-entropy) injected into the commit stream to prove the
+  #   store never persists them — the whole point is that they LOOK real.
+  # - gitHistorySeeder.test.ts: asserts commit-message secrets get redacted.
+  # - mcpServer.test.ts: asserts the MCP write path redacts client input.
+  # - v1_13_hardening.test.ts: adversarial redactor corpus (cloud IDs, PATs).
+  # Filename-anchored so the compiled out/ + out-test/ copies are covered too.
+  '''(^|/)bench-real\.js$''',
+  '''(^|/)gitHistorySeeder\.test\.(ts|js)$''',
+  '''(^|/)mcpServer\.test\.(ts|js)$''',
+  '''(^|/)v1_13_hardening\.test\.(ts|js)$''',
 ]

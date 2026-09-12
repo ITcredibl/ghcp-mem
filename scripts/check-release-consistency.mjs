@@ -234,7 +234,13 @@ if (comparison) {
       'test-count claims agree',
       'one number everywhere',
       distinct
-        .map((n) => `${n} (${claims.filter((c) => c.count === n).map((c) => c.file).join(', ')})`)
+        .map(
+          (n) =>
+            `${n} (${claims
+              .filter((c) => c.count === n)
+              .map((c) => c.file)
+              .join(', ')})`,
+        )
         .join(' vs '),
       'update every "N tests" claim in README.md + docs/DEMO.md to the current suite size',
     );

@@ -46,9 +46,18 @@ const QUIET = process.argv.includes('--quiet');
 // actual release time (release.yml on a refs/tags/vX.Y.Z push, where HEAD is
 // the tag commit on main). Skipping them here keeps `vsce package` working in
 // PR-build CI without weakening the gate at release time.
-const IS_PR_BUILD =
+// v1.18.x extension of the same carve-out: plain BRANCH pushes (refs/heads/*)
+// have the identical problem the moment a release tag stops pointing at HEAD —
+// the first post-release commit on main makes "tag vX.Y.Z at HEAD" unsatisfiable
+// by construction, and CI's `vsce package` step (which chains this gate via
+// vscode:prepublish) went red on every main push after every release. Tag
+// builds (refs/tags/v*) and local/manual runs keep the full strict surface.
+const IS_NON_TAG_CI_BUILD =
   process.env.GITHUB_EVENT_NAME === 'pull_request' ||
-  (process.env.GITHUB_REF && process.env.GITHUB_REF.startsWith('refs/pull/'));
+  (process.env.GITHUB_REF && process.env.GITHUB_REF.startsWith('refs/pull/')) ||
+  (process.env.GITHUB_ACTIONS === 'true' &&
+    !!process.env.GITHUB_REF &&
+    process.env.GITHUB_REF.startsWith('refs/heads/'));
 
 const failures = [];
 const passed = [];
@@ -218,8 +227,8 @@ if (STRICT) {
   // build HEAD is a synthetic merge commit and there is no `vX.Y.Z` tag yet,
   // so these checks would fail by construction. Skip them but still record a
   // passed line so the gate output stays honest.
-  if (IS_PR_BUILD) {
-    pass('HEAD/tag git-state checks', 'skipped (pull-request build)');
+  if (IS_NON_TAG_CI_BUILD) {
+    pass('HEAD/tag git-state checks', 'skipped (non-tag CI build)');
   } else {
     // 5b. HEAD pushed to origin/main
     const head = git('rev-parse', 'HEAD');

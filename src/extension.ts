@@ -108,7 +108,30 @@ interface ReviewPromptState {
   lastPromptAt?: number;
 }
 
-export async function activate(context: vscode.ExtensionContext) {
+/**
+ * Read-only diagnostics exposed via `activate()`'s return value
+ * (`vscode.extensions.getExtension(...).exports`). Exists because the
+ * persisted-store state is otherwise unobservable from outside the extension
+ * (globalState and SecretStorage are extension-private), which made the
+ * storage-encryption contract untestable in the Extension Development Host.
+ * No write surface — safe to expose unconditionally.
+ */
+export interface GhcpMemDiagnostics {
+  /**
+   * Re-read the persisted globalState payload and, when encrypted, decrypt it
+   * with the active key — a true at-rest round-trip. `persistedSessionCount`
+   * is null when a payload exists but cannot be parsed/decrypted.
+   */
+  verifyPersistedStore(): Promise<{
+    encrypted: boolean;
+    mode: EncryptionMode | 'off';
+    persistedSessionCount: number | null;
+  }>;
+}
+
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<GhcpMemDiagnostics | undefined> {
   memLog = vscode.window.createOutputChannel('GHCP-MEM');
   context.subscriptions.push(memLog);
 
@@ -1432,6 +1455,32 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       });
   }
+
+  return buildDiagnostics(context);
+}
+
+function buildDiagnostics(context: vscode.ExtensionContext): GhcpMemDiagnostics {
+  return {
+    async verifyPersistedStore() {
+      const encBlob = context.globalState.get<string>(DB_KEY_ENC_STATE);
+      if (typeof encBlob === 'string' && encBlob.length > 0) {
+        const parsed = storageEncryptionActive
+          ? deserializeDb<{ sessions?: unknown[] }>(encBlob, storageEncryptionActive.key)
+          : null;
+        return {
+          encrypted: true,
+          mode: storageEncryptionActive?.mode ?? 'off',
+          persistedSessionCount: Array.isArray(parsed?.sessions) ? parsed.sessions.length : null,
+        };
+      }
+      const plain = context.globalState.get<{ sessions?: unknown[] }>('ghcpMem.contextDatabase');
+      return {
+        encrypted: false,
+        mode: 'off',
+        persistedSessionCount: Array.isArray(plain?.sessions) ? plain.sessions.length : null,
+      };
+    },
+  };
 }
 
 async function syncPolicySource(): Promise<void> {

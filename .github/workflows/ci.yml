@@ -96,6 +96,34 @@ jobs:
           path: ghcp-mem.vsix
           retention-days: 14
 
+  integration:
+    name: Integration (Extension Development Host)
+    runs-on: ubuntu-latest
+    # Optional signal: a real VS Code download + xvfb session is inherently
+    # flakier than the hermetic unit suite, so this job never blocks a merge.
+    continue-on-error: true
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Node 22 here (not the unit matrix's 20): @vscode/test-electron 3.x —
+      # required for VS Code ≥1.9x's renamed main binary — needs Node ≥22.
+      # Nothing else in the repo loads it, so the unit jobs stay on 20.
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Extension Development Host suite
+        run: xvfb-run -a npm run test:integration
+
   release:
     name: Attach vsix to GitHub release
     needs: build

@@ -10,6 +10,7 @@ For full dev setup, CI gates, and PR process, read [CONTRIBUTING.md](CONTRIBUTIN
 npm install            # no native deps — must succeed on any OS without build tools
 npm run watch          # incremental TS build to out/
 npm test               # Node built-in test runner via scripts/run-tests.mjs (600+ tests)
+npm run test:integration # real Extension Development Host suite (@vscode/test-electron; downloads VS Code, needs a display — xvfb-run on Linux)
 npm run lint           # ESLint
 npm run typecheck      # type-check only
 npm run bundle:prod    # esbuild production bundle (CI gate)
@@ -42,7 +43,7 @@ Entry points and module ownership are listed in [CONTRIBUTING.md §2](CONTRIBUTI
 - **Redact first.** Anything captured from terminal, chat, editor, or git must pass through `redactor.ts` before it reaches `contextStore`.
 - **Never capture the extension's own output.** Generated memory files (`GENERATED_MEMORY_FILES` in [src/types.ts](src/types.ts)) are unconditionally excluded from capture — keep that list in sync with `SENSITIVE_SCAN_TARGETS` in [src/integrityChecker.ts](src/integrityChecker.ts).
 - **TypeScript strict.** No `any`, no `!` non-null assertions without justification.
-- **Tests are required for new modules.** Mocks for the VS Code API live in `src/test/__mocks__/vscode.ts` — tests must not require a running VS Code instance.
+- **Tests are required for new modules.** Mocks for the VS Code API live in `src/test/__mocks__/vscode.ts` — unit tests must not require a running VS Code instance. The only exception is the small `src/test/integration/` suite (`npm run test:integration`), which runs in a real Extension Development Host and is an optional, non-blocking CI job; its files must NOT use the `.test.ts` suffix or the unit runner will pick them up.
 - **Conventional commits** (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 - **Comments only when WHY is non-obvious.** Do not add docstrings/comments to code you didn't change.
 

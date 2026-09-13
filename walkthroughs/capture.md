@@ -14,4 +14,4 @@ When you want to snapshot _right now_ — say, before a refactor — run **GHCP-
 | Decisions      | Extracted from your chat exchanges                |
 | Redactions     | API keys, tokens, connection strings, PII removed |
 
-Nothing leaves your machine — it's stored under `~/.ghcp-mem/sessions.json` and mirrored to VS Code's `globalState`.
+Storage is local — sessions live under `~/.ghcp-mem/sessions.json` and are mirrored to VS Code's `globalState`. The only remote step is the summary compression above, which uses your existing Copilot model via `vscode.lm` (redaction runs first, and a fully local extractive fallback takes over when no model is available).

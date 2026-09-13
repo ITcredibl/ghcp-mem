@@ -8,9 +8,14 @@
 > engineering memory** — seeded from your git history in 30 seconds — so every
 > chat starts where the last one ended, and every claim shows its receipts.
 >
-> Nothing leaves your machine: no cloud memory backend, secrets and cloud
-> identifiers redacted before they hit disk, optional AES-256-GCM encryption
-> at rest. Every stored decision cites the events that produced it. Most
+> No cloud memory backend: stored memory, search, and retrieval stay on your
+> machine — secrets and cloud identifiers redacted before they hit disk,
+> optional AES-256-GCM encryption at rest. The one remote step is optional
+> session compression, which sends redacted session data to your existing
+> Copilot model under GitHub's terms (a fully local extractive fallback runs
+> when no model is available — see the
+> [threat model](docs/THREAT_MODEL.md) for the exact data flow).
+> Every stored decision cites the events that produced it. Most
 > "what / why / how" questions route to a millisecond local lookup instead of
 > a fresh Copilot completion — your token budget goes to shipping, not
 > catching up.
@@ -72,7 +77,7 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 **Why it's worth your trust:**
 
-- **624 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **626 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Documented, versioned engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -170,7 +175,7 @@ With GHCP-MEM in place:
 - 🟢 **Every decision is cited.** `@mem /entity src/auth.ts` shows you the supersession chain, the evidence, the contributors — in 500 tokens.
 - 🟢 **Wrong rank? You see why.** `@mem /why <q> :: <id>` breaks down every signal that contributed to a ranking — when the system is wrong, it tells you exactly why.
 - 🟢 **Contradictions surface before they bite.** `/conflicts` flags "we picked X *instead of* Y" decisions that overlap with older choices.
-- 🟢 **Token bill goes down.** The startup primer biases Copilot toward MCP queries (~200–500 tokens) over file opens (~2,000–10,000 tokens) for history questions. 5–20× cheaper from message one.
+- 🟢 **Token bill goes down.** The startup primer biases Copilot toward MCP queries (~200–500 tokens) over file opens (~2,000–10,000 tokens) for history questions — a modeled 5–20× estimate; run `@mem /savings` for the breakdown on your own store (exact token counts when the model tokenizer is available, chars÷4 heuristic otherwise).
 - 🟢 **Security review takes 5 minutes.** `/compliance` prints the audit report. You hand it to the reviewer and move on.
 
 **Tokens go to building. Decisions stay grounded. Trust holds.**
@@ -813,4 +818,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.18.2** · local-first memory for Copilot</sub>
+<sub>**v1.18.3** · local-first memory for Copilot</sub>

@@ -6,6 +6,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.18.3] — 2026-09-13
+
+Trust-accuracy release, responding to an independent engineering review of v1.18.2 (rated 8.7/10). Its verified findings, in the reviewer's priority order: the "nothing leaves your machine" claim overstated what the implementation guarantees, `AGENTS.md` carried a rebranding artifact ("Baton"), plaintext storage was a silent default, the retrieval regression gate only protected the keyword baseline, and the extension's own generated files were not explicitly excluded from capture.
+
+### Fixed — claim accuracy ("nothing leaves your machine")
+Session compression calls `vscode.lm` (your Copilot model), so redacted session data does leave the machine on that one path — exactly as the threat model already documented. The README tagline, COMPARISON privacy-boundary row, and capture walkthrough now say precisely that: **storage, search, and retrieval stay local; optional LM compression sends redacted session data to your configured Copilot model under GitHub's terms; a fully local extractive fallback runs when no model is available.** The "5–20× cheaper" line is now labeled a modeled estimate, pointing at `@mem /savings` for per-store numbers.
+
+### Fixed — AGENTS.md identity drift
+`AGENTS.md` described a product called "Baton" (`baton-mem-mcp`, `@baton`, a `<!-- Baton:START -->` marker) with a stale test count and a mocha command this repo has never used. Rewritten against the actual codebase: GHCP-MEM identity, `@mem` participant, `<!-- GHCP-MEM:START -->` marker, real script names, 14 MCP tools, and the current gate chain.
+
+### Added — generated memory files hard-excluded from capture
+`isPathExcluded` now unconditionally rejects the files the extension itself generates or injects (`.github/instructions/session-memory.instructions.md`, `.github/memory/rules.md`, `CLAUDE.md`, `.cursor/rules/ghcp-mem.mdc`) regardless of user `excludeGlobs` — capturing our own output would feed memory back into memory. Covers all three capture entry points (edits, file lifecycle, diagnostics), handles multi-root prefixes, Windows separators, and case drift. The list is exported as `GENERATED_MEMORY_FILES` and kept in sync with the integrity checker's sensitive-scan targets.
+
+### Added — eval gate covers every production retrieval configuration
+`scripts/eval-check.js` previously skipped any run without a committed baseline — which meant the **default hybrid pipeline had no regression protection** (only the keyword baseline did). A run with no committed floor is now a gate **failure**, and `scripts/eval-baseline.json` carries floors for all three configurations (`keyword-only`, `hybrid (default)`, `hybrid + freshness`) in both eval modes — the synthetic corpus (all three currently measure 1.000) and the hand-curated gold corpus (measured 2026-09-12 and floored per-metric).
+
+### Added — encryption in the Privacy Wizard
+Storage encryption is now a first-class wizard step instead of a buried setting: OS keychain (recommended) / passphrase / off, with an automatic-migration reload prompt on enable — and a visible warning, not silence, when memory remains plaintext. The wizard's opening prompt now mentions encryption at rest.
+
+### Test count
+626 tests (624 + 2 new: generated-file capture exclusion, integrity-checker list parity).
+
+---
+
 ## [1.18.2] — 2026-09-12
 
 Marketplace-trust patch, responding to an adoption review (57 installs, 0 ratings) whose sharpest finding was: *"small inconsistencies are disproportionately damaging for a tool selling auditability"* — and whose highest-leverage ask was a concrete proof loop instead of another feature.

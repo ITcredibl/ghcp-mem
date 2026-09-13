@@ -2061,7 +2061,7 @@ async function maybeShowPrivacyWizard(context: vscode.ExtensionContext): Promise
   const key = 'ghcpMem.privacyWizardCompleted';
   if (context.globalState.get<boolean>(key)) return;
   const choice = await vscode.window.showInformationMessage(
-    'GHCP-MEM privacy setup can lock down capture, snippets, terminal commands, and exports before you start.',
+    'GHCP-MEM privacy setup can lock down capture, snippets, terminal commands, encryption at rest, and exports before you start.',
     'Run Privacy Wizard',
     'Later',
   );
@@ -2125,10 +2125,63 @@ async function runPrivacyWizard(context: vscode.ExtensionContext): Promise<void>
   );
   if (enterprise) updates.enterpriseMode = enterprise.value;
 
+  // v1.18.3: encryption at rest is part of the wizard, not a buried setting.
+  // Stored memory includes file names, decisions, and problem descriptions —
+  // the recommended posture is the OS keychain, and declining leaves a
+  // visible warning rather than a silent plaintext default.
+  const encCurrent = cfg.get<string>('storageEncryption', 'off');
+  const encPick = await vscode.window.showQuickPick(
+    [
+      {
+        label: 'OS keychain (recommended)',
+        description: 'AES-256-GCM; the key lives in the OS keychain, nothing extra to remember',
+        value: 'os-keychain',
+      },
+      {
+        label: 'Passphrase',
+        description: 'AES-256-GCM with a scrypt-derived key — unrecoverable if forgotten',
+        value: 'passphrase',
+      },
+      {
+        label: 'Off',
+        description: 'Store memory as plaintext JSON on this machine',
+        value: 'off',
+      },
+    ],
+    {
+      title: 'Encrypt stored memory at rest?',
+      placeHolder: `Currently: ${encCurrent}`,
+      ignoreFocusOut: true,
+    },
+  );
+
   for (const [key, value] of Object.entries(updates)) {
     await cfg.update(key, value, vscode.ConfigurationTarget.Workspace);
   }
+
+  const encFinal = encPick ? encPick.value : encCurrent;
+  if (encPick && encPick.value !== encCurrent) {
+    // Encryption is per-machine state, not per-workspace — Global target so
+    // the same store (globalState + ~/.ghcp-mem mirror) has one posture.
+    await cfg.update('storageEncryption', encPick.value, vscode.ConfigurationTarget.Global);
+  }
   await context.globalState.update('ghcpMem.privacyWizardCompleted', true);
+
+  if (encPick && encPick.value !== 'off' && encPick.value !== encCurrent) {
+    const reload = await vscode.window.showInformationMessage(
+      'GHCP-MEM: encryption enabled. It takes effect on reload — the existing plaintext store is migrated automatically.',
+      'Reload Now',
+      'Later',
+    );
+    if (reload === 'Reload Now') {
+      await vscode.commands.executeCommand('workbench.action.reloadWindow');
+      return;
+    }
+  } else if (encFinal === 'off') {
+    void vscode.window.showWarningMessage(
+      'GHCP-MEM: stored memory remains plaintext on this machine. Enable encryption anytime via the ghcpMem.storageEncryption setting or by re-running the Privacy Wizard.',
+    );
+  }
   vscode.window.showInformationMessage('GHCP-MEM: Privacy settings updated.');
 }
 

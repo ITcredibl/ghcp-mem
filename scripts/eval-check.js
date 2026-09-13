@@ -146,11 +146,29 @@ const CORPUS = [
     process.exit(1);
   }
 
+  // Synthetic self-queries and the hand-curated gold corpus measure on
+  // different scales (gold is deliberately harder), so each mode carries its
+  // own committed floor map.
+  const floorMap = goldPath ? baseline.goldFloors : baseline.floors;
+  if (!floorMap) {
+    console.error(
+      `FAIL: scripts/eval-baseline.json has no "${goldPath ? 'goldFloors' : 'floors'}" map for this eval mode`,
+    );
+    process.exit(1);
+  }
+
   let failed = false;
   for (const run of report.runs) {
-    const floor = baseline.floors[run.label];
+    const floor = floorMap[run.label];
     if (!floor) {
-      console.log(`  (no baseline for "${run.label}", skipping)`);
+      // v1.18.3: a production retrieval configuration without a committed
+      // baseline is a gate failure, not a skip — otherwise regressions in the
+      // default pipeline sail through while only the keyword baseline is
+      // protected.
+      console.error(
+        `  [FAIL] ${run.label}: recall@${run.k}=${run.recall.toFixed(3)} · MRR=${run.mrr.toFixed(3)} · nDCG@${run.k}=${run.ndcg.toFixed(3)} — no committed baseline in scripts/eval-baseline.json`,
+      );
+      failed = true;
       continue;
     }
     const recallMin = floor.recall * (1 - tolerance);

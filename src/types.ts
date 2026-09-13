@@ -629,8 +629,32 @@ function normalizeGlobalTags(raw: unknown): string[] {
   return out;
 }
 
+/**
+ * Files the extension itself generates or injects into the workspace.
+ * Always excluded from capture regardless of user excludeGlobs — capturing
+ * our own output would feed memory back into memory (v1.18.3). Kept in sync
+ * with integrityChecker's SENSITIVE_SCAN_TARGETS.
+ */
+export const GENERATED_MEMORY_FILES: readonly string[] = [
+  '.github/instructions/session-memory.instructions.md',
+  '.github/memory/rules.md',
+  'CLAUDE.md',
+  '.cursor/rules/ghcp-mem.mdc',
+];
+
+export function isGeneratedMemoryFile(relPath: string): boolean {
+  const p = relPath.replace(/\\/g, '/').toLowerCase();
+  return GENERATED_MEMORY_FILES.some((f) => {
+    const g = f.toLowerCase();
+    // Suffix match handles multi-root workspaces, where asRelativePath
+    // prefixes the workspace-folder name.
+    return p === g || p.endsWith('/' + g);
+  });
+}
+
 /** Minimal glob matcher for excludeGlobs. */
 export function isPathExcluded(relPath: string, globs: string[]): boolean {
+  if (isGeneratedMemoryFile(relPath)) return true;
   if (!globs?.length) return false;
   return globs.some((g) => getCachedGlobRegex(g).test(relPath));
 }

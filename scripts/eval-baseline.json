@@ -1,11 +1,38 @@
 {
-  "comment": "Recall@5 / MRR / nDCG@5 floor for the synthetic eval corpus seeded by scripts/eval-check.js. Update only after deliberate ranker improvements.",
+  "comment": "Recall@5 / MRR / nDCG@5 floors for scripts/eval-check.js. Every production retrieval configuration MUST have a floor — the gate fails on a run with no committed baseline (v1.18.3). 'floors' covers the synthetic self-query corpus (all three configs currently measure 1.000; floors allow one lost query out of 12, fail on two). 'goldFloors' covers the hand-curated corpus in scripts/eval-gold.json (measured 2026-09-12: keyword 0.833/0.833/0.833, hybrid 0.833/0.750/0.772, hybrid+freshness 0.833/0.792/0.803). Update only after deliberate ranker improvements.",
   "tolerancePct": 5,
   "floors": {
     "keyword-only": {
       "recall": 0.7,
       "mrr": 0.6,
       "ndcg": 0.6
+    },
+    "hybrid (default)": {
+      "recall": 0.9,
+      "mrr": 0.85,
+      "ndcg": 0.85
+    },
+    "hybrid + freshness": {
+      "recall": 0.9,
+      "mrr": 0.85,
+      "ndcg": 0.85
+    }
+  },
+  "goldFloors": {
+    "keyword-only": {
+      "recall": 0.8,
+      "mrr": 0.8,
+      "ndcg": 0.8
+    },
+    "hybrid (default)": {
+      "recall": 0.8,
+      "mrr": 0.72,
+      "ndcg": 0.74
+    },
+    "hybrid + freshness": {
+      "recall": 0.8,
+      "mrr": 0.76,
+      "ndcg": 0.77
     }
   }
 }

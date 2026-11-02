@@ -173,6 +173,7 @@ export interface AzureContextMeta {
 }
 
 export interface CompressedSession {
+  checkpoint?: import('./agentCheckpoint').AgentCheckpoint;
   id: string;
   workspaceId: string;
   workspaceName: string;
@@ -352,6 +353,8 @@ export type MemoryScope = 'user' | 'workspace' | 'repo';
 export interface PluginConfig {
   enabled: boolean;
   compressionIntervalMinutes: number;
+  compressionMode: 'auto' | 'local';
+  compressionModelFamily: string;
   maxStoredSessions: number;
   /** Soft cap on the on-disk size of ~/.ghcp-mem/sessions.json (MB). */
   maxStoreSizeMB: number;
@@ -376,6 +379,7 @@ export interface PluginConfig {
   excludeGlobs: string[];
   autoInjectStartupContext: boolean;
   startupContextSessionCount: number;
+  startupContextTokenBudget: number;
   /** Inject team-shared project rules from .github/memory/rules.md into every session. */
   projectRules: boolean;
   /** Retrieval scope. 'user' = cross-workspace, 'workspace' = current folder, 'repo' = current git repo. */
@@ -507,6 +511,8 @@ export function getConfig(): PluginConfig {
   return {
     enabled: cfg.get('enabled', true),
     compressionIntervalMinutes: cfg.get('compressionIntervalMinutes', 15),
+    compressionMode: cfg.get<string>('compressionMode', 'auto') === 'local' ? 'local' : 'auto',
+    compressionModelFamily: cfg.get('compressionModelFamily', ''),
     maxStoredSessions: cfg.get('maxStoredSessions', 50),
     maxStoreSizeMB: cfg.get('maxStoreSizeMB', 25),
     // GitHub-compatible mode pins retention to 28 days like Copilot agentic memory.
@@ -526,6 +532,12 @@ export function getConfig(): PluginConfig {
     excludeGlobs: cfg.get('excludeGlobs', []),
     autoInjectStartupContext: cfg.get('autoInjectStartupContext', true),
     startupContextSessionCount: clampNum(cfg.get('startupContextSessionCount', 3), 1, 20, 3),
+    startupContextTokenBudget: clampNum(
+      cfg.get('startupContextTokenBudget', 1800),
+      512,
+      32000,
+      1800,
+    ),
     projectRules: cfg.get('projectRules', true),
     scope: githubCompatibleMode ? 'repo' : scope,
     globalTags: normalizeGlobalTags(cfg.get<string[]>('globalTags', ['global'])),

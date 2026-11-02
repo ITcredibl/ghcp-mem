@@ -6,6 +6,8 @@ import {
   aggregateTokenSavingsMeasured,
   setTokenCounter,
   hasTokenCounter,
+  compareTaskUsage,
+  type TaskUsage,
   type TokenSavingsSource,
 } from '../savings';
 
@@ -69,4 +71,65 @@ test('savings — measured aggregate sums per-session measured savings', async (
   } finally {
     setTokenCounter(undefined);
   }
+});
+
+test('savings: empty memories do not manufacture avoided tokens', () => {
+  assert.equal(estimateSessionTokenSavings({ summary: '' }).tokensSaved, 0);
+});
+
+test('savings: explicit payloads account for the complete rendered response', async () => {
+  setTokenCounter(undefined);
+  const result = await estimateSessionTokenSavingsMeasured({
+    rawText: 'x'.repeat(100),
+    compactText: 'x'.repeat(120),
+    summary: 'tiny',
+  });
+  assert.equal(result.rawTokens, 25);
+  assert.equal(result.compactTokens, 30);
+  assert.equal(result.tokensSaved, 0);
+  assert.equal(result.measurement, 'estimated');
+  assert.equal(result.baseline, 'provided-text');
+});
+
+test('savings: net comparisons include auxiliary work and allow negative savings', () => {
+  const baseline: TaskUsage = {
+    taskId: 'task@revision',
+    model: 'same-model',
+    source: 'provider',
+    qualityPassed: true,
+    inputTokens: 900,
+    outputTokens: 100,
+    auxiliaryTokens: 0,
+  };
+  assert.equal(
+    compareTaskUsage(baseline, { ...baseline, inputTokens: 600, auxiliaryTokens: 200 })
+      .savingsPercent,
+    10,
+  );
+  assert.equal(
+    compareTaskUsage(baseline, { ...baseline, auxiliaryTokens: 200 }).savingsPercent,
+    -20,
+  );
+  assert.equal(
+    compareTaskUsage(baseline, { ...baseline, qualityPassed: false }).savingsPercent,
+    null,
+  );
+  assert.equal(
+    compareTaskUsage(baseline, { ...baseline, qualityPassed: 'false' as unknown as boolean })
+      .savingsPercent,
+    null,
+  );
+  assert.equal(
+    compareTaskUsage({ ...baseline, model: '' }, { ...baseline, model: '' }).savingsPercent,
+    null,
+  );
+  assert.equal(
+    compareTaskUsage(baseline, { ...baseline, source: 'estimate' }).savingsPercent,
+    null,
+  );
+  assert.equal(
+    compareTaskUsage(baseline, { ...baseline, model: 'different' }).savingsPercent,
+    null,
+  );
+  assert.equal(compareTaskUsage(baseline, { ...baseline, inputTokens: NaN }).savingsPercent, null);
 });

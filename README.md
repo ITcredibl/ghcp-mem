@@ -1,10 +1,10 @@
 # 🧠 GHCP-MEM
 
-### You ship features. Your AI shouldn't have to relearn your project every morning.
+### Local, auditable context across AI coding sessions and harnesses.
 
-> **Every Copilot chat starts from zero — you pay the Context Tax: ten minutes
-> and thousands of tokens re-explaining a project you already explained
-> yesterday.** GHCP-MEM ends it. It gives Copilot a **local, auditable
+> **Native coding agents now have memory. Enterprises still need control over
+> what is retained, what is disclosed, and which evidence supports a handoff.**
+> GHCP-MEM adds a **local, auditable
 > engineering memory** — seeded from your git history in 30 seconds — so every
 > chat starts where the last one ended, and every claim shows its receipts.
 >
@@ -77,13 +77,71 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 **Why it's worth your trust:**
 
-- **626 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **655 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Documented, versioned engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
 - **`/compliance` chat command** prints a one-shot audit report (grounding coverage, trust distribution, conflict counts, redaction stats) — built for the security reviewers in your org, not just for engineers.
 
 ---
+
+## Governed Agent Context (v1.19.0)
+
+- **Bounded recall:** `ghcpMem.startupContextTokenBudget` defaults to 1800 estimated tokens. Whole session cards are selected; trust-boundary markers are preserved. Oversized mandatory project rules are retained separately rather than truncated. Estimates use UTF-8 bytes / 4, not a provider-tokenizer guarantee.
+- **Progressive MCP retrieval:** search with `detail: "index"` and `maxTokens`, then fetch selected records with `ghcpMem_get { "ids": ["id-one", "id-two"], "maxTokens": 2400 }`. Search and batched detail include a SHA-256 receipt of the returned result array, omitted count, and measurement provenance. The digest detects changes; it is not a signature or proof of truth.
+- **Compression policy:** set `ghcpMem.compressionMode` to `local` to disable model calls for compression. Alternatively set `ghcpMem.compressionModelFamily`; an unavailable requested family falls back to local extraction. Other model-backed features remain independently available.
+- **Repository-bound handoffs:** `ghcp-mem-agent checkpoint` accepts JSON on stdin and emits a CI-seeder payload. Required fields: `harness` (`copilot`, `claude`, `codex`, `ci`), `taskId`, `repoScope`, full `commit`, `stage`, `summary`, `nextActions`, and `evidence`. Evidence entries have `kind`, `reference`, and `outcome`. Stages are `planned`, `attempted`, `deployed`, `verified`, and `failed`; `verified` requires a passing test, a `sha256:<64 hex digits>` artifact reference, and no failed evidence. Expiry defaults to 24 hours, capped at seven days. Evidence is self-reported, not independently attested; every checkpoint has `authority: "none"`.
+- **Metadata-only lifecycle adapters:** `ghcp-mem-agent hook copilot postToolUse` or `ghcp-mem-agent hook claude PostToolUse` reads the provider event on stdin. Set `GHCP_MEM_ALLOW_HOOK_CAPTURE=true` and `GHCP_MEM_REPO_SCOPE` to opt in. Supported events are session start/end, post-tool-use, and pre-compaction, using each provider's event spelling. Only correlation metadata and tool names are captured, never prompts, arguments, results, or transcripts. Codex checkpoint interchange is supported; a Codex hook adapter is not implemented. Hook runtime compatibility must be tested in the installed host version.
+- **Fail-closed writes:** encrypted MCP mutations preserve the encryption envelope. Locked/corrupt stores and missing or ambiguous delete IDs are rejected. Set `GHCP_MEM_REPO_SCOPE` on the MCP server to restrict reads and deletions to that repository. MCP writes remain opt-in.
+
+Build the executables with `npm run bundle:prod`. To persist a checkpoint explicitly, pipe the bridge's JSON output to `node out/ciSeeder.js`. Use `GHCP_MEM_STORE_PATH` to select an isolated store. Seed before opening the editor; do not run multiple writer processes against the same mirror. Request serialization protects one MCP process, not concurrent editor/CI/MCP writers.
+
+### Durable Task Continuity (v1.19.0)
+
+The MCP server now offers 23 tools: the existing memory surface plus nine task tools. These APIs are separate from the portable `ghcp-mem-agent checkpoint` snapshots above. Tasks persist goals, plans, blockers, decisions, modified paths and acceptance criteria; expiring a checkpoint does not delete the task.
+
+| Tool | Purpose |
+|---|---|
+| `ghcpMem_start_task` | Start a task with `requestId`, `goal`, nonempty `acceptanceCriteria: [{id,text}]`, optional `steps: [{id,title,status,blocker}]`, and `visibility` (`private` by default, or `shared`) |
+| `ghcpMem_task_status` | Read recorded state by `taskId`; use resume to assess current validity |
+| `ghcpMem_update_task` | Supply `taskId`, `expectedRevision`, `requestId`, and `changes` containing steps, blockers, decisions or modifiedFiles |
+| `ghcpMem_checkpoint` | Save `summary` and `nextActions`, with the same revision/idempotency fields; optional `expiresAt` is capped at seven days |
+| `ghcpMem_resume` | Recover work using the configured Git worktree; drift returns `verification_required`, not inherited completion |
+| `ghcpMem_compile_context` | Produce a bounded task packet using `taskId` and optional `maxTokens`, with selected acceptance criteria, blockers, evidence and same-repository/same-branch historical memory |
+| `ghcpMem_complete_task` | Require all steps done, no blockers and one distinct passing `{criterionId,reference,outcome}` per acceptance criterion, from a launcher-authorized verifier |
+| `ghcpMem_cancel_task` | Stop a task without undoing external effects |
+| `ghcpMem_purge_task` | Owner-only removal of every revision and pending event, using `taskId`, `expectedRevision` and `requestId`; retain only a content-free replay tombstone |
+
+Configure the stdio server's environment in a trusted launcher:
+
+| Variable | Policy |
+|---|---|
+| `GHCP_MEM_TASK_ACTOR` | Stable agent/service identity, not supplied in a tool call |
+| `GHCP_MEM_REPO_SCOPE` | Stable repository identifier; the launcher must bind this to the intended checkout |
+| `GHCP_MEM_TASK_WORKTREE` | Absolute Git worktree path; the server observes branch, full HEAD, staged/unstaged changes and bounded untracked contents |
+| `GHCP_MEM_TASK_KEY` | 64 hex characters representing an AES-256 key, supplied through the launcher's secret mechanism; never put the key in prompts or committed configuration |
+| `GHCP_MEM_TASK_PATH` | Optional task storage root, default `~/.ghcp-mem/tasks`; keep it outside the checkout |
+| `GHCP_MEM_ALLOW_MCP_WRITE` | Must be `true` for mutations; `GHCP_MEM_READONLY=true` overrides it |
+| `GHCP_MEM_TASK_ALLOW_VERIFY` | Default off; enable only in a trusted verifier/CI profile, not an unrestricted coding-agent profile |
+| `GHCP_MEM_TASK_ALLOW_PLAINTEXT` | Explicit opt-in for local demos; otherwise task journals require encryption. Changing keys is not an automatic migration |
+
+Task records use a separate immutable revision journal, not the shared sessions mirror. Each mutation takes an exclusive per-task lock, checks the expected revision and commits a synced temporary file by rename. Retrying an identical `requestId` under the same actor returns its original result; read status again for the latest revision. Concurrent writers fail with busy/revision errors rather than silently overwriting state. The original sessions mirror still requires the single-writer workflow described above.
+
+Resume compares the observed worktree, branch, commit and dirty-tree digest. Explicit `changes: {"rebind": true}` adopts a changed scope, invalidates the previous checkpoint/verification and resets earlier steps to pending. A terminal task cannot be rebound: start a new task for further work. Ignored files, environment variables and external service state are not part of this fingerprint. Worktree observation is bounded and not an atomic snapshot of concurrent editor activity.
+
+Context packets retain task intent and a trust boundary, label historical versus launcher-authorized evidence, omit whole blocks under the estimated token budget, and report omission reasons plus source revision and digests. Insufficient room for mandatory intent/policy is an error. This first compiler selects task state and historical memory; it does not yet budget the host's system prompt, tool definitions or source-code attachments.
+
+Process interruption leaves committed revisions readable and incomplete temporary events ignored. An orphaned `.lock` blocks writes: stop all writers, inspect the lock under the repository-hash/task-id directory, then remove it offline before retrying. Never remove a live writer's lock. Checksums are not signatures; encryption provides authenticated storage, not proof that an external test actually ran. Verification references remain attributed to the configured verifier. Profiles running under the same OS account are not a hostile-tenant security boundary.
+
+Use purge for retention/deletion: it removes journal content, not external backups or filesystem snapshots. Tasks do not currently expire automatically. Keep journals on a local filesystem with reliable exclusive-create and atomic-rename semantics; network filesystems and power-loss durability have not been certified. No cloud synchronization, organization directory, deployment execution or signed CI attestation is implied.
+
+Run `npm run test:tasks` for the reproducible scripted continuity checks: cross-agent resume, real Git/worktree drift, two writer processes, interrupted checkpoint recovery, verifier policy, context exclusion, encryption and history purge. These checks do not invoke paid models or establish live coding-outcome/token-saving improvements.
+
+### Measure Net Savings
+
+`npm run measure:savings -- baseline.json memory.json` compares two usage records. Each record supplies `taskId` (include the revision and quality-gate identity), `model`, `source: "provider"`, `qualityPassed`, `inputTokens`, `outputTokens`, and `auxiliaryTokens`. Include memory generation, reranking, and subagent work in auxiliary usage without double-counting. Use the same task, model and quality criteria. Repeat with native-memory-only as a separate baseline. Failed/mismatched runs produce no percentage; regressions produce negative savings. The command consumes supplied records, not automatically verified vendor telemetry. Billing savings are unknown without current model/cache rates.
+
+The `/savings` view and outbound OTel representation metrics are estimates, not observed session usage or guaranteed savings. Curated retrieval evaluation now runs in both CI and `npm run verify` via `npm run eval:gold`.
 
 ## The 30-Second Memory Plan
 
@@ -189,13 +247,13 @@ With GHCP-MEM in place:
 | **🧠 Memory** | Persistent, structured record of what you changed, decided, fixed, deployed — captured locally from real editor events | `@mem /recent` · `@mem /entity src/<file>` |
 | **💰 Tokens** | Auto-routing primer in every Copilot session steers the agent to cheap MCP queries over file opens | `@mem /route <question>` shows the cost estimate |
 | **⚡ Performance** | Hybrid retrieval — BM25 + recency + embeddings + match-ratio + decayed confidence + reinforcement, with an optional LM rerank on the top-K, tuned by per-user adaptive weights, gated by nDCG@K regression suite (marginal lift of each stage is published in the [real-world ablation](docs/BENCHMARKS-REAL.md)) | `@mem /why <q> :: <id>` decomposes the score |
-| **🤖 AI agentic coding** | Full MCP parity (14 tools), evidence-grounded decisions, conflict detection, score explainer, Mermaid graph export — for Cursor, Cline, Windsurf, Claude Desktop, Copilot CLI | `npx ghcp-mem-mcp` exposes all tools over stdio |
+| **🤖 AI agentic coding** | MCP memory plus governed task continuity (23 tools), evidence-grounded decisions, conflict detection and scoped context compilation | `npx ghcp-mem-mcp` exposes all tools over stdio; task APIs require launcher policy |
 
 It surfaces memory through:
 
 - the **`@mem`** chat participant (42 commands including `/savings`, `/entity`, `/snippet`, `/why`, `/graph`, `/compliance`, `/route`, `/lessons`, `/rules`)
 - native Copilot **agent tools** (`#ghcpMemSearch`, `#ghcpMemStore`, `#ghcpMemAudit`, `#ghcpMemLessons`)
-- a bundled **stdio MCP server** with 14 tools for Cursor, Cline, Windsurf, Claude Desktop, and GitHub Copilot CLI
+- a bundled **stdio MCP server** with 23 tools for Cursor, Cline, Windsurf, Claude Desktop, and GitHub Copilot CLI
 
 ### Why engineers trust it (deeper guarantees)
 
@@ -627,7 +685,7 @@ Copilot agent mode can call these without a separate MCP setup:
 | `ghcpMem.janitorPruneAfterDays` | `0` | If > 0, delete sessions that have been `lowQuality` past this threshold and were never `/accept`-ed (`0` = flagging only) |
 | `ghcpMem.validateAgainstCodebase` | `true` | Drop stale memories whose key files no longer exist |
 | `ghcpMem.freshnessFloor` | `0.25` | Minimum surviving key-file fraction |
-| `ghcpMem.githubCompatibleMode` | `false` | Mirror Copilot Memory's 28-day repo-scoped contract |
+| `ghcpMem.githubCompatibleMode` | `false` | Legacy 28-day repo-scoped preset; not a mirror of current Copilot Memory retention |
 | `ghcpMem.redactSecrets` | `true` | Secret and PII scanning |
 | `ghcpMem.honorPrivateTags` | `true` | Strip `<private>...</private>` |
 | `ghcpMem.excludeGlobs` | default exclusions | Skip sensitive or noisy paths |
@@ -756,7 +814,11 @@ Key modules:
 | `src/projectRules.ts` | Parse/serialize/render team-shared project rules from `.github/memory/rules.md` |
 | `src/contextProvider.ts` | `@mem` chat participant with 42 slash commands |
 | `src/memoryTool.ts` | Agent-mode tools (`#ghcpMemSearch`, `#ghcpMemStore`, `#ghcpMemAudit`, `#ghcpMemLessons`) |
-| `src/mcpServer.ts` | Stand-alone stdio MCP server (14 tools, read + write) |
+| `src/mcpServer.ts` | Stand-alone stdio MCP server (23 tools, policy-controlled reads/writes) |
+| `src/taskRuntime.ts` | Task state transitions, acceptance criteria and access policy |
+| `src/taskJournal.ts` | Encrypted revision journal, concurrency, retries and history purge |
+| `src/taskContext.ts` | Git-observed execution scope, resume and context compilation |
+| `src/taskTools.ts` | Launcher-bound task MCP contracts |
 | `src/timelinePanel.ts` | Visual Memory Timeline WebviewPanel |
 | `src/sessionCodeLens.ts` | Inline file-history CodeLens at line 0 |
 | `src/extension.ts` | Lifecycle, commands, walkthroughs, integration wiring |
@@ -818,4 +880,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.18.3** · local-first memory for Copilot</sub>
+<sub>**v1.19.0** · local-first engineering context and governed task continuity</sub>

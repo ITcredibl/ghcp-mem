@@ -102,11 +102,11 @@ ${eventLog}`;
 
     try {
       let model: vscode.LanguageModelChat | undefined;
-      const copilotModels = await vscode.lm.selectChatModels({ family: 'gpt-4o' });
-      model = copilotModels[0];
-      if (!model) {
-        const any = await vscode.lm.selectChatModels();
-        model = any[0];
+      const compressionConfig = getConfig();
+      if (compressionConfig.compressionMode !== 'local') {
+        const family = compressionConfig.compressionModelFamily.trim();
+        const models = await vscode.lm.selectChatModels(family ? { family } : {});
+        model = models[0];
       }
       let session: CompressedSession | null;
       if (!model) {

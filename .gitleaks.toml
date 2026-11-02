@@ -31,5 +31,7 @@ paths = [
   '''(^|/)bench-real\.js$''',
   '''(^|/)gitHistorySeeder\.test\.(ts|js)$''',
   '''(^|/)mcpServer\.test\.(ts|js)$''',
+  '''(^|/)agentCheckpoint\.test\.(ts|js)$''',
+  '''(^|/)taskRuntime\.test\.(ts|js)$''',
   '''(^|/)v1_13_hardening\.test\.(ts|js)$''',
 ]

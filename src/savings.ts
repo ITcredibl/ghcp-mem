@@ -1,4 +1,6 @@
 export interface TokenSavingsSource {
+  rawText?: string;
+  compactText?: string;
   summary?: string;
   keyFiles?: string[];
   keyTopics?: string[];
@@ -7,6 +9,8 @@ export interface TokenSavingsSource {
 }
 
 export interface TokenSavingsEstimate {
+  measurement?: 'estimated' | 'tokenized';
+  baseline?: 'provided-text' | 'structured-proxy';
   rawChars: number;
   compactChars: number;
   rawTokens: number;
@@ -19,7 +23,6 @@ export interface TokenSavingsAggregate extends TokenSavingsEstimate {
   sessionCount: number;
 }
 
-const DEFAULT_RAW_EVENT_OVERHEAD_CHARS = 800;
 const CHARS_PER_TOKEN = 4;
 
 function estimateTokens(chars: number): number {
@@ -45,28 +48,9 @@ export function hasTokenCounter(): boolean {
   return !!injectedCounter;
 }
 
-async function countTokens(text: string): Promise<number> {
-  if (injectedCounter) {
-    try {
-      return await injectedCounter(text);
-    } catch {
-      // Fall back to the heuristic if the model tokenizer is unavailable.
-    }
-  }
-  return estimateTokens(text.length);
-}
-
 function sessionChars(session: TokenSavingsSource): { rawChars: number; compactChars: number } {
-  const compactChars = (session.summary ?? '').length;
-  const rawChars =
-    [
-      session.summary ?? '',
-      ...(session.keyFiles ?? []),
-      ...(session.keyTopics ?? []),
-      ...(session.decisions ?? []),
-      ...(session.problemsSolved ?? []),
-    ].join(' ').length + DEFAULT_RAW_EVENT_OVERHEAD_CHARS;
-  return { rawChars, compactChars };
+  const { raw, compact } = sessionBlobs(session);
+  return { rawChars: raw.length, compactChars: compact.length };
 }
 
 export function estimateSessionTokenSavings(session: TokenSavingsSource): TokenSavingsEstimate {
@@ -75,6 +59,8 @@ export function estimateSessionTokenSavings(session: TokenSavingsSource): TokenS
   const compactTokens = estimateTokens(compactChars);
   const ratio = compactChars > 0 ? rawTokens / Math.max(compactTokens, 1) : 1;
   return {
+    measurement: 'estimated',
+    baseline: session.rawText === undefined ? 'structured-proxy' : 'provided-text',
     rawChars,
     compactChars,
     rawTokens,
@@ -120,14 +106,18 @@ export function estimateTokenSavingsUsd(tokensSaved: number, pricePerMillionToke
 
 /** Raw + compact text blobs a session expands to / compresses into. */
 function sessionBlobs(session: TokenSavingsSource): { raw: string; compact: string } {
-  const compact = session.summary ?? '';
-  const raw = [
-    session.summary ?? '',
-    ...(session.keyFiles ?? []),
-    ...(session.keyTopics ?? []),
-    ...(session.decisions ?? []),
-    ...(session.problemsSolved ?? []),
-  ].join(' ');
+  const compact = session.compactText ?? session.summary ?? '';
+  const raw =
+    session.rawText ??
+    [
+      session.summary ?? '',
+      ...(session.keyFiles ?? []),
+      ...(session.keyTopics ?? []),
+      ...(session.decisions ?? []),
+      ...(session.problemsSolved ?? []),
+    ]
+      .filter(Boolean)
+      .join(' ');
   return { raw, compact };
 }
 
@@ -141,11 +131,24 @@ export async function estimateSessionTokenSavingsMeasured(
 ): Promise<TokenSavingsEstimate> {
   const { rawChars, compactChars } = sessionChars(session);
   const { raw, compact } = sessionBlobs(session);
-  const overheadTokens = estimateTokens(DEFAULT_RAW_EVENT_OVERHEAD_CHARS);
-  const rawTokens = (await countTokens(raw)) + overheadTokens;
-  const compactTokens = await countTokens(compact);
+  let measurement: 'estimated' | 'tokenized' = 'estimated';
+  let rawTokens = estimateTokens(raw.length);
+  let compactTokens = estimateTokens(compact.length);
+  if (injectedCounter) {
+    try {
+      const counts = await Promise.all([injectedCounter(raw), injectedCounter(compact)]);
+      if (counts.every((value) => Number.isSafeInteger(value) && value >= 0)) {
+        [rawTokens, compactTokens] = counts;
+        measurement = 'tokenized';
+      }
+    } catch {
+      measurement = 'estimated';
+    }
+  }
   const ratio = compactChars > 0 ? rawTokens / Math.max(compactTokens, 1) : 1;
   return {
+    measurement,
+    baseline: session.rawText === undefined ? 'structured-proxy' : 'provided-text',
     rawChars,
     compactChars,
     rawTokens,
@@ -153,6 +156,58 @@ export async function estimateSessionTokenSavingsMeasured(
     tokensSaved: Math.max(0, rawTokens - compactTokens),
     compressionRatio: Math.round(ratio * 10) / 10,
   };
+}
+
+export interface TaskUsage {
+  taskId: string;
+  model: string;
+  source: 'provider' | 'estimate';
+  qualityPassed: boolean;
+  inputTokens: number;
+  outputTokens: number;
+  auxiliaryTokens: number;
+}
+
+export function compareTaskUsage(
+  baseline: TaskUsage,
+  memory: TaskUsage,
+): {
+  savingsPercent: number | null;
+  reason?: string;
+} {
+  if (
+    typeof baseline.taskId !== 'string' ||
+    !baseline.taskId.trim() ||
+    typeof baseline.model !== 'string' ||
+    !baseline.model.trim() ||
+    baseline.taskId !== memory.taskId ||
+    baseline.model !== memory.model
+  ) {
+    return { savingsPercent: null, reason: 'Task and model must match' };
+  }
+  if (baseline.source !== 'provider' || memory.source !== 'provider') {
+    return { savingsPercent: null, reason: 'Provider-reported usage is required' };
+  }
+  if (baseline.qualityPassed !== true || memory.qualityPassed !== true) {
+    return { savingsPercent: null, reason: 'Both runs must pass the same quality gate' };
+  }
+  const counts = [
+    baseline.inputTokens,
+    baseline.outputTokens,
+    baseline.auxiliaryTokens,
+    memory.inputTokens,
+    memory.outputTokens,
+    memory.auxiliaryTokens,
+  ];
+  if (!counts.every((value) => Number.isSafeInteger(value) && value >= 0)) {
+    return { savingsPercent: null, reason: 'Usage counters must be nonnegative safe integers' };
+  }
+  const before = baseline.inputTokens + baseline.outputTokens + baseline.auxiliaryTokens;
+  const after = memory.inputTokens + memory.outputTokens + memory.auxiliaryTokens;
+  if (!Number.isSafeInteger(before) || !Number.isSafeInteger(after) || before === 0) {
+    return { savingsPercent: null, reason: 'A valid nonzero baseline is required' };
+  }
+  return { savingsPercent: Math.round(((before - after) / before) * 10000) / 100 };
 }
 
 /** Measured variant of {@link aggregateTokenSavings}. */

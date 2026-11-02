@@ -26,13 +26,14 @@ Entry points and module ownership are listed in [CONTRIBUTING.md §2](CONTRIBUTI
 
 - [src/extension.ts](src/extension.ts) — activation, command registration, walkthroughs. Keep activation cheap (`onStartupFinished`).
 - [src/contextProvider.ts](src/contextProvider.ts) — `@mem` chat participant + all slash commands (`/search`, `/entity`, `/why`, `/lineage`, `/route`, `/compliance`, …).
-- [src/contextStore.ts](src/contextStore.ts) — persistent storage, indexing, eviction, backups. All writes go through here.
+- [src/contextStore.ts](src/contextStore.ts) — session-memory storage, indexing, eviction and backups. Task state is separate and writes through `taskJournal.ts`, never the sessions mirror.
 - [src/contextCompressor.ts](src/contextCompressor.ts) — LM compression with a fully local extractive fallback. **Evidence-citation gate**: a decision cannot be emitted without pointing at the captured event that produced it. Do not weaken this.
 - [src/searchCore.ts](src/searchCore.ts) — BM25 + RRF + recency. Guarded by a recall/MRR/nDCG regression gate in CI (`scripts/eval-check.js`) — every production retrieval configuration must have a floor committed in `scripts/eval-baseline.json`.
 - [src/lessons.ts](src/lessons.ts) — pure consolidation of episodic sessions into durable semantic/procedural lessons. Deterministic IDs, support/confidence reinforcement, pinned lessons immune to pruning. Consumed by the janitor (consolidation pass) and `contextProvider` (startup injection).
 - [src/redactor.ts](src/redactor.ts) — 30-rule secret/PII redaction. **Every new capture path must pipe through this before persistence.**
 - [src/storageCrypto.ts](src/storageCrypto.ts) — AES-256-GCM envelope encryption for the store (`ghcpMem.storageEncryption`). Fail-closed: a wrong key runs read-less and write-suspended.
-- [src/mcpServer.ts](src/mcpServer.ts) — stdio MCP server (14 tools). Schema is asserted in tests (`mcpServerSchema.test.ts`); update both when changing the tool surface.
+- [src/mcpServer.ts](src/mcpServer.ts) — stdio MCP server (23 tools, including nine task tools). Schema/catalog contracts are asserted in tests; update both when changing the surface.
+- [src/taskJournal.ts](src/taskJournal.ts) — separate encrypted task history. Preserve exclusive locks, expected revisions, idempotency, private/shared access and owner-only history purge. Launcher identity/verification capability must never come from tool arguments.
 - `out/` and `out-test/` are gitignored build output — never edit compiled JS there.
 
 ## Project-specific rules (these differ from common practice)

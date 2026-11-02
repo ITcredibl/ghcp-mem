@@ -4,10 +4,6 @@ export interface HealthScore {
   /** 0-100 composite score. */
   score: number;
   redactionCoveragePct: number;
-  /**
-   * Fraction of sessions that are exact-content duplicates (0 = no dups = healthy).
-   * Stored as a ratio 0–1 so callers can multiply by 100 for display.
-   */
   dedupRatio: number;
   taggedPct: number;
   retentionHeadroomPct: number;
@@ -23,7 +19,7 @@ export interface HealthScore {
  * Compute a health score summarising memory quality.
  *
  * Composite weighting:
- *   - secretHygienePct      (20%) — inverse of secret incidence (fewer redaction hits => healthier)
+ *   - redactionCoveragePct  (20%) — proportion of sessions that had ≥1 redaction or had <private> stripped
  *   - typedPct              (15%) — proportion of sessions with a non-unknown observationType
  *   - taggedPct             (10%) — proportion with at least one userTag
  *   - dedupRatio            (20%) — 1 - (unique contentHash / total). Higher is better (more dedup = healthier).
@@ -59,18 +55,14 @@ export function computeHealth(sessions: CompressedSession[]): HealthScore {
   ).length;
 
   const redactionCoveragePct = pct(redacted, total);
-  // We still expose redactionCoveragePct for transparency, but for health we
-  // score inverse incidence so "fewer leaked secrets observed" is better.
-  const secretHygienePct = 100 - redactionCoveragePct;
   const typedPct = pct(typed, total);
   const taggedPct = pct(tagged, total);
 
   // Dedup health: proportion of DISTINCT content hashes. Missing hash counts as unique (worst case).
   const hashes = new Set<string>();
   for (const s of sessions) hashes.add(s.contentHash ?? s.id);
-  // dedupRatio: proportion of sessions that are exact-content duplicates.
-  // 0 = no duplicates = healthiest. 1 = everything is a duplicate.
-  const dedupRatio = Math.round((1 - hashes.size / total) * 100) / 100;
+  const uniqueRatio = hashes.size / total;
+  const dedupRatio = Math.round((1 - uniqueRatio) * 100) / 100; // proportion that is a dup (lower = healthier)
 
   const retentionHeadroomPct = Math.max(
     0,
@@ -84,7 +76,7 @@ export function computeHealth(sessions: CompressedSession[]): HealthScore {
 
   // Weights sum to 100.
   const score = Math.round(
-    secretHygienePct * 0.2 +
+    redactionCoveragePct * 0.2 +
       typedPct * 0.15 +
       taggedPct * 0.1 +
       100 * (1 - (total - hashes.size) / total) * 0.2 + // "no dup" health
@@ -92,10 +84,8 @@ export function computeHealth(sessions: CompressedSession[]): HealthScore {
       freshnessPct * 0.15,
   );
 
-  if (redactionCoveragePct > 40)
-    notes.push(
-      'High secret incidence detected in captured events — consider expanding excludeGlobs/private tags.',
-    );
+  if (redactionCoveragePct < 20)
+    notes.push('Low redaction coverage — verify ghcpMem.redactSecrets is enabled.');
   if (typedPct < 60)
     notes.push('Many sessions are type:unknown — LM classifier may be skipped or offline.');
   if (retentionHeadroomPct < 20)

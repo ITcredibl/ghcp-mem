@@ -6,6 +6,35 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.19.0] — 2026-11-02
+
+### Added
+- Durable task continuity through nine new MCP tools: start, status, update, checkpoint, resume, context compilation, completion, cancellation and owner-only history purge. The stdio catalog now exposes 23 tools.
+- Separate encrypted task journals with exclusive per-task locks, expected revisions, idempotent requests, committed-event integrity checks and content-free deletion tombstones. Process interruption preserves committed state; orphaned locks require offline operator recovery.
+- Git-observed execution scope covering worktree, branch, full commit, staged/unstaged changes and bounded untracked contents. Scope drift requires explicit rebind and fresh verification rather than inheriting completion claims.
+- Launcher-bound actor identity, private/shared task visibility and separate verifier capability. Task records never grant deployment authority; verifier evidence is attributed, not independently attested.
+- Bounded task-context compilation, compact MCP search, batched detail retrieval and content receipts with explicit measurement provenance.
+- Opt-in metadata-only Copilot/Claude lifecycle adapters and a one-shot checkpoint bridge, packaged alongside the MCP server and CI seeder.
+- Local-only compression policy, configurable compression model family, matched-run usage comparison, and focused `npm run test:tasks` continuity checks.
+
+### Fixed
+- MCP mutations preserve encrypted stores and reject writes when the store is locked or corrupt. Missing/ambiguous delete IDs no longer select every matching record.
+- Retracted records are excluded from ordinary MCP reads. Runtime argument validation rejects malformed tool requests.
+- Savings estimates no longer add fabricated overhead. Reports distinguish representation reduction from actual session usage and billing; OTel estimates use `ghcp_mem.estimate.*` rather than provider-usage attributes.
+- Pack imports enforce bounded payloads and safe evidence paths; conflict reporting and skill-rendering compatibility are preserved.
+- VSIX packaging excludes generated memory, local agent state and benchmark clones, and ships only the four runtime bundles.
+
+### Changed
+- Marketplace positioning now emphasizes local, auditable engineering context and governed task continuity rather than assuming native agents lack memory.
+- Curated retrieval evaluation runs in CI and the full local verification chain.
+- Task tools require trusted launcher configuration and encrypted storage by default; plaintext task storage requires explicit opt-in. The legacy sessions mirror still requires a single-writer workflow. Cloud synchronization, hostile-tenant isolation and signed CI attestations are not included.
+- MCP search is bounded by an estimated response budget; clients should inspect omission receipts and fetch selected IDs in batches. OTel consumers must migrate any dashboards that treated representation estimates as actual provider usage.
+
+### Verification
+- 655 automated tests, including independent-process races, interrupted writes, encrypted replay, scope drift, private/shared access, verifier authorization, context exclusion and history purge. Scripted agent tests do not establish live-model outcome or token-saving improvements.
+
+---
+
 ## [1.18.3] — 2026-09-13
 
 Trust-accuracy release, responding to an independent engineering review of v1.18.2 (rated 8.7/10). Its verified findings, in the reviewer's priority order: the "nothing leaves your machine" claim overstated what the implementation guarantees, `AGENTS.md` carried a rebranding artifact ("Baton"), plaintext storage was a silent default, the retrieval regression gate only protected the keyword baseline, and the extension's own generated files were not explicitly excluded from capture.

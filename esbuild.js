@@ -44,6 +44,8 @@ const entries = [
   // The MCP server keeps its shebang at the top of the source file and
   // esbuild preserves it in the output so the bin link stays executable.
   { entryPoints: ['src/mcpServer.ts'], outfile: 'out/mcpServer.js' },
+  { entryPoints: ['src/ciSeeder.ts'], outfile: 'out/ciSeeder.js' },
+  { entryPoints: ['src/agentBridge.ts'], outfile: 'out/agentBridge.js' },
 ];
 
 async function run() {

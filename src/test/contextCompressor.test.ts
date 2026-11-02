@@ -19,10 +19,14 @@ const mockModels: Array<{
   sendRequest: (msgs: any[], opts: any, token: any) => Promise<{ text: AsyncIterable<string> }>;
 }> = [];
 
+let compressionMode = 'auto';
 const vscodeMock = {
   workspace: {
     workspaceFolders: [{ name: 'test-ws', uri: { toString: () => 'file:///test-ws' } }],
-    getConfiguration: () => ({ get: (_k: string, d: any) => d }),
+    getConfiguration: () => ({
+      get: (key: string, fallback: unknown) =>
+        key === 'compressionMode' ? compressionMode : fallback,
+    }),
   },
   lm: {
     selectChatModels: async (opts?: { family?: string }) => {
@@ -105,6 +109,25 @@ test('ContextCompressor — returns null for empty events', async () => {
     captureRedactionCount: 0,
   });
   assert.equal(result, null);
+});
+
+test('ContextCompressor: local-only policy never invokes model selection', async () => {
+  const originalSelect = vscodeMock.lm.selectChatModels;
+  let selected = false;
+  compressionMode = 'local';
+  vscodeMock.lm.selectChatModels = async () => {
+    selected = true;
+    throw new Error('Model access forbidden');
+  };
+  try {
+    const result = await new ContextCompressor().compress(makeInput());
+    assert.ok(result);
+    assert.equal(selected, false);
+    assert.equal(result.compressorMode, 'fallback');
+  } finally {
+    compressionMode = 'auto';
+    vscodeMock.lm.selectChatModels = originalSelect;
+  }
 });
 
 test('ContextCompressor — fallback produces valid session when no model available', async () => {

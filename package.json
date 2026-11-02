@@ -1,8 +1,8 @@
 {
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
-  "description": "GitHub Copilot forgets everything between chats. GHCP-MEM gives it a local, auditable memory — seeded from your git history in 30 seconds — so every chat starts where the last one ended. No cloud backend, secrets redacted, every claim cited.",
-  "version": "1.18.3",
+  "description": "Local-first engineering memory and governed task continuity for AI coding agents. Resume work across agents with scoped context, evidence-linked checkpoints, redaction and auditable history. VS Code integration and stdio MCP; no cloud memory backend.",
+  "version": "1.19.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -46,7 +46,8 @@
   "main": "./out/extension.js",
   "bin": {
     "ghcp-mem-mcp": "./out/mcpServer.js",
-    "ghcp-mem-ci-seed": "./out/ciSeeder.js"
+    "ghcp-mem-ci-seed": "./out/ciSeeder.js",
+    "ghcp-mem-agent": "./out/agentBridge.js"
   },
   "contributes": {
     "commands": [
@@ -351,7 +352,7 @@
           },
           {
             "name": "savings",
-            "description": "Show token savings breakdown — compression ratio, lifetime totals, and dollar-equivalent estimates"
+            "description": "Show structured-record representation estimates; matched provider-usage runs are required to establish actual session savings"
           },
           {
             "name": "related",
@@ -891,6 +892,24 @@
           "maximum": 20,
           "description": "Number of recent sessions to include in the auto-injected instructions file. Kept small on purpose: the routing primer plus the top few sessions are injected statically, and everything else is retrieved on demand via @mem /search and the ghcpMem_* tools."
         },
+        "ghcpMem.compressionMode": {
+          "type": "string",
+          "enum": ["auto", "local"],
+          "default": "auto",
+          "description": "Use an available language model or force local extractive compression without any model calls. Local mode avoids compression inference cost; other configured features may still use models."
+        },
+        "ghcpMem.compressionModelFamily": {
+          "type": "string",
+          "default": "",
+          "description": "Optional VS Code model family for compression. Empty uses the first available model. If the requested family is unavailable, use local extraction rather than silently selecting a different model."
+        },
+        "ghcpMem.startupContextTokenBudget": {
+          "type": "number",
+          "default": 1800,
+          "minimum": 512,
+          "maximum": 32000,
+          "description": "Estimated token budget for the complete generated recall block (UTF-8 bytes / 4). Whole records are omitted rather than split. Mandatory project rules are preserved if they alone exceed the budget. This is not a provider-tokenizer guarantee."
+        },
         "ghcpMem.projectRules": {
           "type": "boolean",
           "default": true,
@@ -1135,14 +1154,17 @@
     "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.{js,mjs}\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.{js,mjs}\"",
     "test": "npm run lint && tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/run-tests.mjs",
+    "test:tasks": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node --test out-test/src/test/taskRuntime.test.js out-test/src/test/taskJournal.test.js out-test/src/test/taskContext.test.js out-test/src/test/taskTools.test.js",
     "bench": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/bench-search.js",
     "bench:real": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/bench-real.js",
     "measure:activation": "npm run bundle:prod && tsc -p ./tsconfig.test.json && node scripts/measure-activation.js",
     "eval:check": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js",
+    "eval:gold": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js --gold scripts/eval-gold.json",
+    "measure:savings": "tsc -p ./tsconfig.test.json && node scripts/measure-savings.mjs",
     "render:diagrams": "node scripts/render-diagrams.mjs",
     "check:release": "node scripts/check-release-consistency.mjs",
     "check:release:strict": "node scripts/check-release-consistency.mjs --strict",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:release && npm run eval:check && npm run bench && npm run bundle:prod",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:release && npm run eval:check && npm run eval:gold && npm run bench && npm run bundle:prod",
     "hooks:install": "node scripts/install-hooks.mjs",
     "bump:version": "node scripts/bump-version.mjs",
     "package": "npm run vscode:prepublish && vsce package --out ghcp-mem.vsix",

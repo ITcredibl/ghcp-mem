@@ -233,3 +233,13 @@ test('buildStartupContextParts — parts recombine to the exact buildStartupCont
   const combined = `${parts.stablePrefix}\n${parts.volatileSuffix}`;
   assert.equal(combined, provider.buildStartupContext());
 });
+
+test('startup recall omits oversized session cards without breaking the trust boundary', async () => {
+  const store = new ContextStore(new InMemoryMemento() as any);
+  await store.addSession(makeSession({ id: 'large-card', summary: 'x'.repeat(20000) }));
+  const provider = new ContextProvider(store);
+  const text = provider.buildStartupContext();
+  assert.ok(Math.ceil(Buffer.byteLength(text, 'utf8') / 4) <= 1800);
+  assert.doesNotMatch(text, /x{100}/);
+  assert.match(text, /<<< END UNTRUSTED MEMORY CONTENT >>>/);
+});

@@ -61,8 +61,16 @@ import { explainScore } from './explain';
 import { buildMermaidGraph } from './graphExport';
 import { recommend } from './router';
 import { rankLessons } from './lessons';
+import { budgetResults } from './contextBudget';
+import { createCheckpoint, verifyCheckpoint } from './agentCheckpoint';
+import { TASK_TOOLS, isTaskTool, handleTaskTool } from './taskTools';
 import { redact } from './redactor';
-import { deserializeDb, isEncryptedEnvelope } from './storageCrypto';
+import {
+  deserializeDb,
+  isEncryptedEnvelope,
+  parseEnvelopeHeader,
+  serializeDb,
+} from './storageCrypto';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'ghcp-mem';
@@ -150,7 +158,7 @@ function storePath(): string {
 // calls (search/recent/timeline/get) don't re-read and re-parse the whole
 // JSON store from disk on every invocation. The extension host updates the
 // file atomically via rename, so mtime changes monotonically per write.
-let dbCache: { mtimeMs: number; db: StoredDatabase } | undefined;
+let dbCache: { path: string; mtimeMs: number; db: StoredDatabase } | undefined;
 
 let warnedEncryptedNoKey = false;
 
@@ -171,7 +179,7 @@ async function loadDatabase(): Promise<StoredDatabase> {
   const p = storePath();
   try {
     const stat = await fs.stat(p);
-    if (dbCache && dbCache.mtimeMs === stat.mtimeMs) return dbCache.db;
+    if (dbCache && dbCache.path === p && dbCache.mtimeMs === stat.mtimeMs) return dbCache.db;
     const raw = await fs.readFile(p, 'utf8');
     if (isEncryptedEnvelope(raw)) {
       const parsedEnc = deserializeDb<StoredDatabase>(raw, storeKeyFromEnv());
@@ -185,16 +193,16 @@ async function loadDatabase(): Promise<StoredDatabase> {
         }
         return { version: 2, sessions: [], lastUpdated: 0 };
       }
-      dbCache = { mtimeMs: stat.mtimeMs, db: parsedEnc };
+      dbCache = { path: p, mtimeMs: stat.mtimeMs, db: parsedEnc };
       return parsedEnc;
     }
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.sessions)) {
-      dbCache = { mtimeMs: stat.mtimeMs, db: parsed };
+      dbCache = { path: p, mtimeMs: stat.mtimeMs, db: parsed };
       return parsed;
     }
     const empty: StoredDatabase = { version: 2, sessions: [], lastUpdated: 0 };
-    dbCache = { mtimeMs: stat.mtimeMs, db: empty };
+    dbCache = { path: p, mtimeMs: stat.mtimeMs, db: empty };
     return empty;
   } catch {
     return { version: 2, sessions: [], lastUpdated: 0 };
@@ -339,12 +347,13 @@ export function timelineSessions(db: StoredDatabase, days = 7, limit = 10): Stor
   const l = clampInt(limit, 1, 50);
   const cutoff = Date.now() - d * 24 * 60 * 60 * 1000;
   return db.sessions
-    .filter((s) => s.endTime >= cutoff)
+    .filter((s) => !s.retracted && s.endTime >= cutoff)
     .sort((a, b) => b.endTime - a.endTime)
     .slice(0, l);
 }
 
 const TOOLS = [
+  ...TASK_TOOLS,
   {
     name: 'ghcpMem_search',
     description:
@@ -370,6 +379,18 @@ const TOOLS = [
             'Scope results by workspace name (case-insensitive substring). Easier to use than workspaceId.',
         },
         limit: { type: 'number', description: 'Max results (default 5, max 25).' },
+        maxTokens: {
+          type: 'integer',
+          minimum: 128,
+          maximum: 32000,
+          description: 'Estimated response token budget, including the receipt (default 1200).',
+        },
+        detail: {
+          type: 'string',
+          enum: ['index', 'full'],
+          description:
+            'Use index for compact discovery; full preserves complete summaries (default full).',
+        },
       },
       required: ['query'],
     },
@@ -406,13 +427,34 @@ const TOOLS = [
   },
   {
     name: 'ghcpMem_get',
-    description: 'Get full detail of a session by ID or ID prefix.',
+    description:
+      'Get full detail by unique ID, or batch selected ids after compact search. Provide id OR ids. Checkpoint evidence is self-reported, not deployment authority.',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Session ID or unique prefix.' },
+        ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Batch up to 25 selected session IDs instead of making separate model round trips.',
+        },
+        maxTokens: {
+          type: 'integer',
+          minimum: 128,
+          maximum: 32000,
+          description: 'Estimated token budget for batched detail results (default 2400).',
+        },
+        repoScope: {
+          type: 'string',
+          description: 'Repository scope against which to validate an attached checkpoint.',
+        },
+        commit: {
+          type: 'string',
+          description:
+            'Current full commit hash for checkpoint validation; both scope and commit are required to validate.',
+        },
       },
-      required: ['id'],
     },
   },
   {
@@ -452,6 +494,11 @@ const TOOLS = [
           description: 'Problems resolved.',
         },
         tags: { type: 'array', items: { type: 'string' }, description: 'User-facing tags.' },
+        checkpoint: {
+          type: 'object',
+          description:
+            'Optional expiring checkpoint: harness, taskId, repoScope, full commit, stage, summary, nextActions, evidence. Evidence is self-reported and never grants deployment authority.',
+        },
       },
       required: ['summary'],
     },
@@ -591,9 +638,32 @@ async function saveDatabase(db: StoredDatabase): Promise<void> {
   const p = storePath();
   const dir = join(p, '..');
   await fs.mkdir(dir, { recursive: true });
-  const tmp = `${p}.${process.pid}.tmp`;
   db.lastUpdated = Date.now();
-  await fs.writeFile(tmp, JSON.stringify(db), { encoding: 'utf8', mode: 0o600 });
+  let payload = serializeDb(db, undefined, undefined);
+  try {
+    const original = await fs.readFile(p, 'utf8');
+    const header = parseEnvelopeHeader(original);
+    if (isEncryptedEnvelope(original)) {
+      const key = storeKeyFromEnv();
+      if (!header || !key || !deserializeDb<StoredDatabase>(original, key)) {
+        throw new Error('Memory store is locked or corrupt; writes are suspended');
+      }
+      payload = serializeDb(
+        db,
+        key,
+        header.mode,
+        header.salt ? Buffer.from(header.salt, 'hex') : undefined,
+      );
+    } else {
+      const existing = JSON.parse(original) as StoredDatabase;
+      if (!Array.isArray(existing.sessions))
+        throw new Error('Invalid memory store; writes are suspended');
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const tmp = `${p}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 });
   await fs.rename(tmp, p);
   // Bust the mtime cache so the next loadDatabase re-reads the file.
   dbCache = undefined;
@@ -603,8 +673,96 @@ function textContent(obj: unknown): any {
   return { content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] };
 }
 
+function sessionDetail(session: StoredSession, scope?: string, commit?: string): unknown {
+  return {
+    ...summarizeForMcp(session),
+    checkpoint: session.checkpoint,
+    checkpointValidation: session.checkpoint
+      ? scope && commit
+        ? verifyCheckpoint(session.checkpoint, { repoScope: scope, commit })
+        : { valid: false, reason: 'Supply current repoScope and commit; evidence is self-reported' }
+      : undefined,
+    rawEventCount: session.rawEventCount,
+    redactionCount: session.redactionCount,
+    workspaceName: session.workspaceName,
+    startTime: new Date(session.startTime).toISOString(),
+    endTime: new Date(session.endTime).toISOString(),
+  };
+}
+
+function validateToolArguments(name: string, args: unknown): void {
+  const tool = TOOLS.find((entry) => entry.name === name);
+  if (!tool) throw new Error(`Unknown tool: ${name}`);
+  if (!args || typeof args !== 'object' || Array.isArray(args))
+    throw new Error('Tool arguments must be an object');
+  const values = args as Record<string, unknown>;
+  const schema = tool.inputSchema as {
+    required?: string[];
+    properties: Record<string, { type: string; enum?: readonly string[] } | undefined>;
+  };
+  for (const required of schema.required ?? []) {
+    if (values[required] === undefined || values[required] === null)
+      throw new Error(`Missing required argument: ${required}`);
+  }
+  for (const [key, value] of Object.entries(values)) {
+    const field = schema.properties[key];
+    if (!field) throw new Error(`Unknown argument: ${key}`);
+    if (field.type === 'array') {
+      if (
+        !Array.isArray(value) ||
+        value.length > 50 ||
+        value.some((entry) => typeof entry !== 'string')
+      )
+        throw new Error(`Invalid array argument: ${key}`);
+    } else if (field.type === 'integer' || field.type === 'number') {
+      if (
+        typeof value !== 'number' ||
+        !Number.isFinite(value) ||
+        (field.type === 'integer' && !Number.isSafeInteger(value))
+      )
+        throw new Error(`Invalid numeric argument: ${key}`);
+    } else if (
+      typeof value !== field.type ||
+      (field.type === 'object' && (value === null || Array.isArray(value)))
+    ) {
+      throw new Error(`Invalid argument type: ${key}`);
+    }
+    if (field.enum && !field.enum.includes(value as string))
+      throw new Error(`Invalid argument value: ${key}`);
+  }
+}
+
 async function handleCall(name: string, args: any): Promise<any> {
-  const db = await loadDatabase();
+  if (isTaskTool(name)) {
+    return textContent(
+      await handleTaskTool(name, args, {
+        memories: async (task, principal, scope) => {
+          const source = await loadDatabase();
+          const sessions = source.sessions.filter(
+            (session) =>
+              session.repoScope === principal.repoScope &&
+              session.branchName === scope.branch &&
+              !session.retracted &&
+              !session.supersededBy &&
+              !session.lowQuality,
+          );
+          return searchSessions({ ...source, sessions }, task.goal, {}, 10);
+        },
+      }),
+    );
+  }
+  validateToolArguments(name, args);
+  const db = structuredClone(await loadDatabase());
+  if (name !== 'ghcpMem_store' && name !== 'ghcpMem_delete') {
+    db.sessions = db.sessions.filter((session) => !session.retracted);
+    const scope = process.env.GHCP_MEM_REPO_SCOPE;
+    if (scope) {
+      db.sessions = db.sessions.filter(
+        (session) => session.repoScope === scope || session.workspaceId === scope,
+      );
+      db.lessons = (db.lessons ?? []).filter((lesson) => lesson.scope === scope);
+    }
+  }
   const clamp = (n: any, def: number, max: number) => {
     const v = typeof n === 'number' ? Math.floor(n) : def;
     return Math.max(1, Math.min(max, v));
@@ -625,11 +783,22 @@ async function handleCall(name: string, args: any): Promise<any> {
         },
         limit,
       );
-      return textContent({ count: hits.length, results: hits.map(summarizeForMcp) });
+      const results = hits.map((session) =>
+        args?.detail === 'index'
+          ? {
+              id: session.id,
+              date: new Date(session.endTime).toISOString(),
+              type: session.observationType,
+              summary: session.summary.slice(0, 220),
+              keyFiles: session.keyFiles.slice(0, 3),
+            }
+          : summarizeForMcp(session),
+      );
+      return textContent(budgetResults(results, args?.maxTokens ?? 1200));
     }
     case 'ghcpMem_recent': {
       const limit = clamp(args?.limit, 5, 25);
-      let recent = [...db.sessions].sort((a, b) => b.endTime - a.endTime);
+      let recent = db.sessions.filter((s) => !s.retracted).sort((a, b) => b.endTime - a.endTime);
       if (args?.workspaceId) recent = recent.filter((s) => s.workspaceId === args.workspaceId);
       if (args?.workspaceName) {
         const needle = String(args.workspaceName).toLowerCase();
@@ -647,21 +816,40 @@ async function handleCall(name: string, args: any): Promise<any> {
       return textContent({ count: hits.length, days, results: hits.map(summarizeForMcp) });
     }
     case 'ghcpMem_get': {
-      const id = String(args?.id ?? '');
-      const hit = db.sessions.find((s) => s.id === id || s.id.startsWith(id));
-      if (!hit) return textContent({ error: `No session matching id "${id}"` });
-      return textContent({
-        ...summarizeForMcp(hit),
-        rawEventCount: (hit as any).rawEventCount,
-        redactionCount: hit.redactionCount,
-        workspaceName: hit.workspaceName,
-        startTime: new Date(hit.startTime).toISOString(),
-        endTime: new Date(hit.endTime).toISOString(),
-      });
+      const batch = Array.isArray(args?.ids);
+      if (batch && args.id !== undefined) throw new Error('Provide id OR ids, not both');
+      const ids: string[] = batch ? args.ids : [args.id];
+      if (!ids.length || ids.length > 25 || ids.some((id) => typeof id !== 'string' || !id.trim()))
+        throw new Error('Provide one id or up to 25 nonempty ids');
+      const results: unknown[] = [];
+      for (const id of new Set(ids)) {
+        const exact = db.sessions.find((session) => session.id === id);
+        const matches = exact
+          ? [exact]
+          : db.sessions.filter((session) => session.id.startsWith(id));
+        if (matches.length > 1) throw new Error('Ambiguous session id; use a full id');
+        if (!matches[0]) return textContent({ error: `No session matching id "${id}"` });
+        results.push(sessionDetail(matches[0], args.repoScope, args.commit));
+      }
+      return textContent(
+        batch || args.maxTokens !== undefined
+          ? budgetResults(results, args.maxTokens ?? 2400)
+          : results[0],
+      );
     }
     case 'ghcpMem_store': {
       if (!MCP_WRITE_ENABLED) throw new Error('MCP write tools are disabled by policy');
       const now = Date.now();
+      if (typeof args.summary !== 'string' || !args.summary.trim())
+        throw new Error('A nonempty summary is required');
+      const checkpoint =
+        args.checkpoint === undefined ? undefined : createCheckpoint(args.checkpoint, now);
+      if (
+        checkpoint &&
+        process.env.GHCP_MEM_REPO_SCOPE &&
+        checkpoint.repoScope !== process.env.GHCP_MEM_REPO_SCOPE
+      )
+        throw new Error('Checkpoint repository does not match the configured scope');
       // Redact every user-supplied string BEFORE construction (v1.10.2). Previously
       // the MCP path bypassed redact() entirely, so any external client handing
       // the tool a secret persisted it in cleartext. The redactionCount is fed
@@ -677,9 +865,11 @@ async function handleCall(name: string, args: any): Promise<any> {
         userTags: (Array.isArray(args?.tags) ? args.tags : []).slice(0, 10).map(String),
       });
       const session: StoredSession = {
+        checkpoint,
+        repoScope: checkpoint?.repoScope ?? process.env.GHCP_MEM_REPO_SCOPE,
         id: randomUUID(),
-        workspaceId: 'mcp',
-        workspaceName: 'mcp-client',
+        workspaceId: checkpoint?.repoScope ?? 'mcp',
+        workspaceName: checkpoint?.repoScope ?? 'mcp-client',
         startTime: now,
         endTime: now,
         summary: redacted.summary,
@@ -701,12 +891,25 @@ async function handleCall(name: string, args: any): Promise<any> {
     }
     case 'ghcpMem_delete': {
       if (!MCP_WRITE_ENABLED) throw new Error('MCP write tools are disabled by policy');
-      const delId = String(args?.id ?? '');
-      const delDb = await loadDatabase();
-      const before = delDb.sessions.length;
-      delDb.sessions = delDb.sessions.filter((s) => s.id !== delId && !s.id.startsWith(delId));
-      const deleted = before - delDb.sessions.length;
-      if (deleted > 0) await saveDatabase(delDb);
+      const delId = typeof args?.id === 'string' ? args.id.trim() : '';
+      if (!delId) throw new Error('A nonempty session id is required');
+      const exact = db.sessions.find((session) => session.id === delId);
+      const matches = exact
+        ? [exact]
+        : db.sessions.filter((session) => session.id.startsWith(delId));
+      if (matches.length > 1) throw new Error('Ambiguous session id; use a full id');
+      if (
+        matches[0] &&
+        process.env.GHCP_MEM_REPO_SCOPE &&
+        matches[0].repoScope !== process.env.GHCP_MEM_REPO_SCOPE &&
+        matches[0].workspaceId !== process.env.GHCP_MEM_REPO_SCOPE
+      )
+        throw new Error('Session is outside configured repository scope');
+      const deleted = matches.length;
+      if (matches[0]) {
+        db.sessions = db.sessions.filter((session) => session.id !== matches[0].id);
+        await saveDatabase(db);
+      }
       return textContent({ deleted, id: delId });
     }
 
@@ -959,6 +1162,7 @@ async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse | undefine
 function main(): void {
   const rl = createInterface({ input: process.stdin });
   let pending = 0;
+  let requests: Promise<void> = Promise.resolve();
   let closed = false;
   const tryExit = () => {
     if (closed && pending === 0) process.exit(0);
@@ -974,7 +1178,8 @@ function main(): void {
       return;
     }
     pending++;
-    dispatch(req)
+    requests = requests
+      .then(() => dispatch(req))
       .then((resp) => {
         if (resp) send(resp);
       })

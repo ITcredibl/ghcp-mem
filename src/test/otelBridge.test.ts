@@ -87,9 +87,11 @@ test('buildSavedQuerySpanPayload — gen_ai usage attributes', () => {
     version: '1.13.0',
   });
   const a = attrs(payload);
-  assert.equal(a['gen_ai.usage.input_tokens'], '300');
-  assert.equal(a['ghcp_mem.usage.raw_input_tokens'], '1200');
-  assert.equal(a['ghcp_mem.usage.tokens_saved'], '900');
+  assert.equal(a['gen_ai.usage.input_tokens'], undefined);
+  assert.equal(a['ghcp_mem.measurement'], 'structured-proxy-estimate');
+  assert.equal(a['ghcp_mem.estimate.compact_tokens'], '300');
+  assert.equal(a['ghcp_mem.estimate.expanded_tokens'], '1200');
+  assert.equal(a['ghcp_mem.estimate.representation_reduction'], '900');
   assert.equal(a['ghcp_mem.result_count'], '4');
 
   const span = (payload as any).resourceSpans[0].scopeSpans[0].spans[0];

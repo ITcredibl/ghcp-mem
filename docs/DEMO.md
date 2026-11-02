@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎬 GHCP-MEM v1.18.3 — Live Demo
+# 🎬 GHCP-MEM v1.19.0 — Live Demo
 
 ### A 6-minute walkthrough that exercises every capability
 
@@ -11,7 +11,7 @@
 </div>
 
 > [!NOTE]
-> **Prereqs:** GHCP-MEM v1.18.3 installed (Marketplace search **GHCP-MEM**, or `code --install-extension ITcredibl.ghcp-mem`) and VS Code reloaded. Open any workspace. No Azure subscription needed — the Azure steps degrade gracefully if `az` isn't installed or signed in.
+> **Prereqs:** GHCP-MEM v1.19.0 installed (the locally built VSIX before publication, or Marketplace search **GHCP-MEM** after publication) and VS Code reloaded. Open any workspace. No Azure subscription needed — the Azure steps degrade gracefully if `az` isn't installed or signed in.
 
 ---
 
@@ -19,7 +19,7 @@
 
 ```mermaid
 timeline
-    title GHCP-MEM v1.18.3 — 6-minute live demo
+    title GHCP-MEM v1.19.0 — 6-minute live demo
     section 🩺 Health
         0. Sanity check (10s)              : status bar glyph
         1. Seed Azure sessions (15s)       : Seed Azure Demo Sessions
@@ -243,7 +243,7 @@ sequenceDiagram
     CLI->>MCP: notifications/initialized
     CLI->>MCP: tools/list
     MCP->>STORE: mtime check (cached)
-    MCP-->>CLI: 14 tools — _search · _recent · _timeline · _get · _store · _delete<br/>· _entity · _snippets · _conflicts · _lineage · _explain · _graph · _route · _lessons
+    MCP-->>CLI: 23 tools — 14 memory tools plus nine governed task-continuity tools
 ```
 
 **Quick verification** (POSIX shell, no other client needed):
@@ -334,7 +334,9 @@ Terminal (from the repo root):
 npm test
 ```
 
-You should see **626 tests pass**, covering: redactor + redactor-corpus, contextStore, types, azureDetect, ruleClassifier, health, packs, autosave, mcpServer + mcpServer schema, eval, validator, repoScope, markdownExport, contextCompressor, integration.
+You should see **655 tests pass**, including encrypted MCP writes, malformed deletes, bounded retrieval, checkpoint integrity/expiry, metadata-only adapters, matched-run accounting, durable task journals, process races, interruption recovery, scoped resume, verifier policy and owner purge.
+
+For the task-continuity demo, run `npm run test:tasks`. The scripted workflow starts a shared task under a Copilot-labelled principal, resumes under a Claude-labelled principal, rejects client-supplied privileges, requires an authorized verifier to complete, and checks the public MCP context excludes unrelated repository/branch history. Separate scenarios exercise process interruption and competing writers. These are deterministic protocol tests, not live model demonstrations. Launcher configuration and limitations are documented in the README's Durable Task Continuity section.
 
 ```
 ℹ tests 597
@@ -376,6 +378,6 @@ Plus the CI pipeline runs three additional gates: `npm run lint` → `npm test` 
 
 [← Back to README](../README.md) · [Competitive analysis](COMPARISON.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Demo script for GHCP-MEM v1.18.3** · 626 tests · zero native deps · zero ports · CI ubuntu × windows × node 20 · `npm audit` 0 vulns · Prettier-gated</sub>
+<sub>**Demo script for GHCP-MEM v1.19.0** · 655 tests · zero native deps · zero ports · CI ubuntu × windows × node 20 · Prettier-gated</sub>
 
 </div>

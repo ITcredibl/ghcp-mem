@@ -76,6 +76,9 @@ jobs:
       - name: Eval regression gate
         run: npm run eval:check
 
+      - name: Curated retrieval quality gate
+        run: npm run eval:gold
+
       - name: Search-latency benchmark (smoke)
         run: npm run bench
         env:

@@ -11,11 +11,7 @@ import { formatAgo, renderIndexRow, renderCompact, renderFull } from '../session
 import { getConfig } from '../types';
 import { computeHealth } from '../health';
 import { matchFilePath } from '../pathMatch';
-import {
-  estimateSessionTokenSavings,
-  estimateTokenSavingsUsd,
-  aggregateTokenSavingsMeasured,
-} from '../savings';
+import { estimateSessionTokenSavings, aggregateTokenSavingsMeasured } from '../savings';
 import { buildEntityRecord, renderEntityMarkdown } from '../entity';
 import { getCausalNeighbors, renderCausalNeighbors } from '../causalGraph';
 import { parseInlineFilters, synthesize } from '../contextProviderFormat';
@@ -34,7 +30,7 @@ export async function status(
     `- **Estimated tokens saved today:** ${stats.todayEstimatedTokensSaved.toLocaleString()}\n`,
   );
   stream.markdown(
-    `- **Lifetime tokens saved:** ${stats.lifetimeEstimatedTokensSaved.toLocaleString()}\n`,
+    `- **Estimated representation reduction (not session usage):** ${stats.lifetimeEstimatedTokensSaved.toLocaleString()} tokens\n`,
   );
   stream.markdown(`- **Avg compression ratio:** ${stats.avgCompressionRatio}×\n`);
   stream.markdown(`- **Redactions applied:** ${stats.totalRedactions}\n`);
@@ -420,7 +416,6 @@ export async function savings(
     return;
   }
 
-  const usd = (tokens: number) => `$${estimateTokenSavingsUsd(tokens).toFixed(4)}`;
   const fmt = (n: number) => n.toLocaleString();
   const sessionRow = (s: {
     summary?: string;
@@ -442,6 +437,9 @@ export async function savings(
   });
 
   stream.markdown(`## 💰 GHCP-MEM Token Savings Report\n\n`);
+  stream.markdown(
+    'These are structured-record versus summary estimates, not measured session savings. Actual usage and billing remain unknown until matched provider-usage runs are supplied.\n\n',
+  );
 
   // ── Today ──
   stream.markdown(
@@ -460,7 +458,7 @@ export async function savings(
       );
     }
     stream.markdown(
-      `\n**Today total saved:** ${fmt(stats.todayEstimatedTokensSaved)} tokens ≈ ${usd(stats.todayEstimatedTokensSaved)} (GPT-4o pricing)\n`,
+      `\n**Today estimated representation reduction:** ${fmt(stats.todayEstimatedTokensSaved)} tokens\n`,
     );
     stream.markdown(
       `**Today raw vs compact:** ${fmt(stats.todayEstimatedRawTokens)} raw tokens → ${fmt(stats.todayEstimatedCompactTokens)} compact tokens\n\n`,
@@ -471,14 +469,14 @@ export async function savings(
   stream.markdown(`### Lifetime (${fmt(stats.totalSessions)} sessions)\n\n`);
   stream.markdown(`| Metric | Value |\n`);
   stream.markdown(`|--------|-------|\n`);
-  stream.markdown(`| Total tokens saved | **${fmt(stats.lifetimeEstimatedTokensSaved)}** |\n`);
+  stream.markdown(
+    `| Estimated representation reduction | **${fmt(stats.lifetimeEstimatedTokensSaved)}** |\n`,
+  );
   stream.markdown(`| Raw tokens represented | **${fmt(stats.lifetimeEstimatedRawTokens)}** |\n`);
   stream.markdown(
     `| Compact tokens retained | **${fmt(stats.lifetimeEstimatedCompactTokens)}** |\n`,
   );
-  stream.markdown(
-    `| Dollar equivalent | **${usd(stats.lifetimeEstimatedTokensSaved)}** (GPT-4o) |\n`,
-  );
+  stream.markdown(`| Actual billing savings | Unknown; provider usage and pricing required |\n`);
   stream.markdown(`| Avg compression ratio | **${stats.avgCompressionRatio}×** |\n`);
   stream.markdown(
     `| Compact knowledge in memory | **${fmt(stats.totalCompactTokens)} tokens** |\n`,
@@ -492,22 +490,22 @@ export async function savings(
       : 0;
   stream.markdown(`\n### 💡 What This Means\n\n`);
   stream.markdown(
-    `- Each new Copilot chat saves you ~**${fmt(perConvSaved)} tokens** on average — context GHCP-MEM already knows.\n`,
+    `- Average structured-record versus summary reduction: **${fmt(perConvSaved)} estimated tokens** per stored record. This does not predict savings in a new chat.\n`,
   );
   stream.markdown(
     `- You have **${fmt(stats.totalCompactTokens)} tokens** of knowledge compressed and ready to auto-inject — without re-explaining anything.\n`,
   );
   stream.markdown(
-    `- The **${stats.avgCompressionRatio}× avg compression ratio** means every 1 token injected replaces ${stats.avgCompressionRatio} tokens you would otherwise have typed.\n`,
+    `- The **${stats.avgCompressionRatio}× representation ratio** excludes retrieval wrappers, repeated injections, model output, retries, and memory-generation cost.\n`,
   );
 
   if (stats.lifetimeEstimatedTokensSaved > 10_000) {
     stream.markdown(
-      `\n> 🏆 You've crossed **${fmt(Math.round(stats.lifetimeEstimatedTokensSaved / 1000))}K tokens saved** — that's roughly ${Math.round(stats.lifetimeEstimatedTokensSaved / 750)} pages of context you never had to re-explain!\n`,
+      `\n> Stored-record representation reduction exceeds ${fmt(Math.round(stats.lifetimeEstimatedTokensSaved / 1000))}K estimated tokens; net session savings have not been established.\n`,
     );
   }
 
   stream.markdown(
-    `\n---\n_Estimates: 4 chars/token heuristic · GPT-4o May 2025 input pricing ($5/1M tokens) · Run \`@mem /status\` for a quick summary._\n`,
+    `\n---\n_Estimates: 4 chars/token heuristic. Compare matched successful runs with \`npm run measure:savings -- baseline.json memory.json\`; include compression and other auxiliary usage._\n`,
   );
 }

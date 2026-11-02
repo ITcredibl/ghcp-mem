@@ -4,7 +4,7 @@
 
 ### You're picking a memory tool. Don't pick the wrong one.
 
-[![v1.18.3](https://img.shields.io/badge/version-1.18.3-7c3aed?style=for-the-badge)](../package.json)
+[![v1.19.0](https://img.shields.io/badge/version-1.19.0-7c3aed?style=for-the-badge)](../package.json)
 [![Scope](https://img.shields.io/badge/scope-VS_Code_+_Copilot-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](../README.md)
 
 </div>
@@ -71,7 +71,7 @@ GHCP-MEM is intentionally narrow: **VS Code + Copilot, zero deps, zero ports, se
 | Project | Target tool(s) | Storage | Retrieval | VS Code native? |
 |---|---|---|---|---|
 | **GHCP-MEM** (this repo) | VS Code + GitHub Copilot Chat | VS Code `globalState` + JSON mirror + inverted index | RRF (keyword + recency + embeddings) + optional LM rerank | ✅ |
-| [GitHub Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) (preview) | Copilot cloud agent · code review (web) · CLI | GitHub-hosted (cloud, repo-scoped) | LLM-inferred patterns, citation-validated | ❌ (no VS Code surface yet) |
+| [GitHub Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) | VS Code · Copilot CLI · cloud agent · code review and other supported surfaces | GitHub-hosted repository facts + user preferences | Relevance selection, citation checks and reinforcement | ✅ (local setting and policy dependent) |
 | [`plures/pluresLM-vscode`](https://github.com/plures/pluresLM-vscode) | Copilot Chat (`@memory`) | MCP service + optional SQLite + vector embeddings | Vector + keyword | ✅ |
 | [`NiclasOlofsson/remember-mcp-vscode`](https://github.com/NiclasOlofsson/remember-mcp-vscode) | Copilot Chat via MCP | Markdown + YAML frontmatter | Copilot-driven | ✅ (requires Python + pipx) |
 | [`SKULLFIRE07/cortex-memory`](https://github.com/SKULLFIRE07/cortex-memory) | Claude Code / Cursor / Cline / passive Copilot | `.cortex/` local dir; 3-layer (working / episodic / semantic) | LLM extraction + CLAUDE.md injection | ✅ (sidebar) |
@@ -83,19 +83,19 @@ GHCP-MEM is intentionally narrow: **VS Code + Copilot, zero deps, zero ports, se
 
 ## 🆚 GHCP-MEM ↔ GitHub Copilot Memory (the closest cousin)
 
-GitHub announced [Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) as a public preview in 2026 — it's the only other "memory layer for Copilot" with first-party backing. Both projects aim at the same goal but make opposite bets on **where memory lives**. GHCP-MEM v1.8.1 ships a `githubCompatibleMode` setting that mirrors Copilot Memory's contract (28-day retention + repo-scoped retrieval) for users who want the same semantics offline.
+As checked on November 2, 2026, [Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) supports repository facts and personal preferences, including VS Code with a local setting. GHCP-MEM differentiates through local storage, explicit redaction, bounded retrieval, and auditable handoffs. Its `githubCompatibleMode` is a legacy 28-day repo-scoped preset, not a mirror of the current service contract.
 
-| Dimension | **GHCP-MEM v1.18.3** | **GitHub Copilot Memory** (public preview) |
+| Dimension | **GHCP-MEM v1.19.0** | **GitHub Copilot Memory** (public preview) |
 |---|---|---|
 | **Storage location** | 100% local: VS Code `globalState` + atomic mirror to `~/.ghcp-mem/sessions.json` (mode `0600`) | GitHub cloud, repo-scoped |
-| **Where it works** | VS Code (`@mem` chat, agent tools, status bar, sidebar, MCP for Cursor / Cline / Windsurf / Claude Desktop) | Copilot cloud agent · Copilot code review (web) · Copilot CLI |
-| **Retention** | 90 days default, configurable (or **28 days when `githubCompatibleMode: true`**) | 28 days, fixed; successful re-use refreshes |
-| **Scope** | Configurable: `user` / `workspace` / `repo` (auto-detected from `.git/config`) | Repo only |
+| **Where it works** | VS Code, stdio MCP clients; opt-in Copilot/Claude metadata adapters | VS Code (setting/policy dependent), Copilot CLI, cloud agent, code review and other supported surfaces |
+| **Retention** | 90 days default; legacy preset selects 28 days | Default 90 days; repository facts configurable 7–180 days by administrators; reinforcement resets expiry |
+| **Scope** | Configurable `user` / `workspace` / `repo`; optional headless repository restriction | Repository facts plus user preferences with separate controls |
 | **Trigger** | Active capture: every edit, diagnostic, git op, debug, task, terminal command (debounced, glob-filtered) | Passive inference from PRs / agent sessions / code review actions |
 | **Validation against current code** | ✅ `validateAgainstCodebase` setting drops sessions whose `keyFiles` no longer exist (cached 60s) | ✅ Citations validated against current code before reuse |
 | **Privacy boundary** | Storage & retrieval stay on the laptop; optional LM compression sends redacted session data to your configured Copilot model (local extractive fallback otherwise); 30-rule dual-pass redactor; `<private>` tag stripping; `.gitignore` auto-guarded | Stays in originating repo on GitHub's infra; standard GitHub data terms |
 | **User control** | All settings exposed in `settings.json`; export/import JSON; delete per session | Pro/Pro+ default on (toggle in personal settings); Enterprise default off (org toggle); repo owners can review + delete memories |
-| **Air-gap / offline / locked-down enterprise machines** | ✅ Works — no network, no subprocess, no native binaries | ❌ Cloud-hosted; needs network reachability to github.com |
+| **Air-gap / offline / locked-down enterprise machines** | ✅ Local compression mode; no daemon, open port or native dependency. Optional bridges launch short-lived Node processes | ❌ Cloud-hosted; requires service reachability |
 | **Cross-machine sync** | Manual via `.ghcpmem-pack.json` exports | Automatic (cloud) within repo permissions |
 | **Eligibility / availability** | MIT, free, no tier gate | Pro / Pro+ / Enterprise (preview, may change) |
 | **MCP-compatible (Cursor, Cline, Windsurf, Claude Desktop)** | ✅ bundled stdio JSON-RPC server | ❌ |
@@ -106,7 +106,7 @@ GitHub announced [Copilot Memory](https://docs.github.com/en/copilot/concepts/ag
 
 - **Use GitHub Copilot Memory if** you're a Pro user, your code lives on github.com, you mostly work through cloud agents / PR review / the CLI, and you want zero local setup. Memory is shared across everyone on the repo automatically.
 - **Use GHCP-MEM if** you ship from VS Code, you work inside an enterprise / on a locked-down laptop / in an air-gapped environment, you need explicit secret redaction, your codebase is on Azure (not just GitHub), or you want to query memory from non-Copilot AI clients via MCP.
-- **Use both if** you want — they target different surfaces and don't conflict. Enable `ghcpMem.githubCompatibleMode` and the local store mirrors Copilot Memory's 28-day repo-scoped semantics, so users moving between cloud agent and IDE see consistent behaviour.
+- **Use both only after checking duplication:** surfaces now overlap. Measure repeated context injection and configure retention and scope explicitly; the legacy compatibility preset does not synchronize native memories.
 
 ---
 
@@ -117,7 +117,7 @@ GitHub announced [Copilot Memory](https://docs.github.com/en/copilot/concepts/ag
 <details open>
 <summary><b>🔬 Full feature comparison</b></summary>
 
-| Dimension | **GHCP-MEM v1.18.3** | PluresLM | Remember-MCP | Cortex-Memory | Cortex (Claude) | claude-mem v13.x |
+| Dimension | **GHCP-MEM v1.19.0** | PluresLM | Remember-MCP | Cortex-Memory | Cortex (Claude) | claude-mem v13.x |
 |---|---|---|---|---|---|---|
 | No external service / port | ✅ | ❌ (service by default) | ❌ (needs pipx + Python server) | ✅ | ✅ | ❌ (`:37777` worker) |
 | No native deps | ✅ | 🟡 (better-sqlite3 in legacy) | ❌ | ✅ | ❌ (sql-wasm, Nomic) | ❌ (SQLite, Chroma, Bun) |
@@ -139,12 +139,12 @@ GitHub announced [Copilot Memory](https://docs.github.com/en/copilot/concepts/ag
 | Content-hash dedup | ✅ (SHA-256) | 🟡 | ❌ | ❌ | ✅ | 🟡 |
 | Backups / recovery | ✅ (rolling 5, restore command) | 🟡 | n/a | ❌ | ✅ | ❌ |
 | Context-pressure autosave | ✅ (event count + wall-clock) | ❌ | ❌ | 🟡 | ✅ | ✅ |
-| Multi-AI interop (MCP) | ✅ (stdio MCP, 14 tools, workspace-scoped, JSON-RPC 2.0) | 🟡 (LM tool) | ✅ (MCP) | ✅ (MCP + CLAUDE.md) | ❌ | ✅ (3-layer MCP) |
+| Multi-AI interop (MCP) | ✅ (stdio MCP, 23 tools including governed task continuity, JSON-RPC 2.0) | 🟡 (LM tool) | ✅ (MCP) | ✅ (MCP + CLAUDE.md) | ❌ | ✅ (3-layer MCP) |
 | Azure-aware capture | ✅ (12-subsystem classifier + `az` snapshot) | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Health score alerting | ✅ (0–100, configurable threshold notification) | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Auto-gitignore injected files | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Async non-blocking index rebuild | ✅ (chunked `setImmediate`) | ❌ | n/a | ❌ | ❌ | n/a |
-| Formal test suite | ✅ (626 `node:test` cases + eval gate + bench + smoke + CI matrix ubuntu×windows) | ✅ (vitest) | 🟡 | 🟡 | ✅ (231 tests) | ❌ |
+| Formal test suite | ✅ (655 `node:test` cases + synthetic and curated eval gates + bench + CI matrix ubuntu×windows) | ✅ (vitest) | 🟡 | 🟡 | ✅ (231 tests, historical snapshot) | Not independently audited in this refresh |
 
 </details>
 
@@ -177,7 +177,7 @@ GHCP-MEM made specific bets that not every user will agree with:
 | Bet | Trade-off |
 |---|---|
 | **Zero runtime deps.** | Means no embedded vector DB, no FTS5 — retrieval relies on inverted index + RRF + the `vscode.lm` embeddings API when available. Performance is fine for tens of thousands of sessions but won't match Chroma at multi-million scale. |
-| **VS Code-only.** | Means no Claude Code / Codex / Gemini support out of the box. The bundled MCP server lets other clients query the store, but capture is VS Code-only. |
+| **VS Code-first.** | MCP supports cross-client recall and task continuity. One-shot adapters capture Copilot/Claude lifecycle metadata, not full conversations. Codex supports checkpoint interchange, not hook capture. |
 | **No background worker.** | Means everything runs inside the extension host. If VS Code is closed, capture stops. (This is intentional — no daemon means no port, no auto-start, no IT-blocker.) |
 | **MIT license.** | Permissive but offers no patent grant. Apache-2.0 (which claude-mem uses) is stricter on that front. |
 | **Per-user storage.** | No team-wide cloud sync. Use `.ghcpmem-pack.json` exports for team sharing. |
@@ -192,7 +192,7 @@ Every gap from the original v0.x analysis was closed before v1.0. Items shipped 
 - ✅ **Pinned tier** — sessions can be pinned to the top of the tree view.
 - ✅ **Diff-friendly markdown export** — stable, byte-deterministic session export.
 - ✅ **Retrieval eval gate** — recall@k + MRR baseline enforced in CI.
-- ✅ **GitHub-compatible mode** — 28-day retention + repo-scoped retrieval to match Copilot Memory contract.
+- ✅ **Legacy GitHub-compatible preset** — 28-day retention + repo scope; no longer matches current Copilot Memory defaults.
 
 Remaining research-level items:
 
@@ -206,6 +206,6 @@ Remaining research-level items:
 
 [← Back to README](../README.md) · [Live demo](DEMO.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Comparison for GHCP-MEM v1.18.3** · last refreshed September 2026</sub>
+<sub>**Comparison for GHCP-MEM v1.19.0** · first-party claims refreshed November 2, 2026; other historical competitor cells require re-verification</sub>
 
 </div>

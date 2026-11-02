@@ -99,9 +99,10 @@ export function buildSavedQuerySpanPayload(
     strAttr('gen_ai.operation.name', event.operation),
     // Tokens the memory-backed answer actually consumed vs. what a full
     // re-expansion would have cost. Mapped onto gen_ai usage conventions.
-    intAttr('gen_ai.usage.input_tokens', event.compactTokens),
-    intAttr('ghcp_mem.usage.raw_input_tokens', event.rawTokens),
-    intAttr('ghcp_mem.usage.tokens_saved', event.tokensSaved),
+    strAttr('ghcp_mem.measurement', 'structured-proxy-estimate'),
+    intAttr('ghcp_mem.estimate.compact_tokens', event.compactTokens),
+    intAttr('ghcp_mem.estimate.expanded_tokens', event.rawTokens),
+    intAttr('ghcp_mem.estimate.representation_reduction', event.tokensSaved),
     intAttr('ghcp_mem.result_count', event.resultCount),
   ];
 

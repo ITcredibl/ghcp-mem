@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 import { ContextStore } from './contextStore';
 import { getConfig } from './types';
+import { fitContextBlocks } from './contextBudget';
 
 import { GROUP_ORDER, GROUP_HEADINGS, getFollowups, commandsInGroup } from './commandRegistry';
 
@@ -725,15 +726,17 @@ export class ContextProvider implements vscode.Disposable, CommandContext {
     // Everything above is the cacheable stable prefix; everything from here on
     // (lessons + episodic session cards) is volatile and changes each capture.
     const boundaryIndex = lines.length;
+    const blocks: string[] = [];
 
     // Consolidated semantic + procedural lessons go right after the routing
     // primer and before the raw session cards: durable, distilled knowledge
     // first, then the episodic detail it was drawn from.
     if (lessonsBlock) {
-      lines.push(lessonsBlock, '');
+      blocks.push(lessonsBlock);
     }
     for (const s of recent) {
       if (this.suppressedForSession.has(s.id)) continue;
+      const cardStart = lines.length;
       const when = formatInjectTimestamp(s.startTime);
       const branch = s.branchName ? ` · branch:\`${s.branchName}\`` : '';
       const workspace = s.workspaceName ? ` · workspace:\`${s.workspaceName}\`` : '';
@@ -760,12 +763,20 @@ export class ContextProvider implements vscode.Disposable, CommandContext {
         lines.push(`Azure: ${s.azureContext.subsystems.join(', ')}`);
       }
       if (s.userTags.length) lines.push(`Tags: ${s.userTags.join(', ')}`);
-      lines.push('');
+      blocks.push(lines.splice(cardStart).join('\n'));
     }
-    if (recent.length > 0 || lessonsBlock) {
-      lines.push('<<< END UNTRUSTED MEMORY CONTENT >>>');
+    const suffix =
+      recent.length > 0 || lessonsBlock ? '\n\n<<< END UNTRUSTED MEMORY CONTENT >>>' : '';
+    const bounded = fitContextBlocks(
+      lines.join('\n') + '\n',
+      blocks,
+      suffix,
+      config.startupContextTokenBudget,
+    );
+    if (!bounded.text) {
+      return { lines: rulesBlock ? [rulesBlock] : [], boundaryIndex: rulesBlock ? 1 : 0 };
     }
-    return { lines, boundaryIndex };
+    return { lines: bounded.text.split('\n'), boundaryIndex };
   }
 
   /**

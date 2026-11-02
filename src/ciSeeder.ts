@@ -34,6 +34,8 @@ import {
   parseEnvelopeHeader,
 } from './storageCrypto';
 import type { ContextDatabase, CompressedSession, ObservationType } from './types';
+import { dirname } from 'node:path';
+import { verifyCheckpoint } from './agentCheckpoint';
 
 interface CISeedPayload {
   /** Sessions to merge into the local store. */
@@ -52,6 +54,11 @@ async function main(): Promise<void> {
 
     for await (const chunk of process.stdin) {
       lines.push(chunk);
+      if (
+        lines.reduce((bytes, line) => bytes + Buffer.byteLength(line, 'utf8'), 0) >
+        4 * 1024 * 1024
+      )
+        throw new Error('Seed payload exceeds 4 MiB');
     }
 
     const jsonStr = lines.join('');
@@ -74,8 +81,9 @@ async function main(): Promise<void> {
     }
 
     // Load existing store
-    const storeDir = join(homedir(), '.ghcp-mem');
-    const storePath = join(storeDir, 'sessions.json');
+    const storePath =
+      process.env.GHCP_MEM_STORE_PATH ?? join(homedir(), '.ghcp-mem', 'sessions.json');
+    const storeDir = dirname(storePath);
 
     let db: ContextDatabase;
     // v1.16.0: the store may be an encrypted envelope (ghcpMem.storageEncryption).
@@ -103,12 +111,14 @@ async function main(): Promise<void> {
       } else {
         db = JSON.parse(content);
       }
-    } catch {
-      // Initialize fresh store if file doesn't exist or is unreadable
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+        throw new Error('Existing store is unreadable; refusing to overwrite');
       db = { version: 1, sessions: [], lastUpdated: Date.now(), observations: [] };
     }
 
-    if (!db.sessions) db.sessions = [];
+    if (!Array.isArray(db.sessions))
+      throw new Error('Existing store has an invalid sessions array');
     if (!db.observations) db.observations = [];
     if (!db.version) db.version = 1;
     if (!db.lastUpdated) db.lastUpdated = Date.now();
@@ -118,6 +128,18 @@ async function main(): Promise<void> {
     let mergedCount = 0;
 
     for (const sess of payload.sessions) {
+      if (sess.checkpoint) {
+        const checked = verifyCheckpoint(sess.checkpoint, {
+          repoScope: sess.repoScope ?? sess.checkpoint.repoScope,
+          commit: sess.checkpoint.commit,
+        });
+        if (!checked.valid) throw new Error(`Invalid checkpoint: ${checked.reason}`);
+        if (
+          process.env.GHCP_MEM_REPO_SCOPE &&
+          sess.checkpoint.repoScope !== process.env.GHCP_MEM_REPO_SCOPE
+        )
+          throw new Error('Checkpoint repository does not match configured scope');
+      }
       // Validate and sanitize
       if (!sess.id) sess.id = randomUUID();
       if (!sess.workspaceId) sess.workspaceId = 'ci-' + randomUUID().slice(0, 8);

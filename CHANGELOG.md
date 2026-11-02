@@ -18,6 +18,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - Local-only compression policy, configurable compression model family, matched-run usage comparison, and focused `npm run test:tasks` continuity checks.
 
 ### Fixed
+- Refresh compatible development-tool dependencies to clear the high-severity audit findings that blocked release CI. As of November 2, 2026, 15 moderate findings remain in the lint/package toolchain with no npm-reported fix; these dependencies are excluded from the VSIX. The existing high-severity audit gate remains enforced.
 - MCP mutations preserve encrypted stores and reject writes when the store is locked or corrupt. Missing/ambiguous delete IDs no longer select every matching record.
 - Retracted records are excluded from ordinary MCP reads. Runtime argument validation rejects malformed tool requests.
 - Savings estimates no longer add fabricated overhead. Reports distinguish representation reduction from actual session usage and billing; OTel estimates use `ghcp_mem.estimate.*` rather than provider-usage attributes.

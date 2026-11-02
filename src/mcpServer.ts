@@ -61,6 +61,17 @@ import { explainScore } from './explain';
 import { buildMermaidGraph } from './graphExport';
 import { recommend } from './router';
 import { rankLessons } from './lessons';
+import { compileContext } from './contextCompiler';
+import {
+  buildKnowledgeGraph,
+  neighborhood,
+  neighborhoodToMermaid,
+  pathBetween,
+} from './knowledgeGraph';
+import { isLifecycleState, LIFECYCLE_STATES, transitionLifecycle } from './lifecycle';
+import { filterByScope, normalizeScopeStamp, parseAuthor, SCOPE_LEVELS } from './memoryScope';
+import { OUTCOME_STATUSES, recordOutcome } from './outcomes';
+import { defaultPolicy, evaluateWrite, parsePolicy } from './orgPolicy';
 import { budgetResults } from './contextBudget';
 import { createCheckpoint, verifyCheckpoint } from './agentCheckpoint';
 import { TASK_TOOLS, isTaskTool, handleTaskTool } from './taskTools';
@@ -499,6 +510,18 @@ const TOOLS = [
           description:
             'Optional expiring checkpoint: harness, taskId, repoScope, full commit, stage, summary, nextActions, evidence. Evidence is self-reported and never grants deployment authority.',
         },
+        scopeLevel: {
+          type: 'string',
+          enum: [...SCOPE_LEVELS],
+          description:
+            'Governance scope of the memory (default repository). agent-scoped memories are private to the writing agent identity (GHCP_MEM_AGENT_ID in the launcher env).',
+        },
+        lifecycle: {
+          type: 'string',
+          enum: [...LIFECYCLE_STATES],
+          description:
+            'Engineering-lifecycle state. States below merged confine the memory to its capture branch.',
+        },
       },
       required: ['summary'],
     },
@@ -631,7 +654,129 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'ghcpMem_compile',
+    description:
+      'Compile one bounded context block for a task instead of raw search results: project lessons plus retrieved sessions, reordered by lifecycle validity and recorded outcomes, with an explicit plan and omission receipts. Whole records are included or omitted, never split. Token counts are UTF-8-bytes/4 estimates.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The task or question to compile context for.' },
+        maxTokens: {
+          type: 'integer',
+          minimum: 128,
+          maximum: 32000,
+          description: 'Estimated token budget for the whole block (default 2400).',
+        },
+        branch: {
+          type: 'string',
+          description:
+            'Current git branch. Memories below the merged lifecycle state that were captured on a different branch are omitted (with a receipt).',
+        },
+        maxSessions: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 25,
+          description: 'Candidate sessions to retrieve before budgeting (default 8).',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'ghcpMem_knowledge_graph',
+    description:
+      'Engineering knowledge graph over stored memory: sessions, files, decisions, referenced PRs and recorded outcomes with typed edges (touched, decided, supersedes, corrects, referenced_pr, evaluated_by). Give focus (e.g. "file:src/auth.ts") for a bounded neighborhood, plus to for the shortest path between two nodes. Derived from memory only — it never asserts code-level dependencies it has not observed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        focus: {
+          type: 'string',
+          description: 'Node id to center on: "file:<path>", "session:<id>", "pr:<number>".',
+        },
+        to: {
+          type: 'string',
+          description: 'Second node id — returns the shortest path from focus to this node.',
+        },
+        depth: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 4,
+          description: 'Neighborhood depth (default 2).',
+        },
+        format: {
+          type: 'string',
+          enum: ['json', 'mermaid'],
+          description: 'Neighborhood output format (default json).',
+        },
+      },
+    },
+  },
+  {
+    name: 'ghcpMem_set_lifecycle',
+    description:
+      'Advance a memory through the engineering lifecycle (proposed → experimental → implemented → verified → merged → deployed, with deprecated/reverted exits). States below merged confine the memory to the branch it was captured on. Illegal transitions are rejected with the allowed set. Requires MCP write access.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Session id or unique prefix.' },
+        lifecycle: {
+          type: 'string',
+          enum: [...LIFECYCLE_STATES],
+          description: 'Target lifecycle state.',
+        },
+      },
+      required: ['id', 'lifecycle'],
+    },
+  },
+  {
+    name: 'ghcpMem_record_outcome',
+    description:
+      'Record whether a remembered decision actually worked. Appends an attributed, redacted outcome to the session (never rewrites the decision); the latest outcome per decision adjusts ranking and context compilation. Requires MCP write access.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Session id or unique prefix.' },
+        status: {
+          type: 'string',
+          enum: [...OUTCOME_STATUSES],
+          description: 'Observed result of the decision.',
+        },
+        decisionIndex: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 50,
+          description:
+            'Which decision (0-based index) this outcome evaluates; omit = whole session.',
+        },
+        observations: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Up to 10 short observed facts ("duplicate processing -91%").',
+        },
+      },
+      required: ['id', 'status'],
+    },
+  },
 ];
+
+/**
+ * Load the committed organization memory policy when the launcher points at
+ * one (GHCP_MEM_POLICY_FILE). No env → permissive default (pre-1.20 behavior).
+ * An unreadable or invalid policy fails CLOSED — a misconfigured policy must
+ * never silently widen access.
+ */
+async function loadOrgPolicy(): Promise<ReturnType<typeof defaultPolicy>> {
+  const policyPath = process.env.GHCP_MEM_POLICY_FILE;
+  if (!policyPath) return defaultPolicy();
+  let raw: string;
+  try {
+    raw = await fs.readFile(policyPath, 'utf8');
+  } catch {
+    throw new Error(`Organization memory policy is configured but unreadable: ${policyPath}`);
+  }
+  return parsePolicy(raw);
+}
 
 /** Atomically write `db` back to disk (same rename pattern as the extension). */
 async function saveDatabase(db: StoredDatabase): Promise<void> {
@@ -753,8 +898,19 @@ async function handleCall(name: string, args: any): Promise<any> {
   }
   validateToolArguments(name, args);
   const db = structuredClone(await loadDatabase());
-  if (name !== 'ghcpMem_store' && name !== 'ghcpMem_delete') {
+  // Write tools persist `db` back — they must see the UNFILTERED store, or a
+  // scoped read filter would silently delete everything outside the scope.
+  const writeTools = new Set([
+    'ghcpMem_store',
+    'ghcpMem_delete',
+    'ghcpMem_set_lifecycle',
+    'ghcpMem_record_outcome',
+  ]);
+  if (!writeTools.has(name)) {
     db.sessions = db.sessions.filter((session) => !session.retracted);
+    // Agent-scoped memories are private to their author. The caller's identity
+    // comes from the trusted launcher env, never from tool arguments.
+    db.sessions = filterByScope(db.sessions, { author: process.env.GHCP_MEM_AGENT_ID });
     const scope = process.env.GHCP_MEM_REPO_SCOPE;
     if (scope) {
       db.sessions = db.sessions.filter(
@@ -842,6 +998,17 @@ async function handleCall(name: string, args: any): Promise<any> {
       const now = Date.now();
       if (typeof args.summary !== 'string' || !args.summary.trim())
         throw new Error('A nonempty summary is required');
+      // Author identity comes from the trusted launcher env — never tool args.
+      const agentAuthor = process.env.GHCP_MEM_AGENT_ID
+        ? `${parseAuthor(process.env.GHCP_MEM_AGENT_ID).kind}:${parseAuthor(process.env.GHCP_MEM_AGENT_ID).name}`
+        : undefined;
+      const stamp = normalizeScopeStamp({ scopeLevel: args.scopeLevel, author: agentAuthor });
+      if (args.lifecycle !== undefined && !isLifecycleState(args.lifecycle))
+        throw new Error(`lifecycle must be one of ${LIFECYCLE_STATES.join(', ')}`);
+      const orgPolicy = await loadOrgPolicy();
+      const policyDecision = evaluateWrite(orgPolicy, stamp);
+      if (!policyDecision.allowed)
+        throw new Error(`Organization memory policy denied the write: ${policyDecision.reason}`);
       const checkpoint =
         args.checkpoint === undefined ? undefined : createCheckpoint(args.checkpoint, now);
       if (
@@ -881,6 +1048,11 @@ async function handleCall(name: string, args: any): Promise<any> {
         userTags: redacted.userTags,
         rawEventCount: 0,
         redactionCount,
+        ...(stamp.scopeLevel ? { scopeLevel: stamp.scopeLevel } : {}),
+        ...(stamp.author ? { author: stamp.author } : {}),
+        ...(args.lifecycle !== undefined
+          ? { lifecycle: args.lifecycle as StoredSession['lifecycle'] }
+          : {}),
       };
       // Use the outer `db` reference loaded at the top of handleCall — the prior
       // double `loadDatabase()` opened a clobber window for any concurrent
@@ -1092,9 +1264,82 @@ async function handleCall(name: string, args: any): Promise<any> {
       );
     }
 
+    case 'ghcpMem_compile': {
+      const query = String(args.query ?? '').trim();
+      const limit = clamp(args?.maxSessions, 8, 25);
+      const hits = searchSessions(db, query, {}, limit);
+      const compiled = compileContext({
+        query,
+        budgetTokens: args?.maxTokens ?? 2400,
+        branch: typeof args?.branch === 'string' ? args.branch : undefined,
+        lessons: rankLessons(db.lessons ?? []),
+        sessions: hits,
+      });
+      return textContent(compiled);
+    }
+    case 'ghcpMem_knowledge_graph': {
+      const graph = buildKnowledgeGraph(db.sessions);
+      const focus = typeof args?.focus === 'string' ? args.focus.trim() : '';
+      if (!focus) {
+        const counts: Record<string, number> = {};
+        for (const node of graph.nodes.values()) counts[node.kind] = (counts[node.kind] ?? 0) + 1;
+        return textContent({
+          nodes: graph.nodes.size,
+          edges: graph.edges.length,
+          byKind: counts,
+          hint: 'Pass focus (e.g. "file:src/auth.ts") for a neighborhood, plus to for a path.',
+        });
+      }
+      if (typeof args?.to === 'string' && args.to.trim()) {
+        const path = pathBetween(graph, focus, args.to.trim());
+        return textContent(
+          path.length
+            ? { path: path.map((node) => ({ id: node.id, kind: node.kind, label: node.label })) }
+            : { path: [], message: 'No stored connection between those nodes.' },
+        );
+      }
+      const hood = neighborhood(graph, focus, args?.depth ?? 2);
+      if (args?.format === 'mermaid') return textContent({ mermaid: neighborhoodToMermaid(hood) });
+      return textContent({
+        center: hood.center,
+        nodes: hood.nodes,
+        edges: hood.edges,
+      });
+    }
+    case 'ghcpMem_set_lifecycle': {
+      if (!MCP_WRITE_ENABLED) throw new Error('MCP write tools are disabled by policy');
+      const target = findUniqueSession(db, String(args.id ?? ''));
+      transitionLifecycle(target, args.lifecycle as StoredSession['lifecycle'] & string);
+      await saveDatabase(db);
+      return textContent({ id: target.id, lifecycle: target.lifecycle });
+    }
+    case 'ghcpMem_record_outcome': {
+      if (!MCP_WRITE_ENABLED) throw new Error('MCP write tools are disabled by policy');
+      const target = findUniqueSession(db, String(args.id ?? ''));
+      const outcome = recordOutcome(target, {
+        status: args.status,
+        decisionIndex: args.decisionIndex,
+        observations: args.observations,
+        reportedBy: process.env.GHCP_MEM_AGENT_ID,
+      });
+      await saveDatabase(db);
+      return textContent({ id: target.id, outcome });
+    }
+
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
+}
+
+/** Resolve a session by exact id or unique prefix; throws on ambiguity/miss. */
+function findUniqueSession(db: StoredDatabase, id: string): StoredSession {
+  const trimmed = id.trim();
+  if (!trimmed) throw new Error('A nonempty session id is required');
+  const exact = db.sessions.find((session) => session.id === trimmed);
+  const matches = exact ? [exact] : db.sessions.filter((session) => session.id.startsWith(trimmed));
+  if (matches.length > 1) throw new Error('Ambiguous session id; use a full id');
+  if (!matches[0]) throw new Error(`No session matching id "${trimmed}"`);
+  return matches[0];
 }
 
 /** Compact snippet shape for MCP responses. */
@@ -1108,6 +1353,170 @@ function snippetForMcp(sn: Snippet): any {
     confidence: sn.confidence,
     evidenceFiles: (sn.evidence ?? []).map((e) => e.filePath).filter(Boolean),
   };
+}
+
+// ── MCP resources + prompts (v1.20.0) ───────────────────────────────────────
+// Agents subscribe to the right context (`memory://…`) instead of hand-rolling
+// search calls. All resources are read-only views over the same filtered store
+// the read tools see; nothing here widens access.
+
+export const RESOURCES = [
+  {
+    uri: 'memory://repo/decisions',
+    name: 'Remembered decisions',
+    description:
+      'Every stored decision with its lifecycle state and recorded outcomes, newest first.',
+    mimeType: 'text/markdown',
+  },
+  {
+    uri: 'memory://repo/lessons',
+    name: 'Consolidated lessons',
+    description: 'Durable semantic + procedural lessons distilled from past sessions.',
+    mimeType: 'text/markdown',
+  },
+  {
+    uri: 'memory://repo/recent',
+    name: 'Recent sessions',
+    description: 'The ten most recent compressed sessions.',
+    mimeType: 'text/markdown',
+  },
+  {
+    uri: 'memory://repo/outcomes',
+    name: 'Decision outcomes',
+    description: 'Outcome coverage: which remembered decisions demonstrably worked.',
+    mimeType: 'text/markdown',
+  },
+  {
+    uri: 'memory://repo/graph',
+    name: 'Knowledge graph summary',
+    description: 'Node/edge counts of the engineering knowledge graph derived from memory.',
+    mimeType: 'text/markdown',
+  },
+] as const;
+
+async function readableSessions(): Promise<StoredSession[]> {
+  const db = await loadDatabase();
+  let sessions = db.sessions.filter((session) => !session.retracted);
+  sessions = filterByScope(sessions, { author: process.env.GHCP_MEM_AGENT_ID });
+  const scope = process.env.GHCP_MEM_REPO_SCOPE;
+  if (scope)
+    sessions = sessions.filter(
+      (session) => session.repoScope === scope || session.workspaceId === scope,
+    );
+  return sessions;
+}
+
+async function readResource(uri: string): Promise<string> {
+  const sessions = await readableSessions();
+  switch (uri) {
+    case 'memory://repo/decisions': {
+      const lines = ['# Remembered decisions', ''];
+      for (const session of [...sessions].sort((a, b) => b.endTime - a.endTime)) {
+        for (const [index, decision] of session.decisions.entries()) {
+          const outcome = (session.outcomes ?? [])
+            .filter((o) => o.decisionIndex === index)
+            .sort((a, b) => b.observedAt - a.observedAt)[0];
+          lines.push(
+            `- ${decision} _(session ${session.id.slice(0, 8)}${session.lifecycle ? `, ${session.lifecycle}` : ''}${outcome ? `, outcome: ${outcome.status}` : ''})_`,
+          );
+        }
+      }
+      return lines.length > 2 ? lines.join('\n') : '# Remembered decisions\n\n_None stored yet._';
+    }
+    case 'memory://repo/lessons': {
+      const db = await loadDatabase();
+      const lessons = rankLessons(db.lessons ?? []);
+      return lessons.length
+        ? ['# Consolidated lessons', '', ...lessons.map((l) => `- [${l.kind}] ${l.text}`)].join(
+            '\n',
+          )
+        : '# Consolidated lessons\n\n_None derived yet._';
+    }
+    case 'memory://repo/recent': {
+      const recent = [...sessions].sort((a, b) => b.endTime - a.endTime).slice(0, 10);
+      return [
+        '# Recent sessions',
+        '',
+        ...recent.map(
+          (s) =>
+            `- ${new Date(s.endTime).toISOString().slice(0, 10)} [${s.observationType}] ${s.summary.slice(0, 160)} (\`${s.id.slice(0, 8)}\`)`,
+        ),
+      ].join('\n');
+    }
+    case 'memory://repo/outcomes': {
+      const withOutcomes = sessions.filter((s) => (s.outcomes ?? []).length > 0);
+      const lines = ['# Decision outcomes', ''];
+      for (const session of withOutcomes) {
+        for (const outcome of session.outcomes ?? []) {
+          lines.push(
+            `- ${outcome.status}: ${outcome.observations.join('; ') || '(no observations)'} _(session ${session.id.slice(0, 8)})_`,
+          );
+        }
+      }
+      return lines.length > 2 ? lines.join('\n') : '# Decision outcomes\n\n_None recorded yet._';
+    }
+    case 'memory://repo/graph': {
+      const graph = buildKnowledgeGraph(sessions);
+      const counts: Record<string, number> = {};
+      for (const node of graph.nodes.values()) counts[node.kind] = (counts[node.kind] ?? 0) + 1;
+      return [
+        '# Knowledge graph',
+        '',
+        `${graph.nodes.size} nodes, ${graph.edges.length} edges.`,
+        ...Object.entries(counts).map(([kind, count]) => `- ${kind}: ${count}`),
+        '',
+        'Use the ghcpMem_knowledge_graph tool with a focus node for neighborhoods and paths.',
+      ].join('\n');
+    }
+    default:
+      throw new Error(`Unknown resource: ${uri}`);
+  }
+}
+
+export const PROMPTS = [
+  {
+    name: 'resume-task',
+    description: 'Resume a durable task exactly where the previous agent left off.',
+    arguments: [
+      {
+        name: 'taskId',
+        description: 'Task id to resume (omit to list open tasks).',
+        required: false,
+      },
+    ],
+  },
+  {
+    name: 'memory-review',
+    description: 'Review the store for stale, conflicting or low-confidence memories.',
+    arguments: [],
+  },
+  {
+    name: 'architecture-recall',
+    description: 'Recall the architectural decisions and outcomes for a topic before changing it.',
+    arguments: [{ name: 'topic', description: 'Component, file or concept.', required: true }],
+  },
+  {
+    name: 'incident-context',
+    description: 'Assemble the memory context relevant to a production incident.',
+    arguments: [{ name: 'query', description: 'Symptom or subsystem.', required: true }],
+  },
+] as const;
+
+function promptText(name: string, args: Record<string, string>): string {
+  switch (name) {
+    case 'resume-task':
+      return args.taskId
+        ? `Resume task ${args.taskId}: call ghcpMem_resume with that id, then ghcpMem_compile for its goal before writing any code. Honor recorded blockers and acceptance criteria; completion claims require launcher-authorized verification.`
+        : 'List open work with ghcpMem_task_status, pick the task to continue, then call ghcpMem_resume followed by ghcpMem_compile for its goal before writing any code.';
+    case 'memory-review':
+      return 'Review this store for trust: call ghcpMem_recent and ghcpMem_search for active topics; for each decision check lifecycle state, recorded outcomes (memory://repo/outcomes) and conflicts; propose ghcpMem_set_lifecycle or ghcpMem_record_outcome updates — never delete without an explicit human instruction.';
+    case 'architecture-recall':
+      return `Before changing anything related to "${args.topic}": call ghcpMem_compile with that topic, inspect ghcpMem_knowledge_graph focus nodes for it, and surface prior decisions with their outcomes. Flag any decision marked regressed or reverted before proposing a design.`;
+    case 'incident-context':
+      return `Assemble incident context for "${args.query}": ghcpMem_search for the symptom, ghcpMem_timeline for the recent window, ghcpMem_knowledge_graph to trace affected files to past decisions, and report which remembered decisions carry regressed outcomes.`;
+    default:
+      throw new Error(`Unknown prompt: ${name}`);
+  }
 }
 
 function send(resp: JsonRpcResponse): void {
@@ -1125,7 +1534,7 @@ async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse | undefine
           result: {
             protocolVersion: PROTOCOL_VERSION,
             serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, resources: {}, prompts: {} },
           },
         };
       case 'initialized':
@@ -1135,6 +1544,37 @@ async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse | undefine
         return { jsonrpc: '2.0', id, result: {} };
       case 'tools/list':
         return { jsonrpc: '2.0', id, result: { tools: TOOLS } };
+      case 'resources/list':
+        return { jsonrpc: '2.0', id, result: { resources: RESOURCES } };
+      case 'resources/read': {
+        const uri = String(req.params?.uri ?? '');
+        const text = await readResource(uri);
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: { contents: [{ uri, mimeType: 'text/markdown', text }] },
+        };
+      }
+      case 'prompts/list':
+        return { jsonrpc: '2.0', id, result: { prompts: PROMPTS } };
+      case 'prompts/get': {
+        const name = String(req.params?.name ?? '');
+        const prompt = PROMPTS.find((entry) => entry.name === name);
+        if (!prompt) throw new Error(`Unknown prompt: ${name}`);
+        const args = (req.params?.arguments ?? {}) as Record<string, string>;
+        for (const arg of prompt.arguments) {
+          if (arg.required && !String(args[arg.name] ?? '').trim())
+            throw new Error(`Prompt "${name}" requires argument: ${arg.name}`);
+        }
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            description: prompt.description,
+            messages: [{ role: 'user', content: { type: 'text', text: promptText(name, args) } }],
+          },
+        };
+      }
       case 'tools/call': {
         const { name, arguments: args } = req.params ?? {};
         const result = await handleCall(String(name), args ?? {});

@@ -4,7 +4,7 @@
 
 ### You're picking a memory tool. Don't pick the wrong one.
 
-[![v1.19.0](https://img.shields.io/badge/version-1.19.0-7c3aed?style=for-the-badge)](../package.json)
+[![v1.20.0](https://img.shields.io/badge/version-1.20.0-7c3aed?style=for-the-badge)](../package.json)
 [![Scope](https://img.shields.io/badge/scope-VS_Code_+_Copilot-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](../README.md)
 
 </div>
@@ -85,7 +85,7 @@ GHCP-MEM is intentionally narrow: **VS Code + Copilot, zero deps, zero ports, se
 
 As checked on November 2, 2026, [Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) supports repository facts and personal preferences, including VS Code with a local setting. GHCP-MEM differentiates through local storage, explicit redaction, bounded retrieval, and auditable handoffs. Its `githubCompatibleMode` is a legacy 28-day repo-scoped preset, not a mirror of the current service contract.
 
-| Dimension | **GHCP-MEM v1.19.0** | **GitHub Copilot Memory** (public preview) |
+| Dimension | **GHCP-MEM v1.20.0** | **GitHub Copilot Memory** (public preview) |
 |---|---|---|
 | **Storage location** | 100% local: VS Code `globalState` + atomic mirror to `~/.ghcp-mem/sessions.json` (mode `0600`) | GitHub cloud, repo-scoped |
 | **Where it works** | VS Code, stdio MCP clients; opt-in Copilot/Claude metadata adapters | VS Code (setting/policy dependent), Copilot CLI, cloud agent, code review and other supported surfaces |
@@ -117,7 +117,7 @@ As checked on November 2, 2026, [Copilot Memory](https://docs.github.com/en/copi
 <details open>
 <summary><b>🔬 Full feature comparison</b></summary>
 
-| Dimension | **GHCP-MEM v1.19.0** | PluresLM | Remember-MCP | Cortex-Memory | Cortex (Claude) | claude-mem v13.x |
+| Dimension | **GHCP-MEM v1.20.0** | PluresLM | Remember-MCP | Cortex-Memory | Cortex (Claude) | claude-mem v13.x |
 |---|---|---|---|---|---|---|
 | No external service / port | ✅ | ❌ (service by default) | ❌ (needs pipx + Python server) | ✅ | ✅ | ❌ (`:37777` worker) |
 | No native deps | ✅ | 🟡 (better-sqlite3 in legacy) | ❌ | ✅ | ❌ (sql-wasm, Nomic) | ❌ (SQLite, Chroma, Bun) |
@@ -139,7 +139,7 @@ As checked on November 2, 2026, [Copilot Memory](https://docs.github.com/en/copi
 | Content-hash dedup | ✅ (SHA-256) | 🟡 | ❌ | ❌ | ✅ | 🟡 |
 | Backups / recovery | ✅ (rolling 5, restore command) | 🟡 | n/a | ❌ | ✅ | ❌ |
 | Context-pressure autosave | ✅ (event count + wall-clock) | ❌ | ❌ | 🟡 | ✅ | ✅ |
-| Multi-AI interop (MCP) | ✅ (stdio MCP, 23 tools including governed task continuity, JSON-RPC 2.0) | 🟡 (LM tool) | ✅ (MCP) | ✅ (MCP + CLAUDE.md) | ❌ | ✅ (3-layer MCP) |
+| Multi-AI interop (MCP) | ✅ (stdio MCP, 27 tools including governed task continuity and context compilation, JSON-RPC 2.0) | 🟡 (LM tool) | ✅ (MCP) | ✅ (MCP + CLAUDE.md) | ❌ | ✅ (3-layer MCP) |
 | Azure-aware capture | ✅ (12-subsystem classifier + `az` snapshot) | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Health score alerting | ✅ (0–100, configurable threshold notification) | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Auto-gitignore injected files | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -206,6 +206,6 @@ Remaining research-level items:
 
 [← Back to README](../README.md) · [Live demo](DEMO.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Comparison for GHCP-MEM v1.19.0** · first-party claims refreshed November 2, 2026; other historical competitor cells require re-verification</sub>
+<sub>**Comparison for GHCP-MEM v1.20.0** · first-party claims refreshed November 2, 2026; other historical competitor cells require re-verification</sub>
 
 </div>

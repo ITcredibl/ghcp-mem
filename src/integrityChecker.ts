@@ -229,6 +229,7 @@ const SENSITIVE_SCAN_TARGETS: SensitiveScanFile[] = [
   { path: '.github/memory/rules.md', label: 'project rules' },
   { path: 'CLAUDE.md', label: 'Claude Code memory' },
   { path: '.cursor/rules/ghcp-mem.mdc', label: 'Cursor rules' },
+  { path: '.github/skills/ghcp-mem.skills.md', label: 'generated skills' },
 ];
 
 export const sensitiveDataRule: IntegrityRule = {

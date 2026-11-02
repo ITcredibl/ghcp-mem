@@ -19,7 +19,13 @@ import {
 import { getEmbedder, makeLocalEmbedder } from './embeddings';
 import { setTokenCounter } from './savings';
 import { captureAzureContext, applyPreserveLevel } from './azureContext';
-import { getConfig, CompressedSession, AzureContextMeta, SessionEvent } from './types';
+import {
+  getConfig,
+  CompressedSession,
+  AzureContextMeta,
+  SessionEvent,
+  MemoryLifecycle,
+} from './types';
 import { scoreSessionQuality } from './quality';
 import { runJanitor, runIdleConsolidation } from './janitor';
 import { computeHealth, formatHealthMarkdown, fillGlyph } from './health';
@@ -48,6 +54,14 @@ import {
   deserializeDb,
   EncryptionMode,
 } from './storageCrypto';
+import { canTransition, defaultLifecycleForBranch, LIFECYCLE_STATES } from './lifecycle';
+import { authorFromHumanName } from './memoryScope';
+import { OUTCOME_STATUSES, recordOutcome } from './outcomes';
+import { renderSkillsFile, SKILLS_FILE } from './skillGen';
+import { bundleFileName, exportBundle, importBundle, SYNC_DIR } from './teamSync';
+import { evaluateMemoryEffectiveness, formatAgentEvalReport } from './agentEval';
+import { factCheckSweep, formatFactCheckReport } from './factCheck';
+import { parsePolicy, POLICY_FILE } from './orgPolicy';
 
 const execFileAsync = promisify(execFile);
 
@@ -89,6 +103,8 @@ let shutdownCompress: Promise<void> | undefined;
 let reviewPromptInFlight = false;
 /** Structured log output channel — visible via View > Output > GHCP-MEM. */
 let memLog: vscode.OutputChannel;
+/** Attributed author stamped on locally captured sessions (from git user.name). */
+let defaultAuthor: string | undefined;
 
 function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string): void {
   memLog?.appendLine(`[${new Date().toISOString()}] [${level}] ${msg}`);
@@ -152,6 +168,53 @@ export async function activate(context: vscode.ExtensionContext) {
   // next compression pass naturally includes them, and we delete the
   // recovery file even on parse error to avoid an infinite-restore loop.
   void restorePendingEvents();
+
+  // v1.20.0: governance + branch awareness. Fire-and-forget — none of this
+  // may delay activation. A committed-but-invalid policy is surfaced loudly
+  // and NOT applied here (local human capture keeps working; the external MCP
+  // write surface independently fails closed on an invalid policy).
+  void (async () => {
+    const ws = vscode.workspace.workspaceFolders?.[0];
+    if (ws) {
+      let rawPolicy: string | undefined;
+      try {
+        rawPolicy = Buffer.from(
+          await vscode.workspace.fs.readFile(
+            vscode.Uri.joinPath(ws.uri, ...POLICY_FILE.split('/')),
+          ),
+        ).toString('utf-8');
+      } catch {
+        /* no committed policy — default allow */
+      }
+      if (rawPolicy !== undefined) {
+        try {
+          store.setOrgPolicy(parsePolicy(rawPolicy));
+          log('INFO', `Organization memory policy loaded from ${POLICY_FILE}.`);
+        } catch (err) {
+          log('ERROR', `Invalid ${POLICY_FILE}: ${err instanceof Error ? err.message : err}`);
+          vscode.window.showWarningMessage(
+            `GHCP-MEM: ${POLICY_FILE} is invalid and was NOT applied — fix it or remove it.`,
+          );
+        }
+      }
+      try {
+        const { stdout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+          cwd: ws.uri.fsPath,
+        });
+        store.setCurrentBranch(stdout.trim());
+      } catch {
+        /* not a git repo — branch-validity filtering stays off */
+      }
+      try {
+        const { stdout } = await execFileAsync('git', ['config', 'user.name'], {
+          cwd: ws.uri.fsPath,
+        });
+        defaultAuthor = authorFromHumanName(stdout);
+      } catch {
+        /* no git identity — sessions stay unattributed */
+      }
+    }
+  })();
 
   vscode.window.registerTreeDataProvider('ghcpMem.sessionsView', tree);
 
@@ -1234,6 +1297,189 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ── v1.20.0: agent-context-runtime commands ────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ghcpMem.setLifecycle', async (node?: TreeNode) => {
+      const id = await pickSessionId(node);
+      if (!id) return;
+      const session = store.getAllSessions().find((s) => s.id === id);
+      if (!session) return;
+      const options = LIFECYCLE_STATES.filter((state) => canTransition(session.lifecycle, state));
+      if (options.length === 0) {
+        vscode.window.showInformationMessage(
+          `GHCP-MEM: ${session.lifecycle} is terminal — no further transitions.`,
+        );
+        return;
+      }
+      const pick = await vscode.window.showQuickPick([...options], {
+        placeHolder: `Lifecycle for ${id.substring(0, 8)} (current: ${session.lifecycle ?? 'unset'})`,
+      });
+      if (!pick) return;
+      session.lifecycle = pick as MemoryLifecycle;
+      await store.flush();
+      tree.refresh();
+      vscode.window.showInformationMessage(`GHCP-MEM: lifecycle → ${pick}.`);
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.recordOutcome', async (node?: TreeNode) => {
+      const id = await pickSessionId(node);
+      if (!id) return;
+      const session = store.getAllSessions().find((s) => s.id === id);
+      if (!session) return;
+      const WHOLE = '(whole session)';
+      const decision =
+        session.decisions.length === 0
+          ? WHOLE
+          : await vscode.window.showQuickPick([WHOLE, ...session.decisions], {
+              placeHolder: 'Which decision does this outcome evaluate?',
+            });
+      if (!decision) return;
+      const status = await vscode.window.showQuickPick([...OUTCOME_STATUSES], {
+        placeHolder: 'Observed result of the decision',
+      });
+      if (!status) return;
+      const observed = await vscode.window.showInputBox({
+        prompt:
+          'Observed facts, semicolon-separated (e.g. "duplicate processing -91%; 0 incidents in 30 days")',
+      });
+      if (observed === undefined) return;
+      try {
+        recordOutcome(session, {
+          status,
+          decisionIndex: decision === WHOLE ? undefined : session.decisions.indexOf(decision),
+          observations: observed
+            .split(';')
+            .map((s) => s.trim())
+            .filter(Boolean),
+          reportedBy: defaultAuthor,
+        });
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `GHCP-MEM: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
+      await store.flush();
+      tree.refresh();
+      vscode.window.showInformationMessage(`GHCP-MEM: outcome "${status}" recorded.`);
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.exportSkills', async () => {
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) {
+        vscode.window.showWarningMessage('GHCP-MEM: open a workspace folder to export skills.');
+        return;
+      }
+      const content = renderSkillsFile(store.getLessons());
+      const uri = vscode.Uri.joinPath(ws.uri, ...SKILLS_FILE.split('/'));
+      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, '..'));
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf-8'));
+      await ensureGitIgnored(ws.uri, SKILLS_FILE);
+      vscode.window.showInformationMessage(
+        `GHCP-MEM: learned skills written to ${SKILLS_FILE} (generated and git-ignored — commit deliberately to share). GHCP-MEM never executes them.`,
+      );
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.teamSyncExport', async () => {
+      const config = getConfig();
+      if (config.enterpriseMode || !config.allowTeamExport) {
+        vscode.window.showWarningMessage('GHCP-MEM: team export is disabled by policy.');
+        return;
+      }
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) {
+        vscode.window.showWarningMessage('GHCP-MEM: open a workspace folder to export a bundle.');
+        return;
+      }
+      const passphrase = await vscode.window.showInputBox({
+        prompt:
+          'Team sync passphrase (min 8 chars). Share it with your team out-of-band — it never leaves this machine.',
+        password: true,
+        ignoreFocusOut: true,
+        validateInput: (v) => (v.length >= 8 ? undefined : 'At least 8 characters'),
+      });
+      if (!passphrase) return;
+      const scope = await getRepoScope();
+      const bundle = exportBundle(
+        { sessions: store.getAllSessions(), lessons: store.getLessons(), scopeLabel: scope.label },
+        passphrase,
+      );
+      const dir = vscode.Uri.joinPath(ws.uri, ...SYNC_DIR.split('/'));
+      await vscode.workspace.fs.createDirectory(dir);
+      const file = vscode.Uri.joinPath(dir, bundleFileName(scope.label));
+      await vscode.workspace.fs.writeFile(file, Buffer.from(bundle, 'utf-8'));
+      vscode.window.showInformationMessage(
+        `GHCP-MEM: encrypted sync bundle written to ${SYNC_DIR}. Commit and push it to share — user/task/agent-scoped and retracted memories are never included.`,
+      );
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.teamSyncImport', async () => {
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      const picked = await vscode.window.showOpenDialog({
+        canSelectMany: false,
+        filters: { 'GHCP-MEM sync bundle': ['ghcpmem'] },
+        defaultUri: ws ? vscode.Uri.joinPath(ws.uri, ...SYNC_DIR.split('/')) : undefined,
+      });
+      if (!picked?.[0]) return;
+      const passphrase = await vscode.window.showInputBox({
+        prompt: 'Passphrase for this sync bundle',
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (!passphrase) return;
+      try {
+        const raw = Buffer.from(await vscode.workspace.fs.readFile(picked[0])).toString('utf-8');
+        const result = importBundle(raw, passphrase, {
+          sessions: store.getAllSessions(),
+          lessons: store.getLessons(),
+        });
+        for (const session of result.added) await store.addSession(session);
+        if (result.lessonsAdded.length)
+          await store.setLessons([...store.getLessons(), ...result.lessonsAdded]);
+        tree.refresh();
+        updateStatusBar();
+        vscode.window.showInformationMessage(
+          `GHCP-MEM: imported ${result.added.length} session(s) and ${result.lessonsAdded.length} lesson(s) from "${result.scopeLabel}" (${result.skippedDuplicates} duplicate(s) skipped).`,
+        );
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `GHCP-MEM: import failed — ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.showAgentEval', async () => {
+      const report = formatAgentEvalReport(evaluateMemoryEffectiveness(store.getAllSessions()));
+      const doc = await vscode.workspace.openTextDocument({
+        content: report,
+        language: 'markdown',
+      });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.verifyMemoryFacts', async () => {
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) {
+        vscode.window.showWarningMessage('GHCP-MEM: open a workspace folder to verify facts.');
+        return;
+      }
+      const sweep = await factCheckSweep(
+        store.getAllSessions().slice().reverse(),
+        (rel) =>
+          vscode.workspace.fs.stat(vscode.Uri.joinPath(ws.uri, ...rel.split('/'))).then(
+            () => true,
+            () => false,
+          ),
+        { maxSessions: 200 },
+      );
+      const doc = await vscode.workspace.openTextDocument({
+        content: formatFactCheckReport(sweep),
+        language: 'markdown',
+      });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand('ghcpMem.auditSensitiveData', async () => {
       const { runWorkspaceAudit, formatAuditReport, sensitiveDataRule } =
@@ -1579,6 +1825,11 @@ async function compressAndStore(): Promise<void> {
       azureTags,
     });
     if (session) {
+      // v1.20.0: lifecycle + author stamping. Mainline work is `implemented`,
+      // feature-branch work `experimental` (branch-confined until merged).
+      if (session.branchName) store.setCurrentBranch(session.branchName);
+      session.lifecycle ??= defaultLifecycleForBranch(session.branchName);
+      session.author ??= defaultAuthor;
       const quality = scoreSessionQuality(session);
       session.qualityScore = quality.score;
       const floor = getConfig().qualityFloor;
@@ -1788,6 +2039,26 @@ function startJanitorTimer(): void {
         'INFO',
         `janitor: rescored=${r.rescored} flagged=${r.flagged} unflagged=${r.unflagged} pruned=${r.pruned} embedded=${r.embeddingsBackfilled}`,
       );
+      // v1.20.0: autonomous fact-check — do the paths this memory talks about
+      // still exist? Advisory only; results land in the log and the on-demand
+      // "Verify Memory Facts" report, never in silent mutation.
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (ws) {
+        const sweep = await factCheckSweep(
+          store.getAllSessions().slice().reverse(),
+          (rel) =>
+            vscode.workspace.fs.stat(vscode.Uri.joinPath(ws.uri, ...rel.split('/'))).then(
+              () => true,
+              () => false,
+            ),
+          { maxSessions: 50 },
+        );
+        if (sweep.checked > 0)
+          log(
+            'INFO',
+            `fact-check: ${sweep.checked} session(s) checked, ${sweep.stale} with stale path references`,
+          );
+      }
     } catch (err) {
       log('WARN', `janitor failed: ${err instanceof Error ? err.message : String(err)}`);
     }

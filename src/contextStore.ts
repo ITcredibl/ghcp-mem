@@ -29,6 +29,8 @@ import {
   avgSnippetLen,
 } from './snippets';
 import { ConflictWarning, detectConflicts } from './conflicts';
+import { isBranchValid } from './lifecycle';
+import { evaluateWrite, OrgMemoryPolicy } from './orgPolicy';
 import {
   AdaptiveWeightsState,
   FeedbackSample,
@@ -128,6 +130,18 @@ export class ContextStore implements vscode.Disposable {
    */
   private reranker?: RerankFn;
   private lastBackupAt = 0;
+  /**
+   * Current git branch (v1.20.0), set by the extension at activation and
+   * refreshed on each compression. When set, retrieval filters out memories
+   * whose lifecycle confines them to a DIFFERENT branch (see ./lifecycle).
+   * Legacy sessions without a lifecycle are never filtered.
+   */
+  private currentBranch?: string;
+  /**
+   * Committed organization memory policy (v1.20.0), loaded by the extension
+   * from .github/memory/policy.json when present. Enforced on addSession.
+   */
+  private orgPolicy?: OrgMemoryPolicy;
   /** Queue to serialize syncToDisk calls and prevent interleaved writes. */
   private syncQueue: Promise<void> = Promise.resolve();
   /**
@@ -339,8 +353,28 @@ export class ContextStore implements vscode.Disposable {
     return { version: DB_VERSION, sessions: [], lastUpdated: Date.now() };
   }
 
+  setCurrentBranch(branch: string | undefined): void {
+    this.currentBranch = branch?.trim() || undefined;
+  }
+
+  setOrgPolicy(policy: OrgMemoryPolicy | undefined): void {
+    this.orgPolicy = policy;
+  }
+
   async addSession(session: CompressedSession): Promise<void> {
     const config = getConfig();
+
+    // v1.20.0: committed organization policy gates writes by scope + author
+    // kind. No policy (the default) allows everything — enforcement is opted
+    // into by committing .github/memory/policy.json.
+    if (this.orgPolicy) {
+      const decision = evaluateWrite(this.orgPolicy, {
+        scopeLevel: session.scopeLevel,
+        author: session.author,
+      });
+      if (!decision.allowed)
+        throw new Error(`Organization memory policy denied the write: ${decision.reason}`);
+    }
 
     // v1.13.0: pre-persist quality gate. If qualityPersistFloor > 0 and the
     // session's quality score is below the floor, drop it BEFORE it hits disk.
@@ -1016,6 +1050,12 @@ export class ContextStore implements vscode.Disposable {
     // surface in retrieval.
     candidates = candidates.filter((s) => !s.retracted);
 
+    // v1.20.0: lifecycle branch validity — memories below `merged` captured on
+    // a DIFFERENT branch are speculative here and excluded. Sessions without a
+    // lifecycle (all pre-1.20 data) always pass.
+    if (this.currentBranch)
+      candidates = candidates.filter((s) => isBranchValid(s, this.currentBranch));
+
     // Filters
     if (filters.type) candidates = candidates.filter((s) => s.observationType === filters.type);
     if (filters.sinceTs) candidates = candidates.filter((s) => s.endTime >= filters.sinceTs!);
@@ -1237,6 +1277,7 @@ export class ContextStore implements vscode.Disposable {
     // Apply session-level filters before decomposing so we don't bother
     // building snippets for sessions we'd reject anyway.
     let scoped = sessionPool.filter((s) => !s.retracted);
+    if (this.currentBranch) scoped = scoped.filter((s) => isBranchValid(s, this.currentBranch));
     if (filters.type) scoped = scoped.filter((s) => s.observationType === filters.type);
     if (filters.sinceTs) scoped = scoped.filter((s) => s.endTime >= filters.sinceTs!);
     if (filters.untilTs) scoped = scoped.filter((s) => s.startTime <= filters.untilTs!);

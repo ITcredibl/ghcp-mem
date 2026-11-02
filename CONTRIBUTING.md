@@ -53,7 +53,7 @@ npm run watch          # incremental build in watch mode
 | `src/contextCompressor.ts` | LM compression and git branch tagging |
 | `src/searchCore.ts` | BM25 + RRF + recency scoring |
 | `src/redactor.ts` | 30-rule secret/PII redaction |
-| `src/mcpServer.ts` | Stand-alone stdio MCP server (23 tools) |
+| `src/mcpServer.ts` | Stand-alone stdio MCP server (27 tools) |
 | `src/taskRuntime.ts`, `src/taskJournal.ts` | Task state machine and transactional revision history |
 | `src/taskContext.ts`, `src/taskTools.ts` | Worktree-bound resume, context compiler and task MCP APIs |
 | `src/timelinePanel.ts` | Visual Memory Timeline WebviewPanel |

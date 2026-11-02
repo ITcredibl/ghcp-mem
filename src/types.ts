@@ -172,6 +172,47 @@ export interface AzureContextMeta {
   notes?: string;
 }
 
+/**
+ * Where a memory sits in the engineering lifecycle (v1.20.0). Memories below
+ * `merged` are only presumed valid on the branch they were captured on —
+ * parallel agents must not inherit speculative decisions across branches.
+ */
+export type MemoryLifecycle =
+  | 'proposed'
+  | 'experimental'
+  | 'implemented'
+  | 'verified'
+  | 'merged'
+  | 'deployed'
+  | 'deprecated'
+  | 'reverted';
+
+/** Governance scope levels, broadest to narrowest (v1.20.0). */
+export type MemoryScopeLevel =
+  | 'organization'
+  | 'team'
+  | 'repository'
+  | 'branch'
+  | 'user'
+  | 'task'
+  | 'agent';
+
+/**
+ * A recorded real-world result of a remembered decision (v1.20.0). Outcomes
+ * turn "we decided X" into "X worked / did not work" — they never overwrite
+ * the original decision, they annotate it.
+ */
+export interface MemoryOutcome {
+  status: 'improved' | 'regressed' | 'neutral' | 'unknown';
+  observedAt: number;
+  /** Index into `decisions` this outcome evaluates; omitted = whole session. */
+  decisionIndex?: number;
+  /** Redacted free-form observations ("duplicate processing -91%"). */
+  observations: string[];
+  /** Attributed reporter in `kind:name` form (see ./memoryScope). */
+  reportedBy?: string;
+}
+
 export interface CompressedSession {
   checkpoint?: import('./agentCheckpoint').AgentCheckpoint;
   id: string;
@@ -303,6 +344,22 @@ export interface CompressedSession {
    * Kept on disk for audit but excluded from startup injection.
    */
   lowQuality?: boolean;
+  /**
+   * Engineering-lifecycle state (v1.20.0). Unset on legacy sessions — they
+   * keep pre-1.20 behavior (valid everywhere). See ./lifecycle for the
+   * transition rules and branch-validity semantics.
+   */
+  lifecycle?: MemoryLifecycle;
+  /** Governance scope of this memory (v1.20.0). Unset = repository. */
+  scopeLevel?: MemoryScopeLevel;
+  /**
+   * Attributed author in `kind:name` form, e.g. `human:seyi`,
+   * `claude:reviewer`, `agent:security-review` (v1.20.0). Validated by
+   * ./memoryScope; agent-scoped memories are only served back to their author.
+   */
+  author?: string;
+  /** Observed real-world results of this session's decisions (v1.20.0). */
+  outcomes?: MemoryOutcome[];
 }
 
 export interface ContextDatabase {
@@ -652,6 +709,7 @@ export const GENERATED_MEMORY_FILES: readonly string[] = [
   '.github/memory/rules.md',
   'CLAUDE.md',
   '.cursor/rules/ghcp-mem.mdc',
+  '.github/skills/ghcp-mem.skills.md',
 ];
 
 export function isGeneratedMemoryFile(relPath: string): boolean {

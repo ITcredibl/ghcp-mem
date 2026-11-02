@@ -77,7 +77,7 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 **Why it's worth your trust:**
 
-- **655 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **730 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Documented, versioned engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -98,7 +98,21 @@ Build the executables with `npm run bundle:prod`. To persist a checkpoint explic
 
 ### Durable Task Continuity (v1.19.0)
 
-The MCP server now offers 23 tools: the existing memory surface plus nine task tools. These APIs are separate from the portable `ghcp-mem-agent checkpoint` snapshots above. Tasks persist goals, plans, blockers, decisions, modified paths and acceptance criteria; expiring a checkpoint does not delete the task.
+The MCP server now offers 27 tools: the existing memory surface, nine task tools, and the v1.20.0 runtime tools (`ghcpMem_compile`, `ghcpMem_knowledge_graph`, `ghcpMem_set_lifecycle`, `ghcpMem_record_outcome`), plus `memory://` resources and ready-made prompts (`resume-task`, `memory-review`, `architecture-recall`, `incident-context`). These APIs are separate from the portable `ghcp-mem-agent checkpoint` snapshots above. Tasks persist goals, plans, blockers, decisions, modified paths and acceptance criteria; expiring a checkpoint does not delete the task.
+
+### Agent Context Runtime (v1.20.0)
+
+Memory alone is not continuity. v1.20.0 adds the runtime layer around it — all local, all auditable:
+
+- **Lifecycle + branch validity** — every memory can carry an engineering-lifecycle state (`proposed → experimental → implemented → verified → merged → deployed`, with `deprecated`/`reverted` exits). States below `merged` are confined to the branch they were captured on, so parallel agents never inherit speculative decisions. Pre-1.20 memories are untouched (valid everywhere).
+- **Outcome memory** — `GHCP-MEM: Record Decision Outcome` (or `ghcpMem_record_outcome`) appends attributed, redacted results to a decision: improved / regressed / neutral / unknown. Regressed decisions sink below clean candidates in compiled context. Decisions are never rewritten.
+- **Attributed, scoped memory** — memories carry `kind:name` authors (`human:seyi`, `claude:reviewer`) and a scope level; `agent`-scoped memories are private to the writing agent identity (launcher env `GHCP_MEM_AGENT_ID`), and a committed `.github/memory/policy.json` governs which author kinds may write each scope (invalid policy fails closed on the MCP write surface).
+- **Context compiler** — `ghcpMem_compile` returns one bounded block (project rules → lessons → sessions reordered by lifecycle, outcomes and retrieval rank) with an explicit plan and omission receipts. Whole records in or out, never split; token counts are UTF-8-bytes/4 estimates.
+- **Knowledge graph + PR lineage** — `ghcpMem_knowledge_graph` traverses sessions, files, decisions, referenced PRs and outcomes (neighborhoods, shortest paths, Mermaid); lineage is parsed from local git merge history, no GitHub API.
+- **Memory verification** — the weekly janitor (and `GHCP-MEM: Verify Memory Facts Against Workspace`) checks whether paths a memory references still exist; stale references are reported, never silently mutated.
+- **Encrypted team sync (optional, git-backed)** — AES-256-GCM bundles under `.github/memory/sync/` that your team commits and pulls like any file; `user`/`task`/`agent`-scoped and retracted memories never leave the machine. No SaaS backend.
+- **Skills from experience** — `GHCP-MEM: Export Learned Skills` renders procedural lessons into `.github/skills/ghcp-mem.skills.md` with citations and confidence. GHCP-MEM generates skill definitions; it never executes them.
+- **Effectiveness report** — `GHCP-MEM: Show Memory Effectiveness Report` measures what the store can evidence (outcome coverage, accept/reject reinforcement, grounding, lifecycle hygiene) and states plainly that store-side signals do not prove live-model gains.
 
 | Tool | Purpose |
 |---|---|
@@ -247,13 +261,13 @@ With GHCP-MEM in place:
 | **🧠 Memory** | Persistent, structured record of what you changed, decided, fixed, deployed — captured locally from real editor events | `@mem /recent` · `@mem /entity src/<file>` |
 | **💰 Tokens** | Auto-routing primer in every Copilot session steers the agent to cheap MCP queries over file opens | `@mem /route <question>` shows the cost estimate |
 | **⚡ Performance** | Hybrid retrieval — BM25 + recency + embeddings + match-ratio + decayed confidence + reinforcement, with an optional LM rerank on the top-K, tuned by per-user adaptive weights, gated by nDCG@K regression suite (marginal lift of each stage is published in the [real-world ablation](docs/BENCHMARKS-REAL.md)) | `@mem /why <q> :: <id>` decomposes the score |
-| **🤖 AI agentic coding** | MCP memory plus governed task continuity (23 tools), evidence-grounded decisions, conflict detection and scoped context compilation | `npx ghcp-mem-mcp` exposes all tools over stdio; task APIs require launcher policy |
+| **🤖 AI agentic coding** | MCP memory plus governed task continuity (27 tools), evidence-grounded decisions, conflict detection and scoped context compilation | `npx ghcp-mem-mcp` exposes all tools over stdio; task APIs require launcher policy |
 
 It surfaces memory through:
 
 - the **`@mem`** chat participant (42 commands including `/savings`, `/entity`, `/snippet`, `/why`, `/graph`, `/compliance`, `/route`, `/lessons`, `/rules`)
 - native Copilot **agent tools** (`#ghcpMemSearch`, `#ghcpMemStore`, `#ghcpMemAudit`, `#ghcpMemLessons`)
-- a bundled **stdio MCP server** with 23 tools for Cursor, Cline, Windsurf, Claude Desktop, and GitHub Copilot CLI
+- a bundled **stdio MCP server** with 27 tools for Cursor, Cline, Windsurf, Claude Desktop, and GitHub Copilot CLI
 
 ### Why engineers trust it (deeper guarantees)
 
@@ -814,7 +828,7 @@ Key modules:
 | `src/projectRules.ts` | Parse/serialize/render team-shared project rules from `.github/memory/rules.md` |
 | `src/contextProvider.ts` | `@mem` chat participant with 42 slash commands |
 | `src/memoryTool.ts` | Agent-mode tools (`#ghcpMemSearch`, `#ghcpMemStore`, `#ghcpMemAudit`, `#ghcpMemLessons`) |
-| `src/mcpServer.ts` | Stand-alone stdio MCP server (23 tools, policy-controlled reads/writes) |
+| `src/mcpServer.ts` | Stand-alone stdio MCP server (27 tools + resources + prompts, policy-controlled reads/writes) |
 | `src/taskRuntime.ts` | Task state transitions, acceptance criteria and access policy |
 | `src/taskJournal.ts` | Encrypted revision journal, concurrency, retries and history purge |
 | `src/taskContext.ts` | Git-observed execution scope, resume and context compilation |
@@ -880,4 +894,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.19.0** · local-first engineering context and governed task continuity</sub>
+<sub>**v1.20.0** · local-first engineering context and governed task continuity</sub>

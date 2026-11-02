@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "Local-first engineering memory and governed task continuity for AI coding agents. Resume work across agents with scoped context, evidence-linked checkpoints, redaction and auditable history. VS Code integration and stdio MCP; no cloud memory backend.",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -216,6 +216,36 @@
         "command": "ghcpMem.copyMcpEncryptionKey",
         "title": "GHCP-MEM: Copy MCP Encryption Key (GHCP_MEM_KEY)...",
         "icon": "$(key)"
+      },
+      {
+        "command": "ghcpMem.setLifecycle",
+        "title": "GHCP-MEM: Set Memory Lifecycle...",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "ghcpMem.recordOutcome",
+        "title": "GHCP-MEM: Record Decision Outcome...",
+        "icon": "$(graph-line)"
+      },
+      {
+        "command": "ghcpMem.exportSkills",
+        "title": "GHCP-MEM: Export Learned Skills"
+      },
+      {
+        "command": "ghcpMem.teamSyncExport",
+        "title": "GHCP-MEM: Export Encrypted Team Sync Bundle..."
+      },
+      {
+        "command": "ghcpMem.teamSyncImport",
+        "title": "GHCP-MEM: Import Encrypted Team Sync Bundle..."
+      },
+      {
+        "command": "ghcpMem.showAgentEval",
+        "title": "GHCP-MEM: Show Memory Effectiveness Report"
+      },
+      {
+        "command": "ghcpMem.verifyMemoryFacts",
+        "title": "GHCP-MEM: Verify Memory Facts Against Workspace"
       }
     ],
     "viewsContainers": {
@@ -864,6 +894,7 @@
             "**/secrets.json",
             "**/.vscode/mcp.json",
             "**/.vscode/settings.json",
+            "**/.github/memory/sync/**",
             "**/.claude/**",
             "**/.cursor/rules/**",
             "**/.next/**",
@@ -894,7 +925,10 @@
         },
         "ghcpMem.compressionMode": {
           "type": "string",
-          "enum": ["auto", "local"],
+          "enum": [
+            "auto",
+            "local"
+          ],
           "default": "auto",
           "description": "Use an available language model or force local extractive compression without any model calls. Local mode avoids compression inference cost; other configured features may still use models."
         },

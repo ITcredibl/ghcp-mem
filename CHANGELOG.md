@@ -6,6 +6,32 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.20.0] — 2026-11-02
+
+Agent Context Runtime release: the remaining items from the independent strategy review, built local-first and policy-gated.
+
+### Added
+- Memory lifecycle states (`proposed → experimental → implemented → verified → merged → deployed`, `deprecated`/`reverted` exits) with an enforced transition machine. States below `merged` confine a memory to its capture branch, so parallel agents never inherit speculative decisions; pre-1.20 memories keep their old everywhere-valid behavior. New `ghcpMem_set_lifecycle` tool and `Set Memory Lifecycle` command; freshly captured sessions default to `implemented` on main/master and `experimental` elsewhere.
+- Outcome memory: append-only, attributed, redacted records of whether a decision actually worked (`ghcpMem_record_outcome`, `Record Decision Outcome`). The latest outcome per decision adjusts ranking; regressed decisions sink below clean candidates in compiled context; original decision text is never rewritten.
+- Attributed, scoped memory: `kind:name` authors (human/copilot/claude/cursor/cline/windsurf/agent/system) and scope levels (organization → … → agent). `agent`-scoped memories are private to the writing launcher identity (`GHCP_MEM_AGENT_ID`); human review surfaces can still audit them locally. Locally captured sessions are stamped from `git config user.name`.
+- Organization memory policy: committed `.github/memory/policy.json` declares which author kinds may write/read each scope level. Absent policy = pre-1.20 default-allow; an invalid policy fails closed on the MCP write surface and is loudly rejected (not applied) in the extension so local capture keeps working.
+- Context compiler (`ghcpMem_compile`): one bounded block — mandatory project rules, ranked lessons, then sessions reordered by lifecycle weight, outcomes and retrieval rank — with an explicit inclusion plan and omission receipts. Whole records only; UTF-8-bytes/4 estimates, stated as such.
+- Engineering knowledge graph (`ghcpMem_knowledge_graph`): typed nodes (session/file/decision/PR/outcome) and edges (touched/decided/supersedes/corrects/referenced_pr/evaluated_by) derived from stored memory only, with bounded neighborhoods, shortest paths and Mermaid rendering. PR/issue lineage is parsed from local git merge history — no GitHub API, no tokens.
+- MCP resources (`memory://repo/decisions|lessons|recent|outcomes|graph`) and prompts (`resume-task`, `memory-review`, `architecture-recall`, `incident-context`); the stdio catalog grows to 27 tools and `initialize` now advertises resources + prompts capabilities.
+- Autonomous memory verification: a janitor pass (and `Verify Memory Facts Against Workspace`) checks whether paths referenced in summaries/decisions still exist; stale references are reported as advisories, never silently mutated.
+- Optional encrypted team sync: AES-256-GCM bundles (scrypt passphrase, salt in the envelope) written to the committed `.github/memory/sync/` directory and imported additively with id/contentHash dedup. `user`/`task`/`agent`-scoped and retracted memories never leave the machine; no SaaS backend, git remains the transport.
+- Skill generation: procedural lessons render into `.github/skills/ghcp-mem.skills.md` with learned-from citations and confidence. Generated and git-ignored by default, listed in `GENERATED_MEMORY_FILES` (capture-excluded) and integrity-scanned; GHCP-MEM never executes skills.
+- Memory effectiveness report: outcome coverage, accept/reject reinforcement, evidence grounding and lifecycle distribution — with an explicit statement that store-side signals do not establish live-model gains.
+
+### Changed
+- MCP reads filter agent-scoped memories by the caller's launcher identity; write tools operate on the unfiltered store so a scoped read can never clobber other rows on save.
+- `ghcpMem_store` accepts optional `scopeLevel`/`lifecycle` stamps; author identity comes exclusively from the launcher env, never tool arguments.
+
+### Verification
+- 730 automated tests (75 new), including end-to-end spawned-server checks for resources, prompts, the compiler, graph traversal, lifecycle/outcome persistence, agent-scope privacy and fail-closed policy enforcement. No native dependencies, no open ports.
+
+---
+
 ## [1.19.0] — 2026-11-02
 
 ### Added

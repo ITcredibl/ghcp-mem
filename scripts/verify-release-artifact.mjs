@@ -145,6 +145,37 @@ if (liveVersion === version) {
   console.warn(`[release-verify] WARN: ${msg}`);
 }
 
+// 7. Marketplace ARTIFACT verification (REL-001: distinguished from the
+// GitHub Release check above). Downloads the actual vspackage the gallery
+// serves and runs the same runtime-bundle parity against this source.
+// Only meaningful once the listing serves this version; runs when the listed
+// version matches, or always under --require-marketplace.
+if (liveVersion === version || flags.has('--require-marketplace')) {
+  const vspkg = join(dir, 'marketplace.vsix');
+  const dlm = run('curl', [
+    '-fsSL',
+    '--compressed',
+    '-o',
+    vspkg,
+    `https://marketplace.visualstudio.com/_apis/public/gallery/publishers/itcredibl/vsextensions/ghcp-mem/${version}/vspackage`,
+  ]);
+  if (dlm.status !== 0 || !existsSync(vspkg)) {
+    const msg = 'could not download the Marketplace vspackage';
+    if (flags.has('--require-marketplace')) fail(msg);
+    console.warn(`[release-verify] WARN: ${msg} — Marketplace ARTIFACT not verified`);
+  } else {
+    const mParity = run('node', ['scripts/check-vsix-parity.mjs', vspkg], { stdio: 'inherit' });
+    if (mParity.status !== 0) fail('MARKETPLACE artifact runtime-bundle parity failed');
+    console.log(
+      `[release-verify] Marketplace ARTIFACT verified — gallery-served bundles are byte-identical to this source (sha256 ${sha256(readFileSync(vspkg)).slice(0, 16)}…)`,
+    );
+  }
+} else {
+  console.log(
+    '[release-verify] Marketplace artifact check skipped until the listing serves this version (GitHub and Marketplace verifications are separate results).',
+  );
+}
+
 console.log(
-  `[release-verify] PASS — the published ${tag} artifact is checksum-valid, version-consistent, and byte-identical to this source's runtime bundles.`,
+  `[release-verify] PASS — the published ${tag} GitHub artifact is checksum-valid, version-consistent, and byte-identical to this source's runtime bundles.`,
 );

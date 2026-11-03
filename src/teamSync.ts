@@ -171,7 +171,13 @@ const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:\\|\/(?:Users|home|root|var|tmp|private)\/
  * receiver's trust boundary depends on acceptance being LOCAL), and
  * import-lineage stamps the receiver must set itself.
  */
-const SYNC_DROPPED_FIELDS = ['embedding', 'usage', 'origin', 'importedAt'] as const;
+const SYNC_DROPPED_FIELDS = [
+  'embedding',
+  'embeddingMeta',
+  'usage',
+  'origin',
+  'importedAt',
+] as const;
 
 /** Identifier fields exempt from scrubbing — opaque ids/hashes, never prose. */
 const SCRUB_EXEMPT_KEYS = new Set([

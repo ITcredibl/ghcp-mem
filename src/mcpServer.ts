@@ -61,9 +61,16 @@ import { filterByScope, normalizeScopeStamp, parseAuthor, SCOPE_LEVELS } from '.
 import { OUTCOME_STATUSES, recordOutcome } from './outcomes';
 import { defaultPolicy, evaluateWrite, parsePolicy } from './orgPolicy';
 import { ensureTrustMigrated, originTrust } from './teamSync';
-import { retrieve, RetrievalOutcome } from './retrieval';
-import { budgetResults } from './contextBudget';
-import { localEmbed } from './embeddings';
+import { retrieve, RetrievalAdapters, RetrievalOutcome } from './retrieval';
+import { budgetResults, estimatedContextTokens } from './contextBudget';
+import { cosineSim, localEmbed } from './vectorMath';
+import {
+  embeddingCompatible,
+  NeuralEmbedder,
+  neuralAssetsPresent,
+  semanticDisabledByEnv,
+  sessionEmbedText,
+} from './neuralEmbedder';
 import { createCheckpoint, verifyCheckpoint } from './agentCheckpoint';
 import { TASK_TOOLS, isTaskTool, handleTaskTool } from './taskTools';
 import { redact } from './redactor';
@@ -249,18 +256,21 @@ async function loadDatabase(): Promise<StoredDatabase> {
  * LM to embed the query) and near-duplicate collapse / query expansion remain
  * chat-side only — tracked as MCP follow-ups.
  */
-export function searchSessionsDetailed(
-  db: StoredDatabase,
-  query: string,
-  filters: {
-    type?: string;
-    tag?: string;
-    sinceDays?: number;
-    workspaceId?: string;
-    workspaceName?: string;
-  } = {},
-  limit = 5,
-): RetrievalOutcome {
+export interface McpSearchFilters {
+  type?: string;
+  tag?: string;
+  sinceDays?: number;
+  workspaceId?: string;
+  workspaceName?: string;
+}
+
+/**
+ * Shared candidate pre-filter: retraction + explicit filters. Access-control
+ * filters (agent scope, repo scope) are applied by the tool dispatcher BEFORE
+ * the database reaches search, so restricted content never enters ranking —
+ * or, in hybrid mode, the semantic similarity computation.
+ */
+function prefilterSessions(db: StoredDatabase, filters: McpSearchFilters): StoredSession[] {
   let candidates = [...db.sessions];
   // Retracted sessions are kept on disk for audit but never surfaced — mirror
   // the in-process search which filters them out before ranking.
@@ -278,26 +288,169 @@ export function searchSessionsDetailed(
     const needle = filters.workspaceName.toLowerCase();
     candidates = candidates.filter((s) => s.workspaceName?.toLowerCase().includes(needle));
   }
+  return candidates;
+}
 
+function statsAdapter(): (s: StoredSession) => SessionTermStats {
+  const statsCache = new Map<string, SessionTermStats>();
+  return (s) => {
+    let stats = statsCache.get(s.id);
+    if (!stats) {
+      stats = computeTermStats(s);
+      statsCache.set(s.id, stats);
+    }
+    return stats;
+  };
+}
+
+export function searchSessionsDetailed(
+  db: StoredDatabase,
+  query: string,
+  filters: McpSearchFilters = {},
+  limit = 5,
+  extraAdapters: Partial<RetrievalAdapters> = {},
+): RetrievalOutcome {
+  const candidates = prefilterSessions(db, filters);
   // Unified pipeline (v1.22.0, RET-003): identical scoring, calibration,
   // fusion, duplicate collapse and relevance labeling as the extension store
   // (see src/retrieval.ts); this function contributes only the pre-filters
   // above and the headless adapters below (local lexical embedder, no
   // workspace boost, no learned weights — declared capability differences).
-  const statsCache = new Map<string, SessionTermStats>();
   return retrieve(candidates, query ?? '', limit, {
-    statsFor: (s) => {
-      let stats = statsCache.get(s.id);
-      if (!stats) {
-        stats = computeTermStats(s);
-        statsCache.set(s.id, stats);
-      }
-      return stats;
-    },
+    statsFor: statsAdapter(),
     embedQuery: (q) => localEmbed(q),
     embeddingFor: (s) => mcpEmbeddingFor(s),
     embeddingProviderVersion: 'local-lexical/1',
+    ...extraAdapters,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Semantic retrieval (v1.23.0, RET-001) — opt-in local neural provider.
+// Active iff the pinned assets are present in the shared semantic directory
+// (populated ONLY by the explicit setup command / script) and the env does
+// not disable it. Load failures degrade to mode 'lexical-fallback' with the
+// reason reported — never silently.
+// ---------------------------------------------------------------------------
+
+type NeuralState =
+  | { kind: 'off' }
+  | { kind: 'ready'; embedder: NeuralEmbedder }
+  | { kind: 'fallback'; reason: string };
+let neuralState: NeuralState | undefined;
+
+async function getNeuralState(): Promise<NeuralState> {
+  if (neuralState) return neuralState;
+  if (semanticDisabledByEnv() || !neuralAssetsPresent()) {
+    neuralState = { kind: 'off' };
+  } else {
+    try {
+      neuralState = { kind: 'ready', embedder: await NeuralEmbedder.load() };
+    } catch (err) {
+      neuralState = {
+        kind: 'fallback',
+        reason: `semantic provider failed to load: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+  return neuralState;
+}
+
+/** Test/eval hook: force the neural state (pass undefined to re-detect). */
+export function _setNeuralStateForTest(state: NeuralState | undefined): void {
+  neuralState = state;
+}
+
+/**
+ * In-process neural vector cache. The server never writes embeddings back to
+ * the store on a read path; durable vectors come from the extension's indexer
+ * (persisted with embeddingMeta) and are used here when RET-002-compatible.
+ */
+const NEURAL_VEC_CACHE = new Map<string, number[]>();
+/** Max embeddings computed per search call; coverage accrues across calls. */
+const NEURAL_EMBED_BUDGET = 64;
+
+/**
+ * Resolve compatible vectors for candidates: persisted vectors that pass the
+ * RET-002 compatibility check are used as-is; otherwise up to `budget`
+ * missing vectors are computed (most recent sessions first) and memoised.
+ */
+export async function ensureSemanticVectors(
+  candidates: readonly StoredSession[],
+  embedder: NeuralEmbedder,
+  budget: number = NEURAL_EMBED_BUDGET,
+): Promise<Map<string, number[]>> {
+  const vectors = new Map<string, number[]>();
+  const missing: StoredSession[] = [];
+  for (const s of candidates) {
+    const key = `${s.id}:${s.endTime}:${embedder.providerId}`;
+    const cached = NEURAL_VEC_CACHE.get(key);
+    if (cached) {
+      vectors.set(s.id, cached);
+    } else if (
+      embeddingCompatible(
+        s.embeddingMeta,
+        s.embedding,
+        embedder.providerId,
+        embedder.dims,
+        s.contentHash,
+      )
+    ) {
+      vectors.set(s.id, s.embedding!);
+    } else {
+      missing.push(s);
+    }
+  }
+  missing.sort((a, b) => b.endTime - a.endTime);
+  for (const s of missing.slice(0, Math.max(0, budget))) {
+    const vec = await embedder.embed(sessionEmbedText(s));
+    if (NEURAL_VEC_CACHE.size > 50_000) NEURAL_VEC_CACHE.clear();
+    NEURAL_VEC_CACHE.set(`${s.id}:${s.endTime}:${embedder.providerId}`, vec);
+    vectors.set(s.id, vec);
+  }
+  return vectors;
+}
+
+/**
+ * Hybrid-semantic search (RET-001). Identical pre-filters and pipeline as
+ * `searchSessionsDetailed`; adds independently generated semantic candidates
+ * via the shared `semanticSim` adapter. With no provider configured this IS
+ * `searchSessionsDetailed`; with a configured-but-broken provider it reports
+ * the explicit lexical-fallback state.
+ */
+export async function searchSessionsSemantic(
+  db: StoredDatabase,
+  query: string,
+  filters: McpSearchFilters = {},
+  limit = 5,
+  opts: { embedder?: NeuralEmbedder; embedBudget?: number } = {},
+): Promise<RetrievalOutcome> {
+  let embedder = opts.embedder;
+  if (!embedder) {
+    const state = await getNeuralState();
+    if (state.kind === 'off') return searchSessionsDetailed(db, query, filters, limit);
+    if (state.kind === 'fallback')
+      return searchSessionsDetailed(db, query, filters, limit, {
+        semanticFallback: state.reason,
+      });
+    embedder = state.embedder;
+  }
+  const candidates = prefilterSessions(db, filters);
+  try {
+    const vectors = await ensureSemanticVectors(candidates, embedder, opts.embedBudget);
+    const queryVec = await embedder.embed(query ?? '');
+    const semanticSim = new Map<string, number>();
+    for (const [id, vec] of vectors) semanticSim.set(id, cosineSim(queryVec, vec));
+    return retrieve(candidates, query ?? '', limit, {
+      statsFor: statsAdapter(),
+      semanticSim,
+      semanticProvider: embedder.providerId,
+    });
+  } catch (err) {
+    return searchSessionsDetailed(db, query, filters, limit, {
+      semanticFallback: `semantic inference failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
 }
 
 /** Back-compat wrapper: sessions only. Prefer searchSessionsDetailed. */
@@ -947,7 +1100,7 @@ async function handleCall(name: string, args: any): Promise<any> {
   switch (name) {
     case 'ghcpMem_search': {
       const limit = clamp(args?.limit, 5, 25);
-      const outcome = searchSessionsDetailed(
+      const outcome = await searchSessionsSemantic(
         db,
         String(args?.query ?? ''),
         {
@@ -959,6 +1112,13 @@ async function handleCall(name: string, args: any): Promise<any> {
         },
         limit,
       );
+      // Active retrieval mode + provider (RET-001 reporting contract) — every
+      // search response, abstentions included, identifies how it was produced.
+      const modeFields = {
+        retrieval_mode: outcome.mode,
+        ...(outcome.provider ? { retrieval_provider: outcome.provider } : {}),
+        ...(outcome.fallbackReason ? { fallback_reason: outcome.fallbackReason } : {}),
+      };
       // Machine-readable relevance states (RET-002): match / weak_match per
       // result, no_match as explicit abstention — never recency filler.
       if (outcome.state === 'no_match' && String(args?.query ?? '').trim()) {
@@ -966,9 +1126,19 @@ async function handleCall(name: string, args: any): Promise<any> {
           ...budgetResults([], args?.maxTokens ?? 1200),
           relevance_state: 'no_match',
           no_confident_match: true,
-          note: 'No stored memory matches any term of this query. Do not treat other sessions as relevant; rephrase with project terms, or answer from the code instead.',
+          ...modeFields,
+          note:
+            outcome.mode === 'hybrid-semantic'
+              ? 'No stored memory matches this query lexically or semantically. Do not treat other sessions as relevant; rephrase with project terms, or answer from the code instead.'
+              : 'No stored memory matches any term of this query. Do not treat other sessions as relevant; rephrase with project terms, or answer from the code instead.',
         });
       }
+      const receipt = (item: (typeof outcome.items)[number]) => ({
+        termCoverage: item.termCoverage,
+        ...(item.semanticSim !== undefined ? { semanticSim: item.semanticSim } : {}),
+        evidence: item.evidence,
+        relevance: item.relevance,
+      });
       const results = outcome.items.map((item) =>
         args?.detail === 'index'
           ? {
@@ -977,25 +1147,32 @@ async function handleCall(name: string, args: any): Promise<any> {
               type: item.session.observationType,
               summary: item.session.summary.slice(0, 220),
               keyFiles: item.session.keyFiles.slice(0, 3),
-              termCoverage: item.termCoverage,
-              relevance: item.relevance,
+              ...receipt(item),
             }
           : {
               ...summarizeForMcp(item.session),
-              termCoverage: item.termCoverage,
-              relevance: item.relevance,
+              ...receipt(item),
             },
       );
       const weak = outcome.state === 'weak_match';
-      return textContent({
-        ...budgetResults(results, args?.maxTokens ?? 1200),
+      const envelopeFields = {
         relevance_state: outcome.state,
+        ...modeFields,
         ...(weak
           ? {
               low_confidence: true,
-              note: `Best result matches only ${Math.round(Math.max(0, ...outcome.items.map((i) => i.termCoverage)) * 100)}% of the significant query terms — treat as a lead, not an answer, and verify against the code.`,
+              note: `Best result matches only ${Math.round(Math.max(0, ...outcome.items.map((i) => i.termCoverage)) * 100)}% of the significant query terms${outcome.mode === 'hybrid-semantic' ? ' and no result clears the semantic-match floor' : ''} — treat as a lead, not an answer, and verify against the code.`,
             }
           : {}),
+      };
+      // The token budget covers the WHOLE response, so the top-level envelope
+      // (relevance state, mode/provider reporting, confidence notes) is
+      // reserved out of the budget before results are fitted.
+      const requested = clamp(args?.maxTokens, 1200, 32000);
+      const overhead = estimatedContextTokens(JSON.stringify(envelopeFields, null, 2));
+      return textContent({
+        ...budgetResults(results, Math.max(128, requested - overhead)),
+        ...envelopeFields,
       });
     }
     case 'ghcpMem_recent': {

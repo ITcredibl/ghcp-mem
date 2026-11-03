@@ -110,12 +110,16 @@ const CORPUS = [
 // supersession links etc.; timestamps are assigned deterministically.
 const corpusFlagIdx = process.argv.indexOf('--corpus');
 const corpusPath = corpusFlagIdx !== -1 ? process.argv[corpusFlagIdx + 1] : undefined;
-// Optional --pipeline mcp: evaluate the PRODUCTION stdio pipeline
-// (searchSessionsDetailed with its local lexical embedder) directly, in
-// addition to the extension-store configurations.
-const evalMcpPipeline =
-  process.argv.includes('--pipeline') &&
-  process.argv[process.argv.indexOf('--pipeline') + 1] === 'mcp';
+// Optional --pipeline mcp|semantic: evaluate the PRODUCTION stdio pipeline
+// directly, in addition to the extension-store configurations. 'mcp' is the
+// lexical pipeline (searchSessionsDetailed); 'semantic' additionally runs the
+// hybrid-semantic pipeline (searchSessionsSemantic) with the LOCAL neural
+// provider — it requires the pinned model assets (ghcpMem.setupSemantic /
+// scripts/setup-semantic.mjs) and fails with a clear message otherwise.
+const pipelineIdx = process.argv.indexOf('--pipeline');
+const pipelineArg = pipelineIdx !== -1 ? process.argv[pipelineIdx + 1] : undefined;
+const evalMcpPipeline = pipelineArg === 'mcp' || pipelineArg === 'semantic';
+const evalSemanticPipeline = pipelineArg === 'semantic';
 
 (async () => {
   const mem = new InMemoryMemento();
@@ -193,6 +197,30 @@ const evalMcpPipeline =
         searchSessionsDetailed(db, q, {}, 20).items.map((item) => item.session),
       ),
     );
+    if (evalSemanticPipeline) {
+      const neural = require(path.resolve(__dirname, '..', 'out-test', 'src', 'neuralEmbedder.js'));
+      if (!neural.neuralAssetsPresent()) {
+        console.error(
+          'FAIL: --pipeline semantic requires the pinned local model assets.\n' +
+            '  Install them with: node scripts/setup-semantic.mjs  (~35 MB, checksum-verified)',
+        );
+        process.exit(1);
+      }
+      const { searchSessionsSemantic, ensureSemanticVectors } = require(
+        path.resolve(__dirname, '..', 'out-test', 'src', 'mcpServer.js'),
+      );
+      const embedder = await neural.NeuralEmbedder.load();
+      // Pre-embed the whole corpus so the measurement covers retrieval, not
+      // cold-cache embedding throughput.
+      await ensureSemanticVectors(db.sessions, embedder, Number.MAX_SAFE_INTEGER);
+      report.runs.push(
+        await runGoldEvalAgainst('mcp semantic (onnx-minilm-q8)', queries, async (q) =>
+          (await searchSessionsSemantic(db, q, {}, 20, { embedder })).items.map(
+            (item) => item.session,
+          ),
+        ),
+      );
+    }
   }
   // EVAL-001 provenance: pin what produced these numbers.
   try {
@@ -254,6 +282,16 @@ const evalMcpPipeline =
     console.log(
       `  [${tag}] ${run.label}: recall@${run.k}=${run.recall.toFixed(3)} (floor ${recallMin.toFixed(3)}) · MRR=${run.mrr.toFixed(3)} (floor ${mrrMin.toFixed(3)}) · nDCG@${run.k}=${run.ndcg.toFixed(3)}${floor.ndcg !== undefined ? ` (floor ${ndcgMin.toFixed(3)})` : ''}${extras}`,
     );
+    // EVAL-001: confidence intervals, sample counts, category-level recall.
+    if (run.ci && run.positives > 0) {
+      const perKind = Object.entries(run.perKind ?? {})
+        .sort()
+        .map(([kind, v]) => `${kind} ${(v.recall * 100).toFixed(0)}% (n=${v.n})`)
+        .join(' · ');
+      console.log(
+        `         n=${run.positives}+${run.negatives}neg · recall 95% CI [${run.ci.recall[0].toFixed(3)}, ${run.ci.recall[1].toFixed(3)}] · MRR 95% CI [${run.ci.mrr[0].toFixed(3)}, ${run.ci.mrr[1].toFixed(3)}]${perKind ? `\n         by category: ${perKind}` : ''}`,
+      );
+    }
     const fpOk =
       floor.maxFalsePositiveRate === undefined ||
       run.falsePositiveRate <= floor.maxFalsePositiveRate;

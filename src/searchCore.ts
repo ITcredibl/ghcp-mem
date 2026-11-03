@@ -446,6 +446,6 @@ export function fuseRanks(
     };
   });
 
-  scored.sort((a, b) => b.score - a.score || b.endTime - a.endTime);
+  scored.sort((a, b) => b.score - a.score || b.endTime - a.endTime || a.id.localeCompare(b.id));
   return scored;
 }

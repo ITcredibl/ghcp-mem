@@ -53,6 +53,13 @@ export interface EvalRunStats {
   perQuery: Array<{ q: string; kind?: string; hits: number; rank: number | null }>;
   /** Per-query failures so a regression names its queries, not just a number. */
   failures: Array<{ q: string; kind?: string; reason: string }>;
+  /** EVAL-001: category-level recall with sample counts (positive queries). */
+  perKind: Record<string, { n: number; recall: number }>;
+  /**
+   * EVAL-001: 95% bootstrap confidence intervals (1000 seeded resamples over
+   * positive queries) — small eval sets must not masquerade as precise.
+   */
+  ci: { recall: [number, number]; mrr: [number, number] };
 }
 
 export interface EvalReport {
@@ -167,6 +174,10 @@ async function evalRun(
   let falsePositives = 0;
   const perQuery: EvalRunStats['perQuery'] = [];
   const failures: EvalRunStats['failures'] = [];
+  const kindTotals = new Map<string, number>();
+  const kindRecall = new Map<string, number>();
+  const posRecalls: number[] = [];
+  const posMrrs: number[] = [];
   for (const q of queries) {
     const top = await Promise.resolve(run(q.q));
     const relevantSet = new Set(q.relevant);
@@ -192,6 +203,11 @@ async function evalRun(
     totalRecall += r;
     totalMrr += mrr;
     totalNdcg += n;
+    posRecalls.push(r);
+    posMrrs.push(mrr);
+    const kind = q.kind ?? 'unkinded';
+    kindTotals.set(kind, (kindTotals.get(kind) ?? 0) + 1);
+    kindRecall.set(kind, (kindRecall.get(kind) ?? 0) + r);
     if (top.length > 0) {
       answeredPositives++;
       const returned = top.slice(0, K);
@@ -219,7 +235,43 @@ async function evalRun(
     negatives,
     perQuery,
     failures,
+    perKind: Object.fromEntries(
+      [...kindTotals.entries()].map(([kind, n]) => [
+        kind,
+        { n, recall: (kindRecall.get(kind) ?? 0) / n },
+      ]),
+    ),
+    ci: {
+      recall: bootstrapCi(posRecalls),
+      mrr: bootstrapCi(posMrrs),
+    },
   };
+}
+
+/**
+ * 95% percentile-bootstrap confidence interval, deterministic (seeded
+ * mulberry32, 1000 resamples) so eval output is reproducible run to run.
+ */
+function bootstrapCi(values: number[], resamples = 1000): [number, number] {
+  if (values.length === 0) return [0, 0];
+  let seed = 0x9e3779b9 >>> 0;
+  const rand = () => {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const means: number[] = [];
+  for (let i = 0; i < resamples; i++) {
+    let sum = 0;
+    for (let j = 0; j < values.length; j++) sum += values[Math.floor(rand() * values.length)];
+    means.push(sum / values.length);
+  }
+  means.sort((a, b) => a - b);
+  const lo = means[Math.floor(0.025 * resamples)];
+  const hi = means[Math.min(resamples - 1, Math.floor(0.975 * resamples))];
+  return [Math.round(lo * 1000) / 1000, Math.round(hi * 1000) / 1000];
 }
 
 /**

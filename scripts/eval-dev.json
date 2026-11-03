@@ -1,0 +1,1382 @@
+{
+  "version": "v2.0",
+  "heldOut": false,
+  "note": "DEVELOPMENT set: floors and semantic thresholds are tuned against these queries (renamed from eval-heldout in v1.23.0 for honesty). The frozen set is scripts/eval-frozen.json.",
+  "queries": [
+    {
+      "q": "service bus invoice ordering",
+      "relevant": [
+        "pay-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "fifo invoice queue",
+      "relevant": [
+        "pay-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "ordered invoice processing",
+      "relevant": [
+        "pay-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "how do we make sure bills settle one after another",
+      "relevant": [
+        "pay-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "queue that keeps billing events in sequence",
+      "relevant": [
+        "pay-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "strict ordering for billing messages",
+      "relevant": [
+        "pay-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "stripe webhook signature validation",
+      "relevant": [
+        "pay-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "validate stripe webhooks",
+      "relevant": [
+        "pay-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "webhook signature check",
+      "relevant": [
+        "pay-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "verifying payment provider callbacks are genuine",
+      "relevant": [
+        "pay-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "making sure incoming payment notifications are not forged",
+      "relevant": [
+        "pay-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "authenticity check for third-party payment events",
+      "relevant": [
+        "pay-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "idempotency keys charge retries",
+      "relevant": [
+        "pay-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "double billing prevention idempotency",
+      "relevant": [
+        "pay-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "charge retry idempotency",
+      "relevant": [
+        "pay-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "stop customers being charged twice on retry",
+      "relevant": [
+        "pay-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "safe to resubmit a payment without duplicates",
+      "relevant": [
+        "pay-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "repeat payment attempts without double charging",
+      "relevant": [
+        "pay-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "postgresql double-entry ledger schema",
+      "relevant": [
+        "pay-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "ledger schema accounting",
+      "relevant": [
+        "pay-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "double-entry ledger postgres",
+      "relevant": [
+        "pay-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "database design for tracking account balances",
+      "relevant": [
+        "pay-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "bookkeeping table layout for money movements",
+      "relevant": [
+        "pay-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "how account balances are stored and audited",
+      "relevant": [
+        "pay-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "lru catalog cache in-process",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "in-memory catalog cache",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "catalog cache lru memory",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "current caching approach for the product list",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "where product listings are cached now",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "what replaced the old product cache",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "exponential backoff invoice retries",
+      "relevant": [
+        "pay-007"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "retry backoff jitter invoice",
+      "relevant": [
+        "pay-007"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "failed invoice retry policy",
+      "relevant": [
+        "pay-007"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "how long we wait before retrying failed bills",
+      "relevant": [
+        "pay-007"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "spacing out repeated billing attempts",
+      "relevant": [
+        "pay-007"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "retry timing for unpaid invoice jobs",
+      "relevant": [
+        "pay-007"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "mercury reconciler settlement ledger",
+      "relevant": [
+        "pay-008"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "settlement reconciliation nightly",
+      "relevant": [
+        "pay-008"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "mercury settlement matching",
+      "relevant": [
+        "pay-008"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "matching bank payout reports to our records",
+      "relevant": [
+        "pay-008"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "nightly job that ties payouts to bookkeeping entries",
+      "relevant": [
+        "pay-008"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "how settlements get cross-checked against the ledger",
+      "relevant": [
+        "pay-008"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "blob storage uploaded images sas",
+      "relevant": [
+        "web-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "azure blob image upload",
+      "relevant": [
+        "web-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "sas tokens image storage",
+      "relevant": [
+        "web-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "where should we keep uploaded pictures",
+      "relevant": [
+        "web-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "user photo storage location",
+      "relevant": [
+        "web-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "serving user-submitted photos securely",
+      "relevant": [
+        "web-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "entra jwt validation middleware",
+      "relevant": [
+        "web-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "jwt authentication middleware",
+      "relevant": [
+        "web-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "entra id token validation",
+      "relevant": [
+        "web-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "how api requests prove who the caller is",
+      "relevant": [
+        "web-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "login token checking on every route",
+      "relevant": [
+        "web-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "guarding endpoints against unauthenticated callers",
+      "relevant": [
+        "web-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "csp headers rollout report-only",
+      "relevant": [
+        "web-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "content security policy enforce",
+      "relevant": [
+        "web-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "security headers rollout",
+      "relevant": [
+        "web-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "browser-side protection against injected scripts",
+      "relevant": [
+        "web-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "how we tightened what the frontend may load",
+      "relevant": [
+        "web-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "staged hardening of page security rules",
+      "relevant": [
+        "web-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "react query data fetching convention",
+      "relevant": [
+        "web-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "react query standard",
+      "relevant": [
+        "web-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "client data fetching react",
+      "relevant": [
+        "web-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "the agreed way the frontend loads server data",
+      "relevant": [
+        "web-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "library convention for remote state in the ui",
+      "relevant": [
+        "web-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "what replaced hand-rolled fetch hooks",
+      "relevant": [
+        "web-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "thumbnail resizing pipeline images",
+      "relevant": [
+        "web-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "image thumbnails three sizes",
+      "relevant": [
+        "web-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "thumbnail generation upload",
+      "relevant": [
+        "web-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "smaller preview versions of uploaded photos",
+      "relevant": [
+        "web-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "generating preview images in several dimensions",
+      "relevant": [
+        "web-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "how picture previews get produced",
+      "relevant": [
+        "web-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "azure container apps managed identity deploy",
+      "relevant": [
+        "infra-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "container apps deployment identity",
+      "relevant": [
+        "infra-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "deploy api container apps",
+      "relevant": [
+        "infra-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "where the api actually runs in the cloud",
+      "relevant": [
+        "infra-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "hosting platform for the backend service",
+      "relevant": [
+        "infra-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "how the service authenticates to azure without secrets",
+      "relevant": [
+        "infra-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "bicep modules shared parameters",
+      "relevant": [
+        "infra-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "bicep module structure",
+      "relevant": [
+        "infra-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "infrastructure modules parameters",
+      "relevant": [
+        "infra-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "how our infrastructure code is organised",
+      "relevant": [
+        "infra-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "layout of the iac templates",
+      "relevant": [
+        "infra-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "splitting cloud templates per subsystem",
+      "relevant": [
+        "infra-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "azure devops pipelines deploy migration",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "deploys azure devops",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "pipeline migration from github actions",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "which system ships releases today",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "who runs our deployments now",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "current release automation after the migration",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "key vault secret rotation ninety days",
+      "relevant": [
+        "infra-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "keyvault rotation policy",
+      "relevant": [
+        "infra-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "automatic secret rotation",
+      "relevant": [
+        "infra-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "how often credentials get replaced",
+      "relevant": [
+        "infra-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "automatic refresh of stored secrets",
+      "relevant": [
+        "infra-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "credential expiry policy in the vault",
+      "relevant": [
+        "infra-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "log analytics retention thirty days cost",
+      "relevant": [
+        "infra-005"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "logging retention cost",
+      "relevant": [
+        "infra-005"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "observability retention reduced",
+      "relevant": [
+        "infra-005"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "how long telemetry is kept before deletion",
+      "relevant": [
+        "infra-005"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "trimming monitoring data to save money",
+      "relevant": [
+        "infra-005"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "log storage window policy",
+      "relevant": [
+        "infra-005"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "blue-green deploys no in-place",
+      "relevant": [
+        "infra-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "blue green release policy",
+      "relevant": [
+        "infra-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "deploy policy blue green",
+      "relevant": [
+        "infra-006"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "the mandated release strategy for services",
+      "relevant": [
+        "infra-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "zero-downtime rollout rule for every service",
+      "relevant": [
+        "infra-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "policy forbidding in-place updates",
+      "relevant": [
+        "infra-006"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "onnx runtime wasm inference",
+      "relevant": [
+        "ml-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "wasm inference no native dependencies",
+      "relevant": [
+        "ml-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "onnx wasm build",
+      "relevant": [
+        "ml-001"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "running models without compiled binaries",
+      "relevant": [
+        "ml-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "portable in-process model execution",
+      "relevant": [
+        "ml-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "inference that avoids platform-specific builds",
+      "relevant": [
+        "ml-001"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "feature store parquet partitioned",
+      "relevant": [
+        "ml-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "parquet features entity day",
+      "relevant": [
+        "ml-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "feature store layout",
+      "relevant": [
+        "ml-002"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "how training signals are filed on disk",
+      "relevant": [
+        "ml-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "organising model input data by entity and date",
+      "relevant": [
+        "ml-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "columnar storage plan for ml features",
+      "relevant": [
+        "ml-002"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "minilm 384 embedding model",
+      "relevant": [
+        "ml-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "embedding dimensions choice minilm",
+      "relevant": [
+        "ml-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "semantic search embedding model",
+      "relevant": [
+        "ml-003"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "which vector model powers similarity search",
+      "relevant": [
+        "ml-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "the size of our text vectors and why",
+      "relevant": [
+        "ml-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "model picked for meaning-based lookup",
+      "relevant": [
+        "ml-003"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "gpu quota fallback cpu batch",
+      "relevant": [
+        "ml-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "gpu exhaustion cpu scoring",
+      "relevant": [
+        "ml-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "batch scoring fallback",
+      "relevant": [
+        "ml-004"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "what happens when accelerators run out",
+      "relevant": [
+        "ml-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "overnight scoring when hardware is unavailable",
+      "relevant": [
+        "ml-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "degraded mode for model scoring",
+      "relevant": [
+        "ml-004"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "mercury batch scorer recommendations",
+      "relevant": [
+        "ml-005"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "mercury recommendation embeddings",
+      "relevant": [
+        "ml-005"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "nightly recommendation scorer",
+      "relevant": [
+        "ml-005"
+      ],
+      "kind": "vocab"
+    },
+    {
+      "q": "nightly rebuild of suggestion vectors",
+      "relevant": [
+        "ml-005"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "job refreshing the recommendation model outputs",
+      "relevant": [
+        "ml-005"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "batch recompute of personalised suggestions",
+      "relevant": [
+        "ml-005"
+      ],
+      "kind": "paraphrase"
+    },
+    {
+      "q": "how do we deploy releases",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "release workflow for shipping code",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "deployment automation we use",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "which ci system deploys to production",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "deploy process after the migration",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "ship a new version of the service",
+      "relevant": [
+        "infra-003"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "product catalog caching strategy",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "how are catalog reads cached",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "cache layer for the product catalog",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "catalog read performance cache",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "caching the product list",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "current product cache implementation",
+      "relevant": [
+        "pay-006"
+      ],
+      "kind": "stale"
+    },
+    {
+      "q": "mercury",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "what does mercury do",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "mercury nightly job",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "the mercury service",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "mercury pipeline",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "where is mercury implemented",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "retry handling for payments",
+      "relevant": [
+        "pay-003",
+        "pay-007"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "how do we retry failed billing work",
+      "relevant": [
+        "pay-003",
+        "pay-007"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "payment retry strategy",
+      "relevant": [
+        "pay-003",
+        "pay-007"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "uploaded image handling end to end",
+      "relevant": [
+        "web-001",
+        "web-006"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "what happens to a photo after upload",
+      "relevant": [
+        "web-001",
+        "web-006"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "image upload storage and previews",
+      "relevant": [
+        "web-001",
+        "web-006"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "deployment strategy and platform",
+      "relevant": [
+        "infra-001",
+        "infra-003",
+        "infra-006"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "how and where services get deployed",
+      "relevant": [
+        "infra-001",
+        "infra-003",
+        "infra-006"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "release platform and rollout rules",
+      "relevant": [
+        "infra-001",
+        "infra-003",
+        "infra-006"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "caching decisions across the stack",
+      "relevant": [
+        "pay-006",
+        "pay-005"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "what do we cache and where",
+      "relevant": [
+        "pay-006",
+        "pay-005"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "our caching history for catalog reads",
+      "relevant": [
+        "pay-006",
+        "pay-005"
+      ],
+      "kind": "multi"
+    },
+    {
+      "q": "kubernetes ingress controller setup",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "salesforce crm integration",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "android push notifications firebase",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "blockchain smart contract wallet",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "excel macro vba formatting",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "wordpress theme customization",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "cobol mainframe scheduler",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "photoshop color grading presets",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "kafka exactly-once semantics",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "terraform workspaces drift",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "unity shader compilation",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "ios app store review guidelines",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "grafana alert escalation rota",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "django orm n+1 queries",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "rust borrow checker lifetimes",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "elasticsearch shard rebalancing",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "sap invoice approval chain",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "jenkins groovy shared library",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "figma design token export",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "snowflake warehouse credit usage",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "mercury job schedule",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "mercury data outputs",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "who owns mercury",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "mercury failure handling",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "mercury runtime",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "mercury inputs",
+      "relevant": [
+        "pay-008",
+        "ml-005"
+      ],
+      "kind": "ambiguous"
+    },
+    {
+      "q": "graphql federation gateway",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "redis cluster sentinel failover",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "oauth device code flow smart tv",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "haskell monad transformers",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "powerbi dax measures",
+      "relevant": [],
+      "kind": "negative"
+    },
+    {
+      "q": "sqlite wal checkpointing",
+      "relevant": [],
+      "kind": "negative"
+    }
+  ]
+}

@@ -17,6 +17,14 @@ import {
   MemoryLessonsTool,
 } from './memoryTool';
 import { getEmbedder, makeLocalEmbedder } from './embeddings';
+import {
+  defaultSemanticDir,
+  downloadNeuralAssets,
+  NeuralEmbedder,
+  NEURAL_TOTAL_BYTES,
+  neuralAssetsPresent,
+  semanticDisabledByEnv,
+} from './neuralEmbedder';
 import { setTokenCounter } from './savings';
 import { captureAzureContext, applyPreserveLevel } from './azureContext';
 import {
@@ -282,6 +290,26 @@ export async function activate(context: vscode.ExtensionContext) {
     log('INFO', 'MCP server provider registered.');
   }
 
+  // Local neural semantic retrieval (v1.23.0, RET-001). Active only when the
+  // user has explicitly run the setup command (assets present + hash-valid in
+  // the shared directory) and the setting allows. Load failures surface as
+  // the explicit 'lexical-fallback' retrieval mode, never silently.
+  if (
+    vscode.workspace.getConfiguration('ghcpMem').get<boolean>('semantic.enabled', true) &&
+    !semanticDisabledByEnv() &&
+    neuralAssetsPresent()
+  ) {
+    NeuralEmbedder.load()
+      .then((embedder) => {
+        store.neural = embedder;
+        log('INFO', `Semantic retrieval enabled (${embedder.providerId}).`);
+      })
+      .catch((err) => {
+        store.neuralLoadError = `semantic provider failed to load: ${err instanceof Error ? err.message : String(err)}`;
+        log('WARN', store.neuralLoadError);
+      });
+  }
+
   // Hybrid retrieval embedder. Prefer the proposed neural `vscode.lm`
   // embeddings API when present; otherwise fall back to the dependency-free
   // local lexical embedding so dense hybrid search works by default. The
@@ -377,6 +405,77 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('ghcpMem.runPrivacyWizard', async () => {
       await runPrivacyWizard(context);
       updateStatusBar();
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.setupSemantic', async () => {
+      const mb = Math.round(NEURAL_TOTAL_BYTES / 1e6);
+      const choice = await vscode.window.showInformationMessage(
+        `Semantic retrieval runs a local MiniLM embedding model on a WASM ONNX runtime — no cloud calls, no native binaries. ` +
+          `Setup downloads ~${mb} MB (model + runtime, every file verified against checksums pinned in the extension source) ` +
+          `into ${defaultSemanticDir()}. Download now?`,
+        { modal: true },
+        'Download & Enable',
+      );
+      if (choice !== 'Download & Enable') return;
+      try {
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'GHCP-MEM semantic setup' },
+          async (progress) => {
+            await downloadNeuralAssets(defaultSemanticDir(), (msg, done, total) =>
+              progress.report({ message: `${msg} (${Math.round((done / total) * 100)}%)` }),
+            );
+            progress.report({ message: 'loading model…' });
+            store.neural = await NeuralEmbedder.load();
+            store.neuralLoadError = undefined;
+          },
+        );
+        vscode.window.showInformationMessage(
+          `Semantic retrieval enabled (${store.neural!.providerId}). Existing memories are embedded incrementally during search, or all at once via "GHCP-MEM: Index Memories for Semantic Retrieval".`,
+        );
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Semantic setup failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.indexSemantic', async () => {
+      if (!store.neural) {
+        vscode.window.showWarningMessage(
+          'Semantic retrieval is not enabled — run "GHCP-MEM: Set Up Semantic Retrieval" first.',
+        );
+        return;
+      }
+      const before = store.semanticIndexStatus();
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'GHCP-MEM semantic indexing' },
+        async (progress) => {
+          await store.ensureSemanticVectors(
+            store.getAllSessions(),
+            Number.MAX_SAFE_INTEGER,
+            (done, total) => progress.report({ message: `${done}/${total} memories embedded` }),
+          );
+        },
+      );
+      const after = store.semanticIndexStatus();
+      vscode.window.showInformationMessage(
+        `Semantic index: ${after.embedded}/${after.total} memories embedded (${after.embedded - before.embedded} new).`,
+      );
+    }),
+
+    vscode.commands.registerCommand('ghcpMem.semanticStatus', async () => {
+      const status = store.semanticIndexStatus();
+      if (!store.neural) {
+        vscode.window.showInformationMessage(
+          store.neuralLoadError
+            ? `Semantic retrieval: FALLBACK — ${store.neuralLoadError}`
+            : 'Semantic retrieval: off (lexical-only). Run "GHCP-MEM: Set Up Semantic Retrieval" to enable the local model.',
+        );
+        return;
+      }
+      vscode.window.showInformationMessage(
+        `Semantic retrieval: on (${status.provider}) — ${status.embedded}/${status.total} memories embedded.`,
+      );
     }),
 
     vscode.commands.registerCommand('ghcpMem.editProjectRules', async () => {

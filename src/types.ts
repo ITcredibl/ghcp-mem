@@ -240,6 +240,14 @@ export interface CompressedSession {
   contentHash?: string;
   /** Optional embedding vector (if the vscode.lm embeddings API is available at capture time). */
   embedding?: number[];
+  /**
+   * Provenance of `embedding` (v1.23.0, RET-002): canonical provider id,
+   * dimensions, and the contentHash at embed time. A vector whose meta does
+   * not match the ACTIVE provider/dims/content is never compared — it reads
+   * as absent (controlled fallback) and is queued for re-embedding. Legacy
+   * vectors without meta are treated the same way.
+   */
+  embeddingMeta?: { provider: string; dims: number; contentHash?: string };
   /** Optional Azure context snapshot — set when the session touched Azure-related files/commands. */
   azureContext?: AzureContextMeta;
   /**

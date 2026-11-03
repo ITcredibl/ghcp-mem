@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { CompressedSession, ContextDatabase, ObservationType, getConfig } from './types';
 import { EmbeddingFn } from './embeddings';
+import { cosineSim } from './vectorMath';
+import { embeddingCompatible, NeuralEmbedder, sessionEmbedText } from './neuralEmbedder';
 import { redact } from './redactor';
 import { serializeDb, deserializeDb, EncryptionMode } from './storageCrypto';
 import {
@@ -25,7 +27,7 @@ import { ConflictWarning, detectConflicts } from './conflicts';
 import { isBranchValid } from './lifecycle';
 import { evaluateWrite, OrgMemoryPolicy } from './orgPolicy';
 import { ensureTrustMigrated } from './teamSync';
-import { retrieve } from './retrieval';
+import { retrieve, RetrievalOutcome } from './retrieval';
 import {
   AdaptiveWeightsState,
   FeedbackSample,
@@ -1095,13 +1097,23 @@ export class ContextStore implements vscode.Disposable {
   /**
    * Async variant that also uses embeddings when available and, when enabled,
    * filters out sessions whose key files no longer exist in the workspace
-   * (mirrors GitHub agentic memory's codebase-validation pass).
+   * (mirrors GitHub agentic memory's codebase-validation pass). When the
+   * local neural provider is active (v1.23.0), this routes through the
+   * hybrid-semantic pipeline instead.
    */
   async searchWithEmbedding(
     query: string,
     filters: SearchFilters = {},
     limit = 10,
   ): Promise<CompressedSession[]> {
+    if (this.neural && query && query.trim()) {
+      const overFetchSem = Math.max(limit * 3, limit + 5);
+      const outcome = await this.searchDetailedSemantic(query, filters, overFetchSem);
+      return this.filterByFreshness(
+        outcome.items.map((item) => item.session),
+        limit,
+      );
+    }
     let vec: number[] | undefined;
     if (this.embedder && query && query.trim()) {
       try {
@@ -1115,6 +1127,148 @@ export class ContextStore implements vscode.Disposable {
     const raw = this.search(query, filters, overFetch, vec);
     const reranked = await this.applyRerank(query, raw);
     return this.filterByFreshness(reranked, limit);
+  }
+
+  /**
+   * Local neural provider (v1.23.0, RET-001). Set by the activation path when
+   * the pinned semantic assets are present and the setting allows; null means
+   * lexical-only. `neuralLoadError` records a configured-but-failed provider
+   * so searches report the explicit 'lexical-fallback' state.
+   */
+  neural: NeuralEmbedder | undefined;
+  neuralLoadError: string | undefined;
+
+  /** How many sessions carry a vector compatible with the ACTIVE provider. */
+  semanticIndexStatus(): { embedded: number; total: number; provider?: string } {
+    const total = this.db.sessions.length;
+    if (!this.neural) return { embedded: 0, total };
+    const embedded = this.db.sessions.filter((s) =>
+      embeddingCompatible(
+        s.embeddingMeta,
+        s.embedding,
+        this.neural!.providerId,
+        this.neural!.dims,
+        s.contentHash,
+      ),
+    ).length;
+    return { embedded, total, provider: this.neural.providerId };
+  }
+
+  /**
+   * Resolve provider-compatible vectors for `sessions`, computing and
+   * PERSISTING up to `budget` missing ones (RET-002: vectors carry provider
+   * identity + contentHash; incompatible or stale vectors are replaced, so an
+   * updated memory cannot retain a stale embedding). Most recent first, so
+   * coverage accrues toward the memories most likely to be retrieved.
+   */
+  async ensureSemanticVectors(
+    sessions: readonly CompressedSession[],
+    budget = 64,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<Map<string, number[]>> {
+    const neural = this.neural;
+    const vectors = new Map<string, number[]>();
+    if (!neural) return vectors;
+    const missing: CompressedSession[] = [];
+    for (const s of sessions) {
+      if (
+        embeddingCompatible(
+          s.embeddingMeta,
+          s.embedding,
+          neural.providerId,
+          neural.dims,
+          s.contentHash,
+        )
+      ) {
+        vectors.set(s.id, s.embedding!);
+      } else {
+        missing.push(s);
+      }
+    }
+    missing.sort((a, b) => b.endTime - a.endTime);
+    const todo = missing.slice(0, Math.max(0, budget));
+    let done = 0;
+    for (const s of todo) {
+      const vec = await neural.embed(sessionEmbedText(s));
+      s.embedding = vec;
+      s.embeddingMeta = {
+        provider: neural.providerId,
+        dims: neural.dims,
+        contentHash: s.contentHash,
+      };
+      vectors.set(s.id, vec);
+      onProgress?.(++done, todo.length);
+    }
+    if (todo.length > 0) await this.persist();
+    return vectors;
+  }
+
+  /**
+   * Hybrid-semantic search (RET-001) — the extension counterpart of the MCP
+   * server's `searchSessionsSemantic`, sharing the unified pipeline and the
+   * same candidate shape: the FULL filter-passing pool (no inverted-index
+   * gate, no query expansion), so identical data + provider produce identical
+   * results on both paths (RET-006). Lexical-only `search()` keeps the index
+   * + expansion as a declared store-side capability difference.
+   */
+  async searchDetailedSemantic(
+    query: string,
+    filters: SearchFilters = {},
+    limit = 10,
+  ): Promise<RetrievalOutcome> {
+    const wsId = vscode.workspace.workspaceFolders?.[0]?.uri.toString();
+    let candidates = this.db.sessions.filter((s) => !s.retracted);
+    if (this.currentBranch)
+      candidates = candidates.filter((s) => isBranchValid(s, this.currentBranch));
+    if (filters.type) candidates = candidates.filter((s) => s.observationType === filters.type);
+    if (filters.sinceTs) candidates = candidates.filter((s) => s.endTime >= filters.sinceTs!);
+    if (filters.untilTs) candidates = candidates.filter((s) => s.startTime <= filters.untilTs!);
+    if (filters.workspaceOnly && wsId)
+      candidates = candidates.filter((s) => s.workspaceId === wsId);
+    if (filters.tag) candidates = candidates.filter((s) => s.userTags.includes(filters.tag!));
+    if (filters.repoScope) {
+      candidates = candidates.filter(
+        (s) =>
+          s.repoScope === filters.repoScope || (!s.repoScope && !!wsId && s.workspaceId === wsId),
+      );
+    }
+
+    const neural = this.neural;
+    let outcome: RetrievalOutcome;
+    if (!neural) {
+      outcome = retrieve(candidates, query ?? '', limit, {
+        statsFor: (s) => this.statsFor(s),
+        workspaceId: wsId,
+        learnedWeights: this.adaptiveState.weights ?? defaultWeights(),
+        ...(this.neuralLoadError ? { semanticFallback: this.neuralLoadError } : {}),
+      });
+    } else {
+      try {
+        const vectors = await this.ensureSemanticVectors(candidates);
+        const queryVec = await neural.embed(query ?? '');
+        const semanticSim = new Map<string, number>();
+        for (const [id, vec] of vectors) semanticSim.set(id, cosineSim(queryVec, vec));
+        outcome = retrieve(candidates, query ?? '', limit, {
+          statsFor: (s) => this.statsFor(s),
+          workspaceId: wsId,
+          learnedWeights: this.adaptiveState.weights ?? defaultWeights(),
+          semanticSim,
+          semanticProvider: neural.providerId,
+        });
+      } catch (err) {
+        outcome = retrieve(candidates, query ?? '', limit, {
+          statsFor: (s) => this.statsFor(s),
+          workspaceId: wsId,
+          learnedWeights: this.adaptiveState.weights ?? defaultWeights(),
+          semanticFallback: `semantic inference failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
+    for (const [id, sig] of outcome.signals) this.lastRetrievalSignals.set(id, sig);
+    if ((query ?? '').trim() && outcome.items.length > 0) {
+      this.bumpRetrieved(outcome.items.map((item) => item.session.id));
+    }
+    return outcome;
   }
 
   /**

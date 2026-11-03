@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "Local-first engineering memory and governed task continuity for AI coding agents. Resume work across agents with scoped context, evidence-linked checkpoints, redaction and auditable history. VS Code integration and stdio MCP; no cloud memory backend.",
-  "version": "1.22.0",
+  "version": "1.23.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -66,6 +66,18 @@
       {
         "command": "ghcpMem.runPrivacyWizard",
         "title": "GHCP-MEM: Run Privacy Wizard"
+      },
+      {
+        "command": "ghcpMem.setupSemantic",
+        "title": "GHCP-MEM: Set Up Semantic Retrieval (downloads ~35 MB local model)"
+      },
+      {
+        "command": "ghcpMem.indexSemantic",
+        "title": "GHCP-MEM: Index Memories for Semantic Retrieval"
+      },
+      {
+        "command": "ghcpMem.semanticStatus",
+        "title": "GHCP-MEM: Semantic Retrieval Status"
       },
       {
         "command": "ghcpMem.auditMemory",
@@ -1087,6 +1099,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Optional remote URL to a validated JSON array of redaction rules. Loaded on startup and after settings changes, then appended to the built-in policy set."
+        },
+        "ghcpMem.semantic.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use the local neural semantic-retrieval model when its assets are present (populated only by the explicit setup command, which downloads ~35 MB). Nothing downloads automatically; disable to force lexical-only retrieval without removing the model."
         }
       }
     },
@@ -1200,13 +1217,14 @@
     "render:diagrams": "node scripts/render-diagrams.mjs",
     "check:release": "node scripts/check-release-consistency.mjs",
     "check:release:strict": "node scripts/check-release-consistency.mjs --strict",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:release && npm run eval:check && npm run eval:gold && npm run eval:paraphrase && npm run eval:heldout && npm run bench && npm run bundle:prod",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:release && npm run eval:check && npm run eval:gold && npm run eval:paraphrase && npm run eval:dev && npm run eval:frozen && npm run bench && npm run bundle:prod",
     "hooks:install": "node scripts/install-hooks.mjs",
     "bump:version": "node scripts/bump-version.mjs",
     "package": "npm run vscode:prepublish && vsce package --out ghcp-mem.vsix",
     "publish": "vsce publish",
-    "eval:heldout": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js --corpus scripts/eval-corpus-v2.json --gold scripts/eval-heldout.json --floors-key heldoutFloors --pipeline mcp",
-    "check:artifact": "node scripts/verify-release-artifact.mjs"
+    "check:artifact": "node scripts/verify-release-artifact.mjs",
+    "eval:dev": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js --corpus scripts/eval-corpus-v2.json --gold scripts/eval-dev.json --floors-key devFloors --pipeline mcp",
+    "eval:frozen": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js --corpus scripts/eval-corpus-v2.json --gold scripts/eval-frozen.json --floors-key frozenFloors --pipeline mcp"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

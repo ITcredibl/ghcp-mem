@@ -55,6 +55,30 @@ All settings live under the `ghcpMem` namespace and can be edited in VS Code Set
 | `ghcpMem.contextRetrievalCount` | number (1–50) | `5` | Number of top-ranked past sessions to inject into startup context and `@mem` responses. |
 | `ghcpMem.validateAgainstCodebase` | boolean | `true` | Drop or de-rank memories whose `keyFiles` no longer exist in the current workspace. |
 | `ghcpMem.freshnessFloor` | number (0–1) | `0.25` | Minimum freshness score required for a memory to survive validation. Lower = more lenient. `0` = accept all. |
+| `ghcpMem.semantic.enabled` | boolean | `true` | Use the local neural semantic-retrieval model **when its assets are present**. Assets only appear via the explicit setup command below — nothing downloads automatically. Set `false` to force lexical-only retrieval without removing the model. |
+
+### Semantic retrieval (v1.23.0, opt-in)
+
+Off by default in effect: retrieval is lexical until you run
+**`GHCP-MEM: Set Up Semantic Retrieval`** (or `node scripts/setup-semantic.mjs`
+for MCP-only use), which downloads ~35 MB — a quantized all-MiniLM-L6-v2 ONNX
+model plus a pure-WASM ONNX runtime, every file verified against SHA-256
+checksums pinned in the extension source — into `~/.ghcp-mem/semantic/`
+(override with `GHCP_MEM_SEMANTIC_DIR`). Both the extension and the standalone
+MCP server use the same directory, model and thresholds, so results stay
+identical across clients. Inference is fully local: no cloud calls, no native
+binaries, no telemetry.
+
+- **`GHCP-MEM: Index Memories for Semantic Retrieval`** embeds all existing
+  memories at once (otherwise they embed incrementally during search).
+- **`GHCP-MEM: Semantic Retrieval Status`** shows provider, index coverage,
+  or the explicit `lexical-fallback` reason if the provider failed to load.
+- `GHCP_MEM_SEMANTIC=off` disables semantic mode for the MCP server per
+  environment; deleting the semantic directory disables it everywhere.
+- Every search response reports `retrieval_mode` (`lexical`,
+  `hybrid-semantic`, `lexical-fallback`, `browse`) and the provider id, and
+  each result carries its evidence (`lexical`/`semantic`/`both`) with
+  `termCoverage` and `semanticSim` receipts.
 
 ---
 

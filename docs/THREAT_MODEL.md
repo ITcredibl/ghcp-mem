@@ -116,6 +116,26 @@ These are **not** threats GHCP-MEM tries to defend against; users with these req
 - **Network-level observation** between the extension host and Copilot's LM endpoint — this is the same trust as any other Copilot operation; no GHCP-MEM-specific risk added.
 - **Backdoored npm dependency** — covered separately by `dependabot.yml`, `npm audit --audit-level=high` CI gate, `gitleaks`, `semgrep`, CodeQL, and SBOM publishing in release workflow. SLSA L3-style provenance is attested on every release via `actions/attest-build-provenance`.
 
+### Semantic-retrieval assets (v1.23.0) — downloaded-code boundary
+
+Opt-in semantic retrieval downloads a WASM ONNX runtime (three files of
+`onnxruntime-web@1.23.0` plus the `onnxruntime-common` npm tarball) and a
+quantized MiniLM model into `~/.ghcp-mem/semantic/`. Because the runtime JS is
+later `require()`d, this is a code-execution boundary and is treated as one:
+
+- Downloads happen **only** on the explicit setup command — never on
+  activation, never silently.
+- Every artifact is verified against a **SHA-256 pinned in the reviewed
+  extension source** (`src/neuralEmbedder.ts`) before it is kept, and
+  re-verified at **every load** before `require()`. The CDNs (jsDelivr, the
+  npm registry, Hugging Face) are transport, not a trust root; changing any
+  pin is a provider change that invalidates cached vectors by construction.
+- The tarball extractor accepts regular files only (no symlinks), strips the
+  `package/` prefix, and rejects path traversal.
+- Inference is local WASM, single-threaded, no network access at runtime;
+  embeddings are stored next to the sessions they describe with provider
+  identity + content hash, and are stripped from every team-sync export.
+
 ## 5. Roadmap residual risks
 
 These are tracked publicly and addressed in upcoming releases:

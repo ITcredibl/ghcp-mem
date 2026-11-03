@@ -6,6 +6,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.23.0] — 2026-11-03
+
+Executes the Retrieval and Validation Specification against the v1.22.0 baseline. Requirement IDs refer to that document; every number below is a local measurement, and the targets this release does NOT meet are listed as plainly as the ones it does.
+
+### Fixed
+- **The shipped standalone MCP server crashed on startup** (`Cannot find module 'vscode'`) — in every release through v1.22.0, `node out/mcpServer.js` died at load because the pure retrieval path transitively bundled the vscode-importing `embeddings.ts`. The test suite masked it by spawning the tsc-compiled server with a NODE_PATH that resolved the mock vscode. Pure vector math now lives in `vectorMath.ts` (no vscode import anywhere in the server graph), and new production-bundle tests build the REAL bundles and spawn them with NODE_PATH stripped — initialize/tools-list must answer, and no standalone bundle may reference the vscode module (REL-001: validate activation from the artifact that ships).
+- **Ranking was input-order-dependent on ties**: equal fused scores (and equal keyword scores feeding rank maps) fell back to candidate array order. All rank sorts and the fusion sort now tie-break deterministically by id — identical data produces identical ordering regardless of iteration order (RET-006).
+
+### Added
+- **Local neural semantic retrieval (RET-001), opt-in.** One explicit command (`GHCP-MEM: Set Up Semantic Retrieval`; `scripts/setup-semantic.mjs` for headless MCP use) downloads ~35 MB — quantized all-MiniLM-L6-v2 ONNX + a pure-WASM ONNX runtime, zero native binaries — with every artifact verified against SHA-256 pins committed in source, re-verified at every load (it is a code-execution boundary and the threat model documents it as one). Semantic candidates are generated independently of keyword overlap on the already-access-filtered pool; lexical-only operation remains the default and fully supported; provider failure degrades to an explicit `lexical-fallback` state with the reason, never silently. Every response identifies `retrieval_mode` and provider; every result carries `evidence` (`lexical`/`semantic`/`both`), `termCoverage` and `semanticSim` receipts. Verified end-to-end by a committed test in which the query shares zero significant terms with the memory it retrieves.
+- **Embedding compatibility (RET-002).** Cached vectors persist provider identity, dimensions and the content hash at embed time; vectors from another provider, other dimensions, or edited content read as absent (controlled fallback) and re-embed — an updated memory can never retain a stale embedding, and changing any pinned asset changes the provider id, invalidating the cache by construction. Model downloads are explicit-only with the storage cost disclosed up front; index coverage is visible (`GHCP-MEM: Semantic Retrieval Status`, `…: Index Memories for Semantic Retrieval`).
+- **Dev/frozen evaluation split (EVAL-001).** The 200-query set floors were tuned against is now honestly named the DEVELOPMENT set (`eval:dev`); a newly authored 150-query frozen set (`eval:frozen`, measured once at commit) validates the dev-selected thresholds. Eval output now reports 95% bootstrap confidence intervals, sample counts, and category-level recall (vocab/paraphrase/negative/stale/ambiguous/multi), plus per-query failures and provenance.
+- **Duplicate handling respects meaning (RET-004).** Topic overlap alone no longer collapses results: collapse requires content identity or near-identity across topics AND summary AND decisions, within one governance scope, and never across a supersession link. The spec's probe is a committed test: JWT and cookie-authentication decisions with identical topics both stay visible; superseding/superseded pairs are co-retrievable with the replacement ranked first; scope-distinct records never collapse even when byte-identical.
+- **Benchmark correctness (PERF-001).** The search benchmark now asserts corpus size before AND after measurement, asserts expected ids for selective queries, mixes positive/selective/broad/negative classes, and fails on an answer-free positive workload. The assertions caught a real bug on first run: a fixed historical clock put the whole corpus outside the retention window and the index rebuild silently purged it to zero sessions. Runs now use ≥5 trials with every trial preserved, cold/warm split, heap/RSS deltas, index-build time, and context compilation measured separately (p95 budget 100 ms; measured ~0.3 ms).
+
+### Measured (Apple M2 Pro, node 26, 200-query dev set over the 25-session corpus)
+- Hybrid-semantic: recall@5 **0.688** [95% CI 0.615–0.753] · MRR 0.675 · precision 0.585 · abstention 0.390 · false positives **3.8%** — vs lexical 0.657/0.650/0.606/0.405/3.8%. By category: vocab 100%, ambiguous 100%, stale 83% (lexical: 67%), multi 56%, paraphrase 32% (lexical: 28%).
+- Thresholds were selected on the dev set and the reasoning is committed in source: match floor 0.5 is the lowest at which no labeled negative is served semantically; the rejected alternative (0.4) reaches ~0.80 recall at 11.5% false positives. Abstention integrity outranks recall here.
+- Warm search p99 at 1k sessions: 7.5 ms (budget 50 ms) under the new mixed workload with correctness assertions active.
+- **Frozen set (150 fresh queries, measured once, thresholds untouched):** semantic recall@5 **0.631** [CI 0.548–0.714] vs lexical 0.591 — the dev-set gains generalize (stale 80% vs 70%, multi 64% vs 53%, paraphrase 18% vs 13%) — and the calibrated pipelines serve **ZERO of the 24 hard negatives** (false positives 0.0%), while the uncalibrated keyword contrast row serves 54.2% of them: the clearest published demonstration yet of what the calibration buys. Keyword recall stays higher (0.786) at that false-positive cost.
+
+### Unmet spec targets — stated, not claimed
+- **RET-001 acceptance numbers:** paraphrase recall@5 ≥85% / MRR ≥0.75 are NOT met (paraphrase 32% dev / 18% frozen at the committed thresholds). The local quantized MiniLM's similarity distribution overlaps hard negatives too much to serve most paraphrases without violating the false-positive budget. A stronger local model under the same provider interface is future work; until then the gap is published, exactly as the lexical gap was.
+- **RET-003 false-positive ≤2%:** met on the frozen set's hard negatives (0.0%); missed on the dev set (3.8% — one adversarially close lexical negative). The committed ceilings are 5% on calibrated rows.
+- **EVAL-001 scale/independence:** the corpus is 25 synthetic sessions across 4 fictional repos with single-author labels — not 1,000+ queries over 20 real repositories with independent reviewers. CI/sample counts are published so nobody mistakes the sample for more than it is.
+- **RET-005 human-rated context usefulness, EVAL-002 matched agent experiments, EVAL-003 measured token savings, INT-001 live client matrix:** require external environments and human raters; unclaimed, as since v1.21.1.
+
+### Verification
+- 771 automated tests (4 model-gated: they skip, visibly, where the ~35 MB assets are absent, and run in full locally). All five eval gates green; frozen floors committed from a single post-freeze measurement.
+
+---
+
 ## [1.22.0] — 2026-11-03
 
 Executes the formal technical-improvement requirements against the v1.21.2 baseline. Requirement IDs below refer to that document.

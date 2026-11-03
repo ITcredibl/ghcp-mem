@@ -68,7 +68,7 @@ npm run watch          # incremental build in watch mode
 ## 3. Running tests
 
 ```bash
-npm test                  # full test suite (752 tests)
+npm test                  # full test suite (771 tests)
 npm run test:tasks        # focused task continuity and recovery checks
 npm run lint              # ESLint
 npx tsc --noEmit          # type-check without emitting
@@ -100,13 +100,16 @@ vsce package                   # .vsix must build without warnings
 
 PRs that break any gate will not be merged.
 
-Eval gates run four corpora: synthetic (`eval:check`), curated gold
-(`eval:gold`), held-out paraphrase (`eval:paraphrase`), and the 200-query
-held-out set over the v2 corpus (`eval:heldout`, which also proves
-extension ↔ MCP retrieval parity and enforces the false-positive-rate
-ceiling). After a release, `npm run check:artifact` verifies the published
-GitHub Release vsix: checksum, version-in-artifact, and byte-for-byte
-runtime-bundle parity against the tagged source.
+Eval gates run five corpora: synthetic (`eval:check`), curated gold
+(`eval:gold`), held-out paraphrase (`eval:paraphrase`), the 200-query
+DEVELOPMENT set (`eval:dev` — floors and semantic thresholds are tuned
+against it, so it is deliberately NOT called held out), and the frozen
+validation set (`eval:frozen` — measured once when committed; tuning against
+it demotes it to dev status and requires authoring a new frozen set). The dev
+and frozen gates also prove extension ↔ MCP retrieval parity and enforce the
+false-positive-rate ceiling. After a release, `npm run check:artifact`
+verifies the published GitHub Release vsix: checksum, version-in-artifact,
+and byte-for-byte runtime-bundle parity against the tagged source.
 
 ### Run every gate locally before pushing
 

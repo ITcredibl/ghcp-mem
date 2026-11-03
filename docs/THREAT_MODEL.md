@@ -120,7 +120,8 @@ These are **not** threats GHCP-MEM tries to defend against; users with these req
 
 Opt-in semantic retrieval downloads a WASM ONNX runtime (three files of
 `onnxruntime-web@1.23.0` plus the `onnxruntime-common` npm tarball) and a
-quantized MiniLM model into `~/.ghcp-mem/semantic/`. Because the runtime JS is
+quantized embedding model (bge-small-en-v1.5 or all-MiniLM-L6-v2, per the
+provider registry in source) into `~/.ghcp-mem/semantic/<provider>/`. Because the runtime JS is
 later `require()`d, this is a code-execution boundary and is treated as one:
 
 - Downloads happen **only** on the explicit setup command — never on

@@ -9,9 +9,10 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
+  activeProvider,
   NeuralEmbedder,
   neuralAssetsPresent,
-  NEURAL_PROVIDER_ID,
+  SEMANTIC_PROVIDERS,
   sessionEmbedText,
 } from '../neuralEmbedder';
 import { cosineSim } from '../vectorMath';
@@ -36,7 +37,11 @@ test('neural: tokenizer matches canonical BERT WordPiece ids', { skip }, async (
 
 test('neural: embeddings are deterministic, unit-norm, provider-stamped', { skip }, async () => {
   const e = await getEmbedder();
-  assert.equal(e.providerId, NEURAL_PROVIDER_ID);
+  assert.equal(e.providerId, activeProvider()?.spec.providerId);
+  assert.ok(
+    SEMANTIC_PROVIDERS.some((p) => p.providerId === e.providerId),
+    'provider id must come from the committed registry',
+  );
   const a = await e.embed('exponential backoff with jitter for failed retries');
   const b = await e.embed('exponential backoff with jitter for failed retries');
   assert.deepEqual(a, b, 'same text must embed identically');
@@ -46,15 +51,24 @@ test('neural: embeddings are deterministic, unit-norm, provider-stamped', { skip
 });
 
 test('neural: semantic separation — paraphrase far above unrelated', { skip }, async () => {
+  // Cosine SCALES differ per provider (MiniLM centers low, bge centers high),
+  // so the assertions are relative to the provider pack's own committed
+  // thresholds rather than absolute constants.
   const e = await getEmbedder();
-  const anchor = await e.embed('invoice reconciliation retries use exponential backoff');
-  const paraphrase = await e.embed('how do we retry failed invoice matching jobs');
-  const unrelated = await e.embed('the dinosaur exhibit opens in spring');
+  const anchor = await e.embedPassage('invoice reconciliation retries use exponential backoff');
+  const paraphrase = await e.embedQuery('how do we retry failed invoice matching jobs');
+  const unrelated = await e.embedQuery('the dinosaur exhibit opens in spring');
   const near = cosineSim(anchor, paraphrase);
   const far = cosineSim(anchor, unrelated);
-  assert.ok(near > 0.4, `paraphrase cosine ${near.toFixed(3)} should exceed 0.4`);
-  assert.ok(far < 0.2, `unrelated cosine ${far.toFixed(3)} should stay under 0.2`);
-  assert.ok(near - far > 0.3, 'separation margin');
+  assert.ok(
+    near >= e.thresholds.match,
+    `paraphrase cosine ${near.toFixed(3)} should clear the provider match floor ${e.thresholds.match}`,
+  );
+  assert.ok(
+    far < e.thresholds.candidate,
+    `unrelated cosine ${far.toFixed(3)} should stay under the candidate floor ${e.thresholds.candidate}`,
+  );
+  assert.ok(near - far > 0.25, 'separation margin');
 });
 
 test(
@@ -107,7 +121,7 @@ test(
     for (const t of queryTerms) assert.ok(!targetTerms.has(t), `unexpected shared term: ${t}`);
     const out = await searchSessionsSemantic(db as never, query, {}, 3, { embedder });
     assert.equal(out.mode, 'hybrid-semantic');
-    assert.equal(out.provider, NEURAL_PROVIDER_ID);
+    assert.equal(out.provider, embedder.providerId);
     assert.equal(out.state, 'match');
     assert.equal(out.items[0]?.session.id, 'backoff');
     assert.equal(out.items[0]?.evidence, 'semantic');

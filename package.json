@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "Local-first engineering memory and governed task continuity for AI coding agents. Resume work across agents with scoped context, evidence-linked checkpoints, redaction and auditable history. VS Code integration and stdio MCP; no cloud memory backend.",
-  "version": "1.23.0",
+  "version": "1.24.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",

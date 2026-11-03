@@ -25,7 +25,7 @@ import { createInterface } from 'readline';
 import { homedir } from 'os';
 import { join } from 'path';
 import { promises as fs } from 'fs';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 // Import shared types to avoid duplicating interface definitions.
 import type { CompressedSession, ContextDatabase } from './types';
 // Shared keyword scorer + rank fusion — single source of truth shared with
@@ -367,25 +367,55 @@ export function _setNeuralStateForTest(state: NeuralState | undefined): void {
  * (persisted with embeddingMeta) and are used here when RET-002-compatible.
  */
 const NEURAL_VEC_CACHE = new Map<string, number[]>();
-/** Max embeddings computed per search call; coverage accrues across calls. */
-const NEURAL_EMBED_BUDGET = 64;
+/**
+ * Max embeddings computed per search call (SEM-002: configurable via
+ * GHCP_MEM_SEMANTIC_BUDGET); coverage accrues across calls and partial
+ * coverage is disclosed in every response.
+ */
+const NEURAL_EMBED_BUDGET = Math.max(
+  0,
+  parseInt(process.env.GHCP_MEM_SEMANTIC_BUDGET ?? '', 10) || 64,
+);
+
+/**
+ * Content-addressed cache key (CACHE-001): id + provider id (which already
+ * encodes model, preprocessing version and dims) + a fingerprint of the EXACT
+ * text that was embedded. The v1.23.0 key used `endTime` as a change proxy —
+ * editing a memory's summary, decisions or topics while its id and timestamp
+ * stayed put reused the stale vector. Timestamps play no role here: content
+ * is the identity.
+ */
+function neuralCacheKey(s: StoredSession, embedder: NeuralEmbedder): string {
+  const fingerprint = createHash('sha256').update(sessionEmbedText(s)).digest('hex').slice(0, 24);
+  return `${s.id}:${embedder.providerId}:${fingerprint}`;
+}
+
+export interface SemanticCoverage {
+  /** Candidates eligible for semantic evidence after access filtering. */
+  eligible: number;
+  /** Candidates that actually carried a compatible vector this call. */
+  searched: number;
+}
 
 /**
  * Resolve compatible vectors for candidates: persisted vectors that pass the
  * RET-002 compatibility check are used as-is; otherwise up to `budget`
- * missing vectors are computed (most recent sessions first) and memoised.
+ * missing vectors are computed (most recent sessions first) and memoised
+ * under a content-addressed key (CACHE-001). When the budget leaves eligible
+ * candidates without vectors, `coverage` discloses it — partial coverage is
+ * reported, never passed off as a full-corpus search (SEM-002).
  */
 export async function ensureSemanticVectors(
   candidates: readonly StoredSession[],
   embedder: NeuralEmbedder,
   budget: number = NEURAL_EMBED_BUDGET,
+  coverage?: SemanticCoverage,
 ): Promise<Map<string, number[]>> {
   const vectors = new Map<string, number[]>();
   const missing: StoredSession[] = [];
   for (const s of candidates) {
-    const key = `${s.id}:${s.endTime}:${embedder.providerId}`;
-    const cached = NEURAL_VEC_CACHE.get(key);
-    if (cached) {
+    const cached = NEURAL_VEC_CACHE.get(neuralCacheKey(s, embedder));
+    if (cached && cached.length === embedder.dims) {
       vectors.set(s.id, cached);
     } else if (
       embeddingCompatible(
@@ -403,10 +433,14 @@ export async function ensureSemanticVectors(
   }
   missing.sort((a, b) => b.endTime - a.endTime);
   for (const s of missing.slice(0, Math.max(0, budget))) {
-    const vec = await embedder.embed(sessionEmbedText(s));
+    const vec = await embedder.embedPassage(sessionEmbedText(s));
     if (NEURAL_VEC_CACHE.size > 50_000) NEURAL_VEC_CACHE.clear();
-    NEURAL_VEC_CACHE.set(`${s.id}:${s.endTime}:${embedder.providerId}`, vec);
+    NEURAL_VEC_CACHE.set(neuralCacheKey(s, embedder), vec);
     vectors.set(s.id, vec);
+  }
+  if (coverage) {
+    coverage.eligible = candidates.length;
+    coverage.searched = vectors.size;
   }
   return vectors;
 }
@@ -423,7 +457,12 @@ export async function searchSessionsSemantic(
   query: string,
   filters: McpSearchFilters = {},
   limit = 5,
-  opts: { embedder?: NeuralEmbedder; embedBudget?: number } = {},
+  opts: {
+    embedder?: NeuralEmbedder;
+    embedBudget?: number;
+    /** Dev-tuning override (scripts/tune-semantic.mjs); production always uses the provider pack's committed thresholds. */
+    thresholds?: { candidate: number; weak: number; match: number };
+  } = {},
 ): Promise<RetrievalOutcome> {
   let embedder = opts.embedder;
   if (!embedder) {
@@ -437,15 +476,19 @@ export async function searchSessionsSemantic(
   }
   const candidates = prefilterSessions(db, filters);
   try {
-    const vectors = await ensureSemanticVectors(candidates, embedder, opts.embedBudget);
-    const queryVec = await embedder.embed(query ?? '');
+    const coverage: SemanticCoverage = { eligible: 0, searched: 0 };
+    const vectors = await ensureSemanticVectors(candidates, embedder, opts.embedBudget, coverage);
+    const queryVec = await embedder.embedQuery(query ?? '');
     const semanticSim = new Map<string, number>();
     for (const [id, vec] of vectors) semanticSim.set(id, cosineSim(queryVec, vec));
-    return retrieve(candidates, query ?? '', limit, {
+    const outcome = retrieve(candidates, query ?? '', limit, {
       statsFor: statsAdapter(),
       semanticSim,
       semanticProvider: embedder.providerId,
+      semanticThresholds: opts.thresholds ?? embedder.thresholds,
     });
+    outcome.semanticCoverage = coverage;
+    return outcome;
   } catch (err) {
     return searchSessionsDetailed(db, query, filters, limit, {
       semanticFallback: `semantic inference failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1118,6 +1161,16 @@ async function handleCall(name: string, args: any): Promise<any> {
         retrieval_mode: outcome.mode,
         ...(outcome.provider ? { retrieval_provider: outcome.provider } : {}),
         ...(outcome.fallbackReason ? { fallback_reason: outcome.fallbackReason } : {}),
+        // SEM-002: disclose how much of the eligible pool actually carried a
+        // comparable vector — a budget-limited partial search must say so.
+        ...(outcome.semanticCoverage
+          ? {
+              semantic_coverage: outcome.semanticCoverage,
+              ...(outcome.semanticCoverage.searched < outcome.semanticCoverage.eligible
+                ? { semantic_coverage_partial: true }
+                : {}),
+            }
+          : {}),
       };
       // Machine-readable relevance states (RET-002): match / weak_match per
       // result, no_match as explicit abstention — never recency filler.

@@ -18,11 +18,12 @@ import {
 } from './memoryTool';
 import { getEmbedder, makeLocalEmbedder } from './embeddings';
 import {
-  defaultSemanticDir,
   downloadNeuralAssets,
   NeuralEmbedder,
-  NEURAL_TOTAL_BYTES,
   neuralAssetsPresent,
+  providerDir,
+  providerTotalBytes,
+  recommendedProvider,
   semanticDisabledByEnv,
 } from './neuralEmbedder';
 import { setTokenCounter } from './savings';
@@ -408,11 +409,12 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('ghcpMem.setupSemantic', async () => {
-      const mb = Math.round(NEURAL_TOTAL_BYTES / 1e6);
+      const spec = recommendedProvider();
+      const mb = Math.round(providerTotalBytes(spec) / 1e6);
       const choice = await vscode.window.showInformationMessage(
-        `Semantic retrieval runs a local MiniLM embedding model on a WASM ONNX runtime — no cloud calls, no native binaries. ` +
+        `Semantic retrieval runs a local embedding model (${spec.key}) on a WASM ONNX runtime — no cloud calls, no native binaries. ` +
           `Setup downloads ~${mb} MB (model + runtime, every file verified against checksums pinned in the extension source) ` +
-          `into ${defaultSemanticDir()}. Download now?`,
+          `into ${providerDir(spec)}. Download now?`,
         { modal: true },
         'Download & Enable',
       );
@@ -421,7 +423,7 @@ export async function activate(context: vscode.ExtensionContext) {
         await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: 'GHCP-MEM semantic setup' },
           async (progress) => {
-            await downloadNeuralAssets(defaultSemanticDir(), (msg, done, total) =>
+            await downloadNeuralAssets(spec, (msg, done, total) =>
               progress.report({ message: `${msg} (${Math.round((done / total) * 100)}%)` }),
             );
             progress.report({ message: 'loading model…' });

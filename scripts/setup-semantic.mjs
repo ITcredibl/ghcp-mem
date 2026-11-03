@@ -20,15 +20,27 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const req = createRequire(import.meta.url);
 const neural = req(resolve(root, 'out-test', 'src', 'neuralEmbedder.js'));
 
-const dir = neural.defaultSemanticDir();
-console.log(`[semantic-setup] target: ${dir}`);
+const providerKey = process.argv.includes('--provider')
+  ? process.argv[process.argv.indexOf('--provider') + 1]
+  : undefined;
+const spec = providerKey
+  ? neural.SEMANTIC_PROVIDERS.find((s) => s.key === providerKey)
+  : neural.recommendedProvider();
+if (!spec) {
+  console.error(
+    `unknown provider ${providerKey}; available: ${neural.SEMANTIC_PROVIDERS.map((s) => s.key).join(', ')}`,
+  );
+  process.exit(1);
+}
+const dir = neural.providerDir(spec);
+console.log(`[semantic-setup] provider: ${spec.key} → ${dir}`);
 console.log(
-  `[semantic-setup] downloading ${(neural.NEURAL_TOTAL_BYTES / 1e6).toFixed(1)} MB (checksum-pinned)…`,
+  `[semantic-setup] downloading ${(neural.providerTotalBytes(spec) / 1e6).toFixed(1)} MB (checksum-pinned)…`,
 );
-await neural.downloadNeuralAssets(dir, (msg, done, total) =>
+await neural.downloadNeuralAssets(spec, (msg, done, total) =>
   console.log(`  ${msg} [${Math.round((done / total) * 100)}%]`),
 );
-const embedder = await neural.NeuralEmbedder.load(dir);
+const embedder = await neural.NeuralEmbedder.load(spec, dir);
 const probe = await embedder.embed('semantic setup self-test');
 if (probe.length !== embedder.dims) throw new Error('self-test failed');
 console.log(`[semantic-setup] ready — provider ${embedder.providerId}`);

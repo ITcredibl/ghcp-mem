@@ -38,7 +38,23 @@ export interface ExpandQueryOptions {
    * as a fraction of total session count. Default: 0.5.
    */
   maxGlobalFrequency?: number;
+  /**
+   * Terms of one session by id (ContextStore passes its term-stats map).
+   * With this, co-occurrence is tallied by iterating the SEED SESSIONS' OWN
+   * terms — O(seeds × termsPerSession) — instead of walking the whole
+   * vocabulary and probing every seed per term, which is
+   * O(uniqueTerms × seeds): ~10⁹ Set lookups per query at a 50k-session
+   * corpus (≈16 s/query, found by the PERF-001 scale benchmark). The two
+   * tallies are equivalent — a term can only co-occur if it appears in a
+   * seed session.
+   */
+  sessionTerms?: (id: string) => Iterable<string> | undefined;
 }
+
+/** Seeds beyond this are sampled (deterministically) for the tally. */
+const SEED_CAP = 512;
+/** Without `sessionTerms`, skip expansion when the legacy walk would blow up. */
+const LEGACY_WALK_BUDGET = 2_000_000;
 
 export function expandQuery(
   terms: Set<string>,
@@ -63,17 +79,43 @@ export function expandQuery(
   // threshold meaningfully — soften the minimum to 1.
   const minCoOccurrence = seedSessionIds.size === 1 ? 1 : requestedMin;
 
-  // For every term in the index, count how many seed sessions it appears in.
-  // We deliberately walk the full index here: it's a Map<string, Set<string>>
-  // so the cost is O(unique_terms × avg_set_size) — bounded by the corpus.
+  // Deterministic seed sampling: very broad queries can hit tens of
+  // thousands of sessions; 512 seeds are plenty to find stable co-occurring
+  // vocabulary and keep the tally O(seeds × termsPerSession).
+  let seeds: string[] = [...seedSessionIds];
+  if (seeds.length > SEED_CAP) seeds = seeds.sort().slice(0, SEED_CAP);
+
   const scored: Array<{ term: string; coOccur: number; globalFreq: number }> = [];
-  for (const [term, hits] of index) {
-    if (terms.has(term)) continue; // skip terms already in the query
-    if (hits.size / totalSessions > maxGlobalFrequency) continue; // too generic
-    let coOccur = 0;
-    for (const id of seedSessionIds) if (hits.has(id)) coOccur++;
-    if (coOccur < minCoOccurrence) continue;
-    scored.push({ term, coOccur, globalFreq: hits.size });
+  if (opts.sessionTerms) {
+    // Fast path: tally terms FROM the seed sessions themselves.
+    const tally = new Map<string, number>();
+    for (const id of seeds) {
+      const ts = opts.sessionTerms(id);
+      if (!ts) continue;
+      for (const term of ts) {
+        if (terms.has(term)) continue;
+        tally.set(term, (tally.get(term) ?? 0) + 1);
+      }
+    }
+    for (const [term, coOccur] of tally) {
+      if (coOccur < minCoOccurrence) continue;
+      const globalFreq = index.get(term)?.size ?? 0;
+      if (globalFreq / totalSessions > maxGlobalFrequency) continue; // too generic
+      scored.push({ term, coOccur, globalFreq });
+    }
+  } else {
+    // Legacy full-vocabulary walk — only affordable on small corpora; on a
+    // large one with no sessionTerms accessor, expansion is skipped rather
+    // than allowed to dominate query latency.
+    if (index.size * seeds.length > LEGACY_WALK_BUDGET) return [];
+    for (const [term, hits] of index) {
+      if (terms.has(term)) continue; // skip terms already in the query
+      if (hits.size / totalSessions > maxGlobalFrequency) continue; // too generic
+      let coOccur = 0;
+      for (const id of seeds) if (hits.has(id)) coOccur++;
+      if (coOccur < minCoOccurrence) continue;
+      scored.push({ term, coOccur, globalFreq: hits.size });
+    }
   }
 
   // Sort by co-occurrence desc, then by lower globalFreq (rarer = more

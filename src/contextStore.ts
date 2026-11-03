@@ -998,7 +998,10 @@ export class ContextStore implements vscode.Disposable {
     // bonus for matches that came purely from expansion (we still want the
     // original-query match to dominate ranking).
     const expansionTerms = new Set<string>(
-      expandQuery(baseTerms, this.index, this.db.sessions.length),
+      expandQuery(baseTerms, this.index, this.db.sessions.length, {
+        // O(seeds × termsPerSession) co-occurrence tally — see queryExpansion.
+        sessionTerms: (id) => this.termStats.get(id)?.wtf.keys(),
+      }),
     );
 
     const wsId = vscode.workspace.workspaceFolders?.[0]?.uri.toString();
@@ -1189,7 +1192,7 @@ export class ContextStore implements vscode.Disposable {
     const todo = missing.slice(0, Math.max(0, budget));
     let done = 0;
     for (const s of todo) {
-      const vec = await neural.embed(sessionEmbedText(s));
+      const vec = await neural.embedPassage(sessionEmbedText(s));
       s.embedding = vec;
       s.embeddingMeta = {
         provider: neural.providerId,
@@ -1245,7 +1248,7 @@ export class ContextStore implements vscode.Disposable {
     } else {
       try {
         const vectors = await this.ensureSemanticVectors(candidates);
-        const queryVec = await neural.embed(query ?? '');
+        const queryVec = await neural.embedQuery(query ?? '');
         const semanticSim = new Map<string, number>();
         for (const [id, vec] of vectors) semanticSim.set(id, cosineSim(queryVec, vec));
         outcome = retrieve(candidates, query ?? '', limit, {
@@ -1254,7 +1257,10 @@ export class ContextStore implements vscode.Disposable {
           learnedWeights: this.adaptiveState.weights ?? defaultWeights(),
           semanticSim,
           semanticProvider: neural.providerId,
+          semanticThresholds: neural.thresholds,
         });
+        // SEM-002: disclose vector coverage of the eligible pool.
+        outcome.semanticCoverage = { eligible: candidates.length, searched: vectors.size };
       } catch (err) {
         outcome = retrieve(candidates, query ?? '', limit, {
           statsFor: (s) => this.statsFor(s),

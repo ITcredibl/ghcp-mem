@@ -60,14 +60,18 @@ All settings live under the `ghcpMem` namespace and can be edited in VS Code Set
 ### Semantic retrieval (v1.23.0, opt-in)
 
 Off by default in effect: retrieval is lexical until you run
-**`GHCP-MEM: Set Up Semantic Retrieval`** (or `node scripts/setup-semantic.mjs`
-for MCP-only use), which downloads ~35 MB — a quantized all-MiniLM-L6-v2 ONNX
-model plus a pure-WASM ONNX runtime, every file verified against SHA-256
-checksums pinned in the extension source — into `~/.ghcp-mem/semantic/`
-(override with `GHCP_MEM_SEMANTIC_DIR`). Both the extension and the standalone
-MCP server use the same directory, model and thresholds, so results stay
-identical across clients. Inference is fully local: no cloud calls, no native
-binaries, no telemetry.
+**`GHCP-MEM: Set Up Semantic Retrieval`** (or `node scripts/setup-semantic.mjs
+[--provider <key>]` for MCP-only use), which downloads a provider pack — a
+quantized embedding model plus a pure-WASM ONNX runtime, every file verified
+against SHA-256 checksums pinned in the extension source — into
+`~/.ghcp-mem/semantic/<provider>/`. Providers are registry entries with their
+own pooling, query prefix and calibration thresholds: `bge-small-en-v1.5-q8`
+(~46 MB, recommended) and `minilm-l6-v2-q8` (~35 MB, the v1.23.0 pack, still
+fully supported). When several are installed the registry priority picks the
+active one; pin explicitly with `GHCP_MEM_SEMANTIC_PROVIDER=<key>`. Both the
+extension and the standalone MCP server resolve the same pack and thresholds,
+so results stay identical across clients. Inference is fully local: no cloud
+calls, no native binaries, no telemetry.
 
 - **`GHCP-MEM: Index Memories for Semantic Retrieval`** embeds all existing
   memories at once (otherwise they embed incrementally during search).
@@ -75,6 +79,10 @@ binaries, no telemetry.
   or the explicit `lexical-fallback` reason if the provider failed to load.
 - `GHCP_MEM_SEMANTIC=off` disables semantic mode for the MCP server per
   environment; deleting the semantic directory disables it everywhere.
+- `GHCP_MEM_SEMANTIC_BUDGET` caps embeddings computed per MCP search call
+  (default 64; coverage accrues across calls). Responses disclose
+  `semantic_coverage` and flag `semantic_coverage_partial` whenever the
+  budget left eligible memories without vectors.
 - Every search response reports `retrieval_mode` (`lexical`,
   `hybrid-semantic`, `lexical-fallback`, `browse`) and the provider id, and
   each result carries its evidence (`lexical`/`semantic`/`both`) with

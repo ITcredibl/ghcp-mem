@@ -87,7 +87,7 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 **Why it's worth your trust:**
 
-- **771 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **774 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Documented, versioned engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -125,98 +125,7 @@ Memory alone is not continuity. v1.20.0 adds the runtime layer around it — all
 - **Effectiveness report** — `GHCP-MEM: Show Memory Effectiveness Report` measures what the store can evidence (outcome coverage, accept/reject reinforcement, grounding, lifecycle hygiene) and states plainly that store-side signals do not prove live-model gains.
 - **LongMemEval retrieval harness** — `npm run bench:longmem -- --dataset <longmemeval.json>` evaluates GHCP-MEM's retrieval layer (recall@k / MRR over answer sessions) against a locally downloaded [LongMemEval](https://github.com/xiaowu0162/LongMemEval) dataset. Deliberately labeled: it is not an end-to-end QA accuracy score and must not be compared against published LongMemEval numbers.
 - **Calibrated abstention + an honest paraphrase gap** — the MCP search abstains (machine-readable `no_confident_match`) rather than return incidental-overlap filler, requiring significant-term coverage, not just any shared word. And because lexical retrieval is genuinely weak on paraphrases, a held-out paraphrase benchmark (`npm run eval:paraphrase`) runs in CI: under calibration the system *abstains* on most paraphrases rather than serve lexical-luck hits, so the benchmark currently measures 0 — published in `scripts/eval-baseline.json` as the semantic gap, where any future nonzero score is real capability, not noise.
-- **Local semantic retrieval (v1.23.0, opt-in)** — one explicit setup command downloads a quantized MiniLM model + pure-WASM ONNX runtime (~35 MB, every file checksum-pinned in source; no native binaries, no cloud calls) and both the extension and the MCP server gain a true semantic channel: a relevant memory is retrievable with **zero keyword overlap**, every response reports its `retrieval_mode` and provider, and provider failures surface as an explicit `lexical-fallback`, never silently. Measured honestly on the 200-query dev set: recall@5 0.688 vs 0.657 lexical at the same 3.8% false-positive rate, with supersession ("what do we use *now*?") queries up from 67% to 83% — and the published thresholds refuse recall that would cost abstention integrity (serving everything semantic would reach 0.80 recall at 11.5% false positives; we don't). Cached vectors carry provider identity + content hash, so a model change or an edited memory can never be scored against a stale embedding.
-
-| Tool | Purpose |
-|---|---|
-| `ghcpMem_start_task` | Start a task with `requestId`, `goal`, nonempty `acceptanceCriteria: [{id,text}]`, optional `steps: [{id,title,status,blocker}]`, and `visibility` (`private` by default, or `shared`) |
-| `ghcpMem_task_status` | Read recorded state by `taskId`; use resume to assess current validity |
-| `ghcpMem_update_task` | Supply `taskId`, `expectedRevision`, `requestId`, and `changes` containing steps, blockers, decisions or modifiedFiles |
-| `ghcpMem_checkpoint` | Save `summary` and `nextActions`, with the same revision/idempotency fields; optional `expiresAt` is capped at seven days |
-| `ghcpMem_resume` | Recover work using the configured Git worktree; drift returns `verification_required`, not inherited completion |
-| `ghcpMem_compile_context` | Produce a bounded task packet using `taskId` and optional `maxTokens`, with selected acceptance criteria, blockers, evidence and same-repository/same-branch historical memory |
-| `ghcpMem_complete_task` | Require all steps done, no blockers and one distinct passing `{criterionId,reference,outcome}` per acceptance criterion, from a launcher-authorized verifier |
-| `ghcpMem_cancel_task` | Stop a task without undoing external effects |
-| `ghcpMem_purge_task` | Owner-only removal of every revision and pending event, using `taskId`, `expectedRevision` and `requestId`; retain only a content-free replay tombstone |
-
-Configure the stdio server's environment in a trusted launcher:
-
-| Variable | Policy |
-|---|---|
-| `GHCP_MEM_TASK_ACTOR` | Stable agent/service identity, not supplied in a tool call |
-| `GHCP_MEM_REPO_SCOPE` | Stable repository identifier; the launcher must bind this to the intended checkout |
-| `GHCP_MEM_TASK_WORKTREE` | Absolute Git worktree path; the server observes branch, full HEAD, staged/unstaged changes and bounded untracked contents |
-| `GHCP_MEM_TASK_KEY` | 64 hex characters representing an AES-256 key, supplied through the launcher's secret mechanism; never put the key in prompts or committed configuration |
-| `GHCP_MEM_TASK_PATH` | Optional task storage root, default `~/.ghcp-mem/tasks`; keep it outside the checkout |
-| `GHCP_MEM_ALLOW_MCP_WRITE` | Must be `true` for mutations; `GHCP_MEM_READONLY=true` overrides it |
-| `GHCP_MEM_TASK_ALLOW_VERIFY` | Default off; enable only in a trusted verifier/CI profile, not an unrestricted coding-agent profile |
-| `GHCP_MEM_TASK_ALLOW_PLAINTEXT` | Explicit opt-in for local demos; otherwise task journals require encryption. Changing keys is not an automatic migration |
-
-Task records use a separate immutable revision journal, not the shared sessions mirror. Each mutation takes an exclusive per-task lock, checks the expected revision and commits a synced temporary file by rename. Retrying an identical `requestId` under the same actor returns its original result; read status again for the latest revision. Concurrent writers fail with busy/revision errors rather than silently overwriting state. The original sessions mirror still requires the single-writer workflow described above.
-
-Resume compares the observed worktree, branch, commit and dirty-tree digest. Explicit `changes: {"rebind": true}` adopts a changed scope, invalidates the previous checkpoint/verification and resets earlier steps to pending. A terminal task cannot be rebound: start a new task for further work. Ignored files, environment variables and external service state are not part of this fingerprint. Worktree observation is bounded and not an atomic snapshot of concurrent editor activity.
-
-Context packets retain task intent and a trust boundary, label historical versus launcher-authorized evidence, omit whole blocks under the estimated token budget, and report omission reasons plus source revision and digests. Insufficient room for mandatory intent/policy is an error. This first compiler selects task state and historical memory; it does not yet budget the host's system prompt, tool definitions or source-code attachments.
-
-Process interruption leaves committed revisions readable and incomplete temporary events ignored. An orphaned `.lock` blocks writes: stop all writers, inspect the lock under the repository-hash/task-id directory, then remove it offline before retrying. Never remove a live writer's lock. Checksums are not signatures; encryption provides authenticated storage, not proof that an external test actually ran. Verification references remain attributed to the configured verifier. Profiles running under the same OS account are not a hostile-tenant security boundary.
-
-Use purge for retention/deletion: it removes journal content, not external backups or filesystem snapshots. Tasks do not currently expire automatically. Keep journals on a local filesystem with reliable exclusive-create and atomic-rename semantics; network filesystems and power-loss durability have not been certified. No cloud synchronization, organization directory, deployment execution or signed CI attestation is implied.
-
-Run `npm run test:tasks` for the reproducible scripted continuity checks: cross-agent resume, real Git/worktree drift, two writer processes, interrupted checkpoint recovery, verifier policy, context exclusion, encryption and history purge. These checks do not invoke paid models or establish live coding-outcome/token-saving improvements.
-
-### Measure Net Savings
-
-`npm run measure:savings -- baseline.json memory.json` compares two usage records. Each record supplies `taskId` (include the revision and quality-gate identity), `model`, `source: "provider"`, `qualityPassed`, `inputTokens`, `outputTokens`, and `auxiliaryTokens`. Include memory generation, reranking, and subagent work in auxiliary usage without double-counting. Use the same task, model and quality criteria. Repeat with native-memory-only as a separate baseline. Failed/mismatched runs produce no percentage; regressions produce negative savings. The command consumes supplied records, not automatically verified vendor telemetry. Billing savings are unknown without current model/cache rates.
-
-The `/savings` view and outbound OTel representation metrics are estimates, not observed session usage or guaranteed savings. Curated retrieval evaluation now runs in both CI and `npm run verify` via `npm run eval:gold`.
-
-## The 30-Second Memory Plan
-
-| Step | What you do | What GHCP-MEM does |
-|---|---|---|
-| **1. Install** | One click from the Marketplace, or `code --install-extension ITcredibl.ghcp-mem` | Activates on next VS Code launch. Zero config required. |
-| **2. Seed** | Accept the one-click prompt (or run **`GHCP-MEM: Seed Memory from Git History...`**) | Mines your repo's last 200 commits into searchable, redacted sessions in ~30 seconds — months of decisions, fixes, and deploys, remembered on day one |
-| **3. Ask** | Open Copilot Chat: `@mem /search why did we switch to X` — or just ask your usual question | Copilot starts with your project's decisions already cited. For "what / why / how" questions, the answer comes from local lookup — *no Copilot completion is spent*. On [real-repo benchmarks](docs/BENCHMARKS-REAL.md): recall@5 of 73–100%, p95 under 100ms at 10,000 sessions. |
-
-From then on it just captures as you work — edits, terminals, diagnostics, deploys — and every new chat starts caught up.
-
-**Our three promises while it runs:** everything stays **local** (no memory backend, zero open ports) · everything is **redacted** before it touches disk (30 rules + entropy catch-all + optional encryption at rest) · everything is **auditable** (every claim cites its evidence; `/compliance` prints the proof).
-
-That's it. No daemon to keep running. No cloud account to register. No vector DB to provision.
-
----
-
-## Watch it prove itself (real output, 60 seconds)
-
-Everything below was generated by running GHCP-MEM against **this repository's own git history** — not a mock-up. Reproduce it yourself: install, open this repo, accept the seed prompt.
-
-**1 · Seed** — one click, ~30 seconds:
-
-```
-GHCP-MEM: Seeded 28 sessions from 157 commits (9 low-signal skipped). 7 secrets redacted.
-```
-
-Seven redactions on our own history — here's one in the stored data, a branch path the entropy detector wouldn't clear:
-
-```
-Merge pull request #20 from [REDACTED:high-entropy]#8b0e3e79 — plus 20 related commit(s)…
-```
-
-**2 · Ask** — a question a teammate would actually ask:
-
-```
-@mem /search why did seeded sessions disappear after restart
-
-#1  [deployment · 2026-09-12 · id 8ff196d]
-    release: v1.18.1 — maintenance batch + release-gate correctness fixes
-    — plus 3 related commit(s): fix(ci): strict gate no longer demands tag-at-HEAD…
-    ↳ decision: ancestry instead of equality so tag re-runs after main advances work
-```
-
-A dated, id-addressed answer with the decision surfaced — not a vibe, a citation.
-
-**3 · Audit** — see exactly what it knows and what it hid:
-
+- **Local semantic retrieval (opt-in, provider packs)** — one explicit setup command downloads a quantized embedding model + pure-WASM ONNX runtime (bge-small-en-v1.5, ~46 MB pack; every file checksum-pinned in source; no native binaries, no cloud calls), and both the extension and the MCP server gain a true semantic channel: a relevant memory is retrievable with **zero keyword overlap**, every response reports its `retrieval_mode` and provider, and provider failures surface as an explicit `lexical-fallback`, never silently. Measured honestly — dev set: recall@5 **0.839** [95% CI 0.784–0.891], paraphrase 68%; untuned frozen set: recall@5 **0.853** [CI 0.790–0.913], paraphrase 64% (lexical baseline: 0.591/13%) — at a 3.8–4.2% false-positive rate, with the thresholds that would buy more recall at more false positives rejected and documented in source. Models are registry entries with per-provider calibration; cached vectors carry provider identity + content hash, so a model change or an edited memory can never be scored against a stale embedding.
 - **`GHCP-MEM: Show Current Repo Memory`** — every stored row for this repo, in one report
 - **`@mem /why <query> :: 8ff196d`** — the per-signal math behind that ranking
 - **`@mem /compliance`** — grounding coverage, trust distribution, and redaction stats, audit-ready
@@ -907,4 +816,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.23.0** · local-first engineering context and governed task continuity</sub>
+<sub>**v1.24.0** · local-first engineering context and governed task continuity</sub>

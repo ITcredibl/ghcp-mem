@@ -411,7 +411,14 @@ export function fuseRanks(
     const decay = recencyValue * 0.3 * weights.recencyMultiplier;
 
     const wsBoost = i.workspaceMatch ? 0.15 : 0;
-    const matchBoost = i.matchRatio * 0.25;
+    // Coverage evidence. The flat 0.25 ceiling let absolute recency decay
+    // (up to 0.30) outrank a FULL-coverage match older than ~2 half-lives —
+    // at 50k sessions the PERF-001 probe "session 25000" scored 2× everything
+    // on keywords yet lost to day-old single-term matches. A memory system
+    // must rank match correctness above freshness; freshness arbitrates among
+    // comparable matches. Complete significant-term coverage therefore earns
+    // a completeness bonus that strictly dominates the maximum decay (0.30).
+    const matchBoost = i.matchRatio * 0.25 + (i.matchRatio >= 1 ? 0.15 : 0);
     const confBoost = (i.confidence - 0.5) * 0.1 * weights.confidence;
     const decisionBoost = weights.decisionBoost > 0 && i.hasDecisions ? weights.decisionBoost : 0;
     const problemBoost = weights.problemBoost > 0 && i.hasProblems ? weights.problemBoost : 0;

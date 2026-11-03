@@ -6,6 +6,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.24.0] — 2026-11-03
+
+Semantic provider packs: the retrieval-quality release. One day after v1.23.0 shipped the semantic infrastructure with its gaps published, this release closes most of the distance to the specification's quality targets by swapping the model, not the architecture — evidence that the provider interface was the right cut.
+
+### Fixed
+- **CACHE-001: the MCP in-process vector cache keyed on id + timestamp**, so editing a memory's summary, decisions or topics while its id and timestamp stayed put reused the stale vector (the persisted path already validated content hashes; the RAM cache did not). Cache identity is now id + provider id (which encodes model, preprocessing and dims) + a fingerprint of the exact embedded text — timestamps play no role. Covered by equivalence tests on both the MCP and extension paths: content change with identical id/time recomputes, unchanged content reuses, provider changes never share vectors.
+- **Query expansion was O(vocabulary × matched sessions) per query** — ~10⁹ set probes at a 50k-session corpus, ≈16 s per positive query. The co-occurrence tally now iterates the matched sessions' own terms (equivalent result, O(seeds × terms-per-session), seeds deterministically capped at 512), cutting 50k-session warm search from 16.5 s to ~50 ms and even the 1k gate from 7.5 ms to 1.5 ms. The previously published 50k scaling numbers (v1.22.0) are retracted: that benchmark unknowingly measured a corpus the retention pass had emptied — the very defect the v1.23.0 correctness assertions were built to catch, and did.
+- **Recency could outrank an exact match at scale.** The v1.23.0 benchmark correctness assertions (PERF-001) caught it at 50k sessions: a query whose target scored 2× everything else on keywords missed the top 50, because the absolute recency decay (up to +0.30) exceeded the maximum term-coverage evidence (+0.25) for any memory older than ~2 half-lives — day-old single-term matches buried a 17-day-old exact match. Match correctness now dominates freshness: complete significant-term coverage earns a completeness bonus that strictly exceeds the maximum decay, and freshness arbitrates among comparable matches instead of overriding them. A first-stage pool cap (top 512 by keyword score; semantic candidates always retained) additionally bounds rank-fusion dilution and fusion cost on large stores. Both changes are bit-identical on every committed eval corpus (all five gates re-measured: unchanged to the third decimal), and the 50k selective-query assertion now passes.
+
+### Added
+- **Provider packs.** Embedding models are now registry entries (`SEMANTIC_PROVIDERS`): pinned assets, pooling (CLS vs mean), query prefix, and — critically — **per-provider calibration thresholds**, because cosine scales are not comparable across models (MiniLM's hardest dev negative peaks at 0.48; bge-small's at ~0.66). The WASM runtime stays shared; provider ids keep gating vector compatibility (RET-002), so switching models invalidates caches by construction and never compares mixed vectors.
+- **Controlled model selection (SEM-001).** Three locally deployable models were compared on the dev set under predefined criteria (recall at the zero-false-positive floor, size, latency, license) — the incumbent MiniLM, bge-small-en-v1.5, and gte-small (rejected at the distribution stage: its hardest negative scores above its 25th-percentile relevant pair, leaving no usable zero-FP floor). The published comparison with reproduction commands is in docs/BENCHMARKS.md.
+- **bge-small-en-v1.5 (quantized, ~46 MB pack) is the new recommended provider** — CLS pooling, asymmetric query prefix, same zero-native-deps WASM runtime, same checksum-pinning discipline. The v1.23.0 MiniLM pack remains fully supported; existing installs keep working untouched and new setups get bge.
+- Setup supports `--provider` (script) and the active pack is selectable via `GHCP_MEM_SEMANTIC_PROVIDER`; detection order prefers bge when both are installed.
+- **Coverage disclosure (SEM-002).** Every hybrid response now reports `semantic_coverage` — how many access-eligible memories were actually searched with a comparable vector — and flags `semantic_coverage_partial` when the per-call embedding budget (configurable, `GHCP_MEM_SEMANTIC_BUDGET`, default 64) left eligible memories unvectorized. A budget-limited search can no longer pass itself off as a full-corpus search.
+
+### Measured (same dev/frozen protocol as v1.23.0; thresholds tuned on dev only, frozen measured once)
+- **Dev set:** recall@5 **0.839** [95% CI 0.784–0.891] · MRR 0.787 · paraphrase **68%** · stale 83% · FP 3.8% — vs v1.23.0's MiniLM 0.688 / 0.675 / 32% at the same FP, and lexical 0.657 / 0.650 / 28%.
+- **Frozen set (untuned):** recall@5 **0.853** [95% CI 0.790–0.913] · MRR 0.786 · paraphrase **64%** (was 18%) · stale 90% · multi 92% · FP 4.2% (1 of 24 hard negatives: "jwt refresh token rotation mobile app"-class queries are genuinely adjacent to stored auth memories). The dev-tuned thresholds generalized UP on the untuned set.
+- **Latency (PERF-001/002, Apple M2 Pro, correctness assertions active):** warm LEXICAL p99 1.5 ms @1k (CI gate), 8.6 ms @10k, 55 ms @50k — sub-linear, with corpus size, selective/broad/negative expectations and answer rates asserted before any number counts. Warm HYBRID with real inference: p95 22.4 ms @1k and 39.8 ms @10k (≤150 ms budget, 4× headroom); the 50k hybrid configuration (dominated by one-time embedding indexing, ~21 ms/memory) is measured post-release and published with the release notes — until then no 50k hybrid number is claimed. Embedding indexing runs ~21 ms/memory, incremental or via the index command.
+- Threshold rationale is committed in source: match 0.665 is the lowest floor serving zero dev negatives semantically; 0.65 doubles false positives (11.5%) for +3pp recall — rejected, abstention integrity outranks recall. A semantic veto for the one remaining lexical false positive was measured and rejected honestly: that negative ("django orm n+1 queries" → React Query, 0.614 cosine) is semantically adjacent, and no veto floor removes it without cutting into the relevant range (p25 0.644).
+
+### Spec targets after this release
+- **Met:** exact technical-query recall ≥95% (vocab 100% on both sets); zero-keyword-overlap retrieval; mode/provider reporting; embedding-compat invalidation; PERF-002 latency budgets at 1k/10k with real inference.
+- **Near:** paraphrase recall@5 68% dev / 64% frozen against the ≥85% target (was 32%/18%); paraphrase MRR tracks similarly against ≥0.75 (overall MRR 0.787 dev / 0.786 frozen).
+- **Unmet, unchanged:** false positives 3.8–4.2% against ≤2% (both residual negatives are genuinely semantically adjacent — documented per-query in the eval output); EVAL-001 scale/independence; RET-005 / EVAL-002 / EVAL-003 / INT-001 (external environments and human raters).
+
+### Verification
+- 771 automated tests (model-gated tests now provider-aware: assertions are relative to the active pack's committed thresholds, never absolute cosine constants). All five eval gates green, including both provider labels on dev and frozen.
+
+---
+
 ## [1.23.0] — 2026-11-03
 
 Executes the Retrieval and Validation Specification against the v1.22.0 baseline. Requirement IDs refer to that document; every number below is a local measurement, and the targets this release does NOT meet are listed as plainly as the ones it does.

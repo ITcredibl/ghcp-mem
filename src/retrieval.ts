@@ -73,6 +73,12 @@ export interface RetrievalAdapters {
    * 'lexical-fallback' with this reason — never silently.
    */
   semanticFallback?: string;
+  /**
+   * Calibration floors for the ACTIVE provider's cosine scale (scales are not
+   * comparable across models, so these travel with the provider pack).
+   * Defaults to SEMANTIC_THRESHOLDS for back-compat.
+   */
+  semanticThresholds?: { candidate: number; weak: number; match: number };
   /** Learned adaptive multipliers (extension host); defaults to neutral. */
   learnedWeights?: Record<SignalName, number>;
   /** Session ids admitted only via query expansion (no match-ratio credit). */
@@ -101,6 +107,13 @@ export interface RetrievalOutcome {
   /** Human-readable reason when mode === 'lexical-fallback'. */
   fallbackReason?: string;
   significantTermCount: number;
+  /**
+   * SEM-002 coverage disclosure (hybrid mode): how many access-eligible
+   * candidates existed vs how many actually carried a comparable vector this
+   * call. Set by the callers that own vector resolution; partial coverage is
+   * reported to clients, never passed off as a full search.
+   */
+  semanticCoverage?: { eligible: number; searched: number };
   /** Per-id fusion signal snapshot, for the extension's adaptive learner. */
   signals: Map<string, Record<SignalName, number>>;
 }
@@ -210,6 +223,7 @@ export function retrieve(
   const signals = new Map<string, Record<SignalName, number>>();
   const terms = extractTerms(query ?? '');
   const semantic = adapters.semanticSim;
+  const TH = adapters.semanticThresholds ?? SEMANTIC_THRESHOLDS;
   const simOf = (s: CompressedSession): number => semantic?.get(s.id) ?? 0;
   const mode: RetrievalMode = semantic
     ? 'hybrid-semantic'
@@ -260,8 +274,7 @@ export function retrieve(
       ),
     );
   }
-  const semanticCandidate = (s: CompressedSession): boolean =>
-    simOf(s) >= SEMANTIC_THRESHOLDS.candidate;
+  const semanticCandidate = (s: CompressedSession): boolean => simOf(s) >= TH.candidate;
   let scoped = candidates.filter((s) => (kScore.get(s.id) ?? 0) > 0 || semanticCandidate(s));
   if (scoped.length === 0)
     return { items: [], state: 'no_match', ...modeFields, significantTermCount: 0, signals };
@@ -281,7 +294,7 @@ export function retrieve(
     const lexicallyServable = scoped.some(
       (s) => sigMatched(s) >= requiredSignificantMatches(significant.size),
     );
-    const semanticallyServable = scoped.some((s) => simOf(s) >= SEMANTIC_THRESHOLDS.match);
+    const semanticallyServable = scoped.some((s) => simOf(s) >= TH.match);
     if (!lexicallyServable && !semanticallyServable)
       return {
         items: [],
@@ -290,6 +303,25 @@ export function retrieve(
         significantTermCount: significant.size,
         signals,
       };
+  }
+
+  // First-stage pool cap (PERF-001 finding at 50k sessions): rank fusion is
+  // RANK-based, so a huge candidate pool of one-common-term matches dilutes an
+  // overwhelming BM25 winner — at 50k, "session 25000" scored 2× everything
+  // else yet fused below the top 50, because keyword rank 0 of 50,000 carries
+  // no more fusion weight than rank 0 of 500 while tens of thousands of
+  // recency ranks crowd in. Standard two-stage retrieval: fuse over the top
+  // candidates BY keyword score (semantic candidates always retained — their
+  // evidence channel is independent). Pools under the cap — every committed
+  // eval corpus — are bit-identical to the uncapped pipeline.
+  const FUSION_POOL_MAX = 512;
+  if (scoped.length > FUSION_POOL_MAX) {
+    const byScore = [...scoped].sort(
+      (a, b) => (kScore.get(b.id) ?? 0) - (kScore.get(a.id) ?? 0) || a.id.localeCompare(b.id),
+    );
+    const keep = new Set<string>();
+    for (const s of byScore.slice(0, FUSION_POOL_MAX)) keep.add(s.id);
+    scoped = scoped.filter((s) => keep.has(s.id) || semanticCandidate(s));
   }
 
   // Rank maps: keyword, recency, dense evidence. In hybrid mode the dense
@@ -373,9 +405,9 @@ export function retrieve(
     const termCoverage = coverageOf(session);
     const sim = simOf(session);
     const lexicalMatch = termCoverage >= WEAK_COVERAGE_FLOOR;
-    const semanticMatch = !!semantic && sim >= SEMANTIC_THRESHOLDS.match;
+    const semanticMatch = !!semantic && sim >= TH.match;
     const lexicalEvidence = termCoverage > 0;
-    const semanticEvidence = !!semantic && sim >= SEMANTIC_THRESHOLDS.weak;
+    const semanticEvidence = !!semantic && sim >= TH.weak;
     return {
       session,
       termCoverage,

@@ -216,3 +216,107 @@ test('identical injected semantic evidence produces identical outcomes across ca
   );
   assert.equal(a.state, b.state);
 });
+
+// ---------------------------------------------------------------------------
+// CACHE-001: content-aware cache identity (no model required — a stub
+// embedder exercises the exact production seam)
+// ---------------------------------------------------------------------------
+
+function stubEmbedder(providerId: string, dims = 8) {
+  let calls = 0;
+  const embedder = {
+    spec: {
+      key: 'stub',
+      providerId,
+      dims,
+      pooling: 'mean',
+      thresholds: { candidate: 0.3, weak: 0.3, match: 0.5 },
+      modelAssets: [],
+    },
+    providerId,
+    dims,
+    thresholds: { candidate: 0.3, weak: 0.3, match: 0.5 },
+    async embed(text: string) {
+      calls++;
+      // Deterministic text-derived vector so stale reuse is detectable.
+      const v = new Array(dims)
+        .fill(0)
+        .map((_, i) => ((text.charCodeAt(i % text.length) % 13) + i) / 20);
+      const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+      return v.map((x) => x / norm);
+    },
+    async embedPassage(text: string) {
+      return this.embed(text);
+    },
+    async embedQuery(text: string) {
+      return this.embed(text);
+    },
+  };
+  return { embedder: embedder as never, callCount: () => calls };
+}
+
+test('CACHE-001 (MCP): content change with SAME id and timestamp recomputes the vector', async () => {
+  const { ensureSemanticVectors } = await import('../mcpServer');
+  const { embedder, callCount } = stubEmbedder('stub-provider/1#8');
+  const session = makeSession({ id: 'cache-probe', summary: 'original summary text' });
+  const v1 = (await ensureSemanticVectors([session], embedder, 10)).get('cache-probe')!;
+  const callsAfterFirst = callCount();
+  // Unchanged content: cached vector reused, no new inference.
+  const v1again = (await ensureSemanticVectors([session], embedder, 10)).get('cache-probe')!;
+  assert.deepEqual(v1again, v1);
+  assert.equal(callCount(), callsAfterFirst, 'unchanged content must not re-embed');
+  // Edit the summary while id AND endTime stay identical (the v1.23.0 trap).
+  const edited = { ...session, summary: 'completely different content now' } as typeof session;
+  const v2 = (await ensureSemanticVectors([edited], embedder, 10)).get('cache-probe')!;
+  assert.ok(callCount() > callsAfterFirst, 'content change must trigger recomputation');
+  assert.notDeepEqual(v2, v1, 'edited content must not reuse the stale vector');
+});
+
+test('CACHE-001 (MCP): a different provider id never reuses cached vectors', async () => {
+  const { ensureSemanticVectors } = await import('../mcpServer');
+  const session = makeSession({ id: 'cache-probe-2', summary: 'provider switch probe' });
+  const a = stubEmbedder('provider-a/1#8');
+  await ensureSemanticVectors([session], a.embedder, 10);
+  const b = stubEmbedder('provider-b/1#8');
+  await ensureSemanticVectors([session], b.embedder, 10);
+  assert.equal(b.callCount(), 1, 'new provider must compute its own vector');
+});
+
+test('CACHE-001 (extension): persisted vector invalidates on content change, same timestamp', async () => {
+  const { embedder, callCount } = stubEmbedder('stub-provider/1#8');
+  const session = makeSession({ id: 'ext-cache', summary: 'first version of the fact' });
+  // Simulate the extension's persisted-path: stamp a vector + meta for the
+  // CURRENT content, then change content without touching endTime.
+  session.embedding = await (
+    embedder as { embedPassage: (t: string) => Promise<number[]> }
+  ).embedPassage('first version of the fact');
+  session.embeddingMeta = {
+    provider: 'stub-provider/1#8',
+    dims: 8,
+    contentHash: session.contentHash,
+  };
+  assert.ok(
+    embeddingCompatible(
+      session.embeddingMeta,
+      session.embedding,
+      'stub-provider/1#8',
+      8,
+      session.contentHash,
+    ),
+    'fresh vector is compatible',
+  );
+  const edited = makeSession({ id: 'ext-cache', summary: 'second version of the fact' });
+  edited.embedding = session.embedding;
+  edited.embeddingMeta = session.embeddingMeta;
+  assert.ok(
+    !embeddingCompatible(
+      edited.embeddingMeta,
+      edited.embedding,
+      'stub-provider/1#8',
+      8,
+      edited.contentHash,
+    ),
+    'content change (same id/time) must invalidate the persisted vector',
+  );
+  assert.ok(callCount() >= 1);
+});

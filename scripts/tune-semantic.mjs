@@ -33,7 +33,7 @@ const sessionVec = new Map();
 for (const s of corpus.sessions) {
   sessionVec.set(
     s.id,
-    await embedder.embed(
+    await embedder.embedPassage(
       neural.sessionEmbedText({
         summary: s.summary,
         keyTopics: s.keyTopics ?? [],
@@ -48,7 +48,7 @@ const negMax = []; // max sim of each NEGATIVE query to any session
 const offTarget = []; // sims of (positive query, non-relevant session)
 const perKind = new Map();
 for (const q of gold.queries) {
-  const qv = await embedder.embed(q.q ?? q.query);
+  const qv = await embedder.embedQuery(q.q ?? q.query);
   const sims = new Map();
   for (const [id, v] of sessionVec) sims.set(id, cosineSim(qv, v));
   const relevant = new Set(q.relevant ?? []);
@@ -123,7 +123,6 @@ const db = { version: 2, lastUpdated: 0, sessions };
 await ensureSemanticVectors(sessions, embedder, Number.MAX_SAFE_INTEGER);
 
 async function evalCombo(t) {
-  retrievalMod._setSemanticThresholdsForTuning(t);
   let recalled = 0,
     mrr = 0,
     pos = 0,
@@ -133,7 +132,10 @@ async function evalCombo(t) {
   const kindTotals = new Map(),
     kindHits = new Map();
   for (const q of gold.queries) {
-    const out = await searchSessionsSemantic(db, q.q ?? q.query, {}, 5, { embedder });
+    const out = await searchSessionsSemantic(db, q.q ?? q.query, {}, 5, {
+      embedder,
+      thresholds: t,
+    });
     const ids = out.items.map((it) => it.session.id);
     const relevant = new Set(q.relevant ?? []);
     if (relevant.size === 0) {
@@ -161,16 +163,23 @@ async function evalCombo(t) {
   );
 }
 
-console.log('\nfull-pipeline sweep (dev set):');
-for (const combo of [
-  { candidate: 0.25, weak: 0.25, match: 0.4 },
-  { candidate: 0.25, weak: 0.25, match: 0.45 },
-  { candidate: 0.25, weak: 0.25, match: 0.5 },
-  { candidate: 0.3, weak: 0.3, match: 0.45 },
-  { candidate: 0.3, weak: 0.3, match: 0.5 },
-  { candidate: 0.3, weak: 0.3, match: 0.55 },
-  { candidate: 0.35, weak: 0.35, match: 0.5 },
-  { candidate: 0.2, weak: 0.2, match: 0.45 },
-]) {
+console.log(`\nfull-pipeline sweep (dev set, provider ${embedder.spec.key}):`);
+const SWEEPS = {
+  'minilm-l6-v2-q8': [
+    { candidate: 0.25, weak: 0.25, match: 0.45 },
+    { candidate: 0.3, weak: 0.3, match: 0.5 },
+    { candidate: 0.3, weak: 0.3, match: 0.55 },
+  ],
+  'bge-small-en-v1.5-q8': [
+    { candidate: 0.5, weak: 0.5, match: 0.6 },
+    { candidate: 0.5, weak: 0.5, match: 0.63 },
+    { candidate: 0.55, weak: 0.55, match: 0.65 },
+    { candidate: 0.55, weak: 0.55, match: 0.665 },
+    { candidate: 0.55, weak: 0.55, match: 0.68 },
+    { candidate: 0.6, weak: 0.6, match: 0.665 },
+    { candidate: 0.5, weak: 0.5, match: 0.67 },
+  ],
+};
+for (const combo of SWEEPS[embedder.spec.key] ?? []) {
   await evalCombo(combo);
 }

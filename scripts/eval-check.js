@@ -214,7 +214,7 @@ const evalSemanticPipeline = pipelineArg === 'semantic';
       // cold-cache embedding throughput.
       await ensureSemanticVectors(db.sessions, embedder, Number.MAX_SAFE_INTEGER);
       report.runs.push(
-        await runGoldEvalAgainst('mcp semantic (onnx-minilm-q8)', queries, async (q) =>
+        await runGoldEvalAgainst(`mcp semantic (${embedder.spec.key})`, queries, async (q) =>
           (await searchSessionsSemantic(db, q, {}, 20, { embedder })).items.map(
             (item) => item.session,
           ),

@@ -1,5 +1,5 @@
 {
-  "comment": "Recall@5 / MRR / nDCG@5 floors for scripts/eval-check.js. Every production retrieval configuration MUST have a floor — the gate fails on a run with no committed baseline (v1.18.3). Both corpora measure 1.000 on every config as of 2026-11-03 (v1.20.1 compound-token fix: hyphenated/underscored topics now also index their parts, which recovered the two gold queries that previously returned nothing and the two that ranked the exact match second). Floors are set so one lost query out of 12 passes and two fail, on BOTH corpora — and so hybrid may never again silently rank below keyword, which the pre-fix gold floors tolerated. Update only after deliberate ranker improvements. | paraphraseFloors track the HELD-OUT paraphrase set (scripts/eval-paraphrase.json). Measured 2026-11-03 at 0.000: the v1.21.2 shared relevance calibration ABSTAINS on queries whose significant terms barely overlap the store — the 16.7% measured one revision earlier was two sub-threshold lexical-luck hits that calibration now (correctly) refuses to serve. The benchmark therefore measures semantic retrieval capability above the calibration floor: any nonzero score here is real. Never quote these numbers as retrieval quality. | devFloors gate the 200-query DEVELOPMENT set (scripts/eval-dev.json over scripts/eval-corpus-v2.json; EVAL-001). Measured 2026-11-03 at commit a4ea323+: keyword 0.849/0.761/0.781 with 19.2% false positives (uncalibrated baseline, kept for contrast); calibrated hybrid AND the production MCP pipeline identically 0.657/0.650/0.650, precision 0.606, abstention 0.405, false positives 3.8% (RET-002 ceiling 5%). Threshold or label changes require explicit review. | RENAMED heldout->dev in v1.23.0: floors and semantic thresholds were tuned against this set, so per EVAL-001 it may not be called held out; frozenFloors gate scripts/eval-frozen.json, authored independently and measured ONCE at commit time. Any tuning against the frozen set demotes it to dev status. | frozenFloors measured ONCE 2026-11-03 (150 queries): keyword 0.786/0.721, hybrid+mcp 0.591/0.582, semantic 0.631/0.622. | keyword-only frozen FP ceiling is 0.6 because the row is the UNCALIBRATED contrast: the frozen hard negatives share corpus vocabulary and it serves 54.2% of them — published as exactly why calibration exists (calibrated rows: 0.0%).",
+  "comment": "Recall@5 / MRR / nDCG@5 floors for scripts/eval-check.js. Every production retrieval configuration MUST have a floor — the gate fails on a run with no committed baseline (v1.18.3). Both corpora measure 1.000 on every config as of 2026-11-03 (v1.20.1 compound-token fix: hyphenated/underscored topics now also index their parts, which recovered the two gold queries that previously returned nothing and the two that ranked the exact match second). Floors are set so one lost query out of 12 passes and two fail, on BOTH corpora — and so hybrid may never again silently rank below keyword, which the pre-fix gold floors tolerated. Update only after deliberate ranker improvements. | paraphraseFloors track the HELD-OUT paraphrase set (scripts/eval-paraphrase.json). Measured 2026-11-03 at 0.000: the v1.21.2 shared relevance calibration ABSTAINS on queries whose significant terms barely overlap the store — the 16.7% measured one revision earlier was two sub-threshold lexical-luck hits that calibration now (correctly) refuses to serve. The benchmark therefore measures semantic retrieval capability above the calibration floor: any nonzero score here is real. Never quote these numbers as retrieval quality. | devFloors gate the 200-query DEVELOPMENT set (scripts/eval-dev.json over scripts/eval-corpus-v2.json; EVAL-001). Measured 2026-11-03 at commit a4ea323+: keyword 0.849/0.761/0.781 with 19.2% false positives (uncalibrated baseline, kept for contrast); calibrated hybrid AND the production MCP pipeline identically 0.657/0.650/0.650, precision 0.606, abstention 0.405, false positives 3.8% (RET-002 ceiling 5%). Threshold or label changes require explicit review. | RENAMED heldout->dev in v1.23.0: floors and semantic thresholds were tuned against this set, so per EVAL-001 it may not be called held out; frozenFloors gate scripts/eval-frozen.json, authored independently and measured ONCE at commit time. Any tuning against the frozen set demotes it to dev status. | frozenFloors measured ONCE 2026-11-03 (150 queries): keyword 0.786/0.721, hybrid+mcp 0.591/0.582, semantic 0.631/0.622. | keyword-only frozen FP ceiling is 0.6 because the row is the UNCALIBRATED contrast: the frozen hard negatives share corpus vocabulary and it serves 54.2% of them — published as exactly why calibration exists (calibrated rows: 0.0%). | bge-small pack measured ONCE on frozen 2026-11-03: 0.853/0.786/0.796.",
   "tolerancePct": 5,
   "floors": {
     "keyword-only": {
@@ -82,6 +82,12 @@
       "mrr": 0.61,
       "ndcg": 0.61,
       "maxFalsePositiveRate": 0.05
+    },
+    "mcp semantic (bge-small-en-v1.5-q8)": {
+      "recall": 0.8,
+      "mrr": 0.76,
+      "ndcg": 0.76,
+      "maxFalsePositiveRate": 0.05
     }
   },
   "frozenFloors": {
@@ -113,6 +119,12 @@
       "recall": 0.6,
       "mrr": 0.59,
       "ndcg": 0.59,
+      "maxFalsePositiveRate": 0.05
+    },
+    "mcp semantic (bge-small-en-v1.5-q8)": {
+      "recall": 0.8,
+      "mrr": 0.74,
+      "ndcg": 0.75,
       "maxFalsePositiveRate": 0.05
     }
   }

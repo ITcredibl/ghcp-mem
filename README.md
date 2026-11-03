@@ -1,30 +1,38 @@
 # 🧠 GHCP-MEM
 
-### Local, auditable context across AI coding sessions and harnesses.
+### The local, governed context runtime for AI coding agents — one auditable memory that Copilot, Claude, Cursor, Cline and Windsurf all share.
 
-> **Native coding agents now have memory. Enterprises still need control over
-> what is retained, what is disclosed, and which evidence supports a handoff.**
-> GHCP-MEM adds a **local, auditable
-> engineering memory** — seeded from your git history in 30 seconds — so every
-> chat starts where the last one ended, and every claim shows its receipts.
+> **Every coding agent now has its own memory. None of them share it, none of
+> them govern it, and none of it is yours.** GHCP-MEM is the layer above the
+> vendors: a **local, auditable engineering memory** — seeded from your git
+> history in 30 seconds — that every agent reads over MCP, where every claim
+> shows its receipts and the engineer (not the model) decides what is
+> retained, disclosed, and trusted.
+>
+> And memory is only half of it. v1.20 makes it a **runtime**: tasks
+> checkpoint under one agent and **resume under another**; lifecycle states
+> confine unmerged decisions to their branch, so parallel agents never
+> inherit speculation; recorded **outcomes** tell the next agent which past
+> decisions actually worked; a committed policy file governs which authors
+> may write each memory scope; and a context compiler assembles the best
+> context for your token budget — with receipts for everything it left out.
 >
 > No cloud memory backend: stored memory, search, and retrieval stay on your
 > machine — secrets and cloud identifiers redacted before they hit disk,
-> optional AES-256-GCM encryption at rest. The one remote step is optional
-> session compression, which sends redacted session data to your existing
-> Copilot model under GitHub's terms (a fully local extractive fallback runs
-> when no model is available — see the
-> [threat model](docs/THREAT_MODEL.md) for the exact data flow).
-> Every stored decision cites the events that produced it. Most
-> "what / why / how" questions route to a millisecond local lookup instead of
-> a fresh Copilot completion — your token budget goes to shipping, not
-> catching up.
+> optional AES-256-GCM encryption at rest (and encrypted, git-backed team
+> sync when you want to share). The one remote step is optional session
+> compression, which sends redacted session data to your existing Copilot
+> model under GitHub's terms (a fully local extractive fallback runs when no
+> model is available — see the [threat model](docs/THREAT_MODEL.md) for the
+> exact data flow). Most "what / why / how" questions route to a millisecond
+> local lookup instead of a fresh completion — your token budget goes to
+> shipping, not catching up.
 
-**Local-first · Copilot chat participant · MCP stdio · Redaction-first**
+**Local-first · Vendor-neutral (stdio MCP: 27 tools, resources, prompts) · Governed (policy · lifecycle · outcomes · attribution) · Redaction-first**
 
 [![VS Code Extension](https://img.shields.io/badge/VS_Code-1.93+-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![GitHub Copilot](https://img.shields.io/badge/GitHub_Copilot-Native-24292e?style=for-the-badge&logo=github&logoColor=white)](https://github.com/features/copilot)
-[![MCP](https://img.shields.io/badge/MCP-2024--11--05-7e3aed?style=for-the-badge)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-2024--11--05_→_2026--07--28-7e3aed?style=for-the-badge)](https://modelcontextprotocol.io/)
 [![Azure-aware](https://img.shields.io/badge/Azure-aware-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](#enterprise--azure)
 
 [![Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/ITcredibl.ghcp-mem?label=marketplace&color=007ACC&style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ITcredibl.ghcp-mem)
@@ -85,7 +93,7 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 ---
 
-## Governed Agent Context (v1.19.0)
+## Governed Agent Context
 
 - **Bounded recall:** `ghcpMem.startupContextTokenBudget` defaults to 1800 estimated tokens. Whole session cards are selected; trust-boundary markers are preserved. Oversized mandatory project rules are retained separately rather than truncated. Estimates use UTF-8 bytes / 4, not a provider-tokenizer guarantee.
 - **Progressive MCP retrieval:** search with `detail: "index"` and `maxTokens`, then fetch selected records with `ghcpMem_get { "ids": ["id-one", "id-two"], "maxTokens": 2400 }`. Search and batched detail include a SHA-256 receipt of the returned result array, omitted count, and measurement provenance. The digest detects changes; it is not a signature or proof of truth.

@@ -238,12 +238,12 @@ sequenceDiagram
     participant CLI as 🖥️ Terminal
     participant MCP as 🔌 mcpServer.js
     participant STORE as 🗂️ ~/.ghcp-mem/<br/>sessions.json
-    CLI->>MCP: initialize (JSON-RPC 2024-11-05)
-    MCP-->>CLI: serverInfo { name: ghcp-mem, version: 1.17.1 }
+    CLI->>MCP: initialize (JSON-RPC, negotiated up to 2026-07-28)
+    MCP-->>CLI: serverInfo { name: ghcp-mem, version: 1.20.0 }
     CLI->>MCP: notifications/initialized
     CLI->>MCP: tools/list
     MCP->>STORE: mtime check (cached)
-    MCP-->>CLI: 23 tools — 14 memory tools plus nine governed task-continuity tools
+    MCP-->>CLI: 27 tools — 14 memory tools, nine governed task-continuity tools, four context-runtime tools (plus memory:// resources and prompts)
 ```
 
 **Quick verification** (POSIX shell, no other client needed):
@@ -251,7 +251,7 @@ sequenceDiagram
 ```bash
 mcp="$(find ~/.vscode/extensions -name 'mcpServer.js' -path '*ghcp-mem*' | head -1)"
 {
-  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"d","version":"1"}}}'
+  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"d","version":"1"}}}'
   echo '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 } | node "$mcp"
@@ -262,7 +262,7 @@ PowerShell equivalent:
 ```powershell
 $mcp = (Get-ChildItem "$env:USERPROFILE\.vscode\extensions\*ghcp-mem*\out\mcpServer.js" | Select-Object -First 1).FullName
 @'
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"d","version":"1"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"d","version":"1"}}}
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
 '@ | node $mcp

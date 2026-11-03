@@ -1191,6 +1191,7 @@
     "test:tasks": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node --test out-test/src/test/taskRuntime.test.js out-test/src/test/taskJournal.test.js out-test/src/test/taskContext.test.js out-test/src/test/taskTools.test.js",
     "bench": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/bench-search.js",
     "bench:real": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/bench-real.js",
+    "bench:longmem": "tsc -p ./tsconfig.test.json && node scripts/bench-longmem.mjs",
     "measure:activation": "npm run bundle:prod && tsc -p ./tsconfig.test.json && node scripts/measure-activation.js",
     "eval:check": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js",
     "eval:gold": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js --gold scripts/eval-gold.json",

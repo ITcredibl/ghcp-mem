@@ -86,6 +86,40 @@ test('MCP initialize advertises resources and prompts capabilities', (t) => {
   });
 });
 
+test('MCP initialize negotiates the protocol version per spec', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghcp-mem-proto-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const responses = serve(
+    [
+      rpc(1, 'initialize', { protocolVersion: '2025-06-18' }),
+      rpc(2, 'initialize', { protocolVersion: '2024-11-05' }),
+      rpc(3, 'initialize', { protocolVersion: '2031-01-01' }),
+      rpc(4, 'initialize'),
+    ],
+    { dir },
+  );
+  // A supported requested revision is echoed back.
+  assert.equal(responses.get(1).result.protocolVersion, '2025-06-18');
+  assert.equal(responses.get(2).result.protocolVersion, '2024-11-05');
+  // Unknown or absent → the server's latest supported revision.
+  assert.equal(responses.get(3).result.protocolVersion, '2026-07-28');
+  assert.equal(responses.get(4).result.protocolVersion, '2026-07-28');
+});
+
+test('MCP tool results carry structured content alongside text', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghcp-mem-structured-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const responses = serve(
+    [rpc(1, 'tools/call', { name: 'ghcpMem_search', arguments: { query: 'auth' } })],
+    { dir, sessions: [mkSession({ summary: 'auth notes' })] },
+  );
+  const result = responses.get(1).result;
+  const fromText = JSON.parse(result.content[0].text);
+  assert.ok(result.structuredContent, 'structuredContent missing');
+  assert.deepEqual(result.structuredContent, fromText, 'both representations must agree');
+  assert.equal(result.structuredContent.count, 1);
+});
+
 test('MCP resources list and read over the live store', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ghcp-mem-res-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

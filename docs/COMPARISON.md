@@ -83,16 +83,16 @@ GHCP-MEM is intentionally narrow: **VS Code + Copilot, zero deps, zero ports, se
 
 ## 🆚 GHCP-MEM ↔ GitHub Copilot Memory (the closest cousin)
 
-As checked on November 2, 2026, [Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) supports repository facts and personal preferences, including VS Code with a local setting. GHCP-MEM differentiates through local storage, explicit redaction, bounded retrieval, and auditable handoffs. Its `githubCompatibleMode` is a legacy 28-day repo-scoped preset, not a mirror of the current service contract.
+As checked on November 3, 2026, [Copilot Memory](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) supports repository facts and personal preferences, including VS Code with a local setting. GHCP-MEM differentiates through local storage, explicit redaction, bounded retrieval, and auditable handoffs. Its `githubCompatibleMode` is a legacy 28-day repo-scoped preset, not a mirror of the current service contract.
 
 | Dimension | **GHCP-MEM v1.20.0** | **GitHub Copilot Memory** (public preview) |
 |---|---|---|
 | **Storage location** | 100% local: VS Code `globalState` + atomic mirror to `~/.ghcp-mem/sessions.json` (mode `0600`) | GitHub cloud, repo-scoped |
-| **Where it works** | VS Code, stdio MCP clients; opt-in Copilot/Claude metadata adapters | VS Code (setting/policy dependent), Copilot CLI, cloud agent, code review and other supported surfaces |
+| **Where it works** | VS Code, stdio MCP clients; opt-in Copilot/Claude metadata adapters | VS Code (setting/policy dependent), Copilot CLI, cloud agent, code review, Agentic Autofix, GitHub Mobile, Slack and Microsoft Teams (as documented November 3, 2026) |
 | **Retention** | 90 days default; legacy preset selects 28 days | Default 90 days; repository facts configurable 7–180 days by administrators; reinforcement resets expiry |
 | **Scope** | Configurable `user` / `workspace` / `repo`; optional headless repository restriction | Repository facts plus user preferences with separate controls |
 | **Trigger** | Active capture: every edit, diagnostic, git op, debug, task, terminal command (debounced, glob-filtered) | Passive inference from PRs / agent sessions / code review actions |
-| **Validation against current code** | ✅ `validateAgainstCodebase` setting drops sessions whose `keyFiles` no longer exist (cached 60s) | ✅ Citations validated against current code before reuse |
+| **Validation against current code** | ✅ `validateAgainstCodebase` drops sessions whose `keyFiles` no longer exist (cached 60s); janitor fact-check flags stale path claims; lifecycle states confine unmerged decisions to their branch | ✅ Citations validated against the current branch before reuse; internal up/down-voting retires outdated memories |
 | **Privacy boundary** | Storage & retrieval stay on the laptop; optional LM compression sends redacted session data to your configured Copilot model (local extractive fallback otherwise); 30-rule dual-pass redactor; `<private>` tag stripping; `.gitignore` auto-guarded | Stays in originating repo on GitHub's infra; standard GitHub data terms |
 | **User control** | All settings exposed in `settings.json`; export/import JSON; delete per session | Pro/Pro+ default on (toggle in personal settings); Enterprise default off (org toggle); repo owners can review + delete memories |
 | **Air-gap / offline / locked-down enterprise machines** | ✅ Local compression mode; no daemon, open port or native dependency. Optional bridges launch short-lived Node processes | ❌ Cloud-hosted; requires service reachability |
@@ -107,6 +107,19 @@ As checked on November 2, 2026, [Copilot Memory](https://docs.github.com/en/copi
 - **Use GitHub Copilot Memory if** you're a Pro user, your code lives on github.com, you mostly work through cloud agents / PR review / the CLI, and you want zero local setup. Memory is shared across everyone on the repo automatically.
 - **Use GHCP-MEM if** you ship from VS Code, you work inside an enterprise / on a locked-down laptop / in an air-gapped environment, you need explicit secret redaction, your codebase is on Azure (not just GitHub), or you want to query memory from non-Copilot AI clients via MCP.
 - **Use both only after checking duplication:** surfaces now overlap. Measure repeated context injection and configure retention and scope explicitly; the legacy compatibility preset does not synchronize native memories.
+
+---
+
+## 🧠 GHCP-MEM ↔ the "memory provider" category (Mem0, Zep, Letta)
+
+A distinct category matured through 2026: hosted/API-first memory layers for agents — [Mem0](https://mem0.ai) (extract-and-retrieve), [Zep](https://www.getzep.com) (Graphiti temporal knowledge graph), [Letta](https://www.letta.com) (self-editing agent memory) — competing on standardized benchmarks (LoCoMo, LongMemEval, BEAM) with published scores. A local newcomer, AgentMemory 2026, markets multi-agent local memory but ships no redaction, encryption, policy or task continuity (checked November 3, 2026).
+
+These are adjacent, not equivalent:
+
+- **They are general conversation-memory services**; GHCP-MEM is an engineering-context runtime: IDE capture with evidence citations, redact-before-persist, lifecycle/branch validity, outcome tracking, task checkpoint/resume, org policy — none of which the providers offer.
+- **They win on hosted neural retrieval** and framework integrations; GHCP-MEM's retrieval is deliberately local (BM25 + RRF + lexical embeddings, neural `vscode.lm` embeddings when available) and gated by its own recall/MRR eval floors rather than hosted benchmarks.
+- **Benchmark honesty:** GHCP-MEM does not publish LoCoMo/LongMemEval scores. `npm run bench:longmem -- --dataset <longmemeval.json>` evaluates the RETRIEVAL layer (recall@k / MRR over answer sessions) against a locally downloaded LongMemEval dataset; that is not an end-to-end QA accuracy number and is not comparable to provider-published scores.
+- **Pick a provider if** you are building a product that needs hosted, cross-device conversational memory with SDKs. **Pick GHCP-MEM if** the memory is about your codebase, must stay on your machines, and needs governance an auditor can read.
 
 ---
 
@@ -144,7 +157,14 @@ As checked on November 2, 2026, [Copilot Memory](https://docs.github.com/en/copi
 | Health score alerting | ✅ (0–100, configurable threshold notification) | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Auto-gitignore injected files | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Async non-blocking index rebuild | ✅ (chunked `setImmediate`) | ❌ | n/a | ❌ | ❌ | n/a |
-| Formal test suite | ✅ (655 `node:test` cases + synthetic and curated eval gates + bench + CI matrix ubuntu×windows) | ✅ (vitest) | 🟡 | 🟡 | ✅ (231 tests, historical snapshot) | Not independently audited in this refresh |
+| Memory lifecycle states + branch-confined validity | ✅ (8 states, enforced transitions; sub-`merged` memories never leak across branches) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Decision outcome tracking ("did it work") | ✅ (append-only, attributed, regression-aware ranking) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Attributed authorship + agent-private scope | ✅ (`kind:name` authors; agent-scoped rows served only to their author) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Committed org memory policy | ✅ (`.github/memory/policy.json`, fail-closed on the MCP write surface) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Budgeted context compiler with omission receipts | ✅ (`ghcpMem_compile`) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| MCP resources + prompts (not just tools) | ✅ (`memory://` resources, 4 prompts; protocol negotiation 2024-11-05 → 2026-07-28; structured tool outputs) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Encrypted at rest (user-held key) | ✅ (AES-256-GCM, keychain or passphrase; encrypted team-sync bundles) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Formal test suite | ✅ (732 `node:test` cases + synthetic and curated eval gates + bench + CI matrix ubuntu×windows) | ✅ (vitest) | 🟡 | 🟡 | ✅ (231 tests, historical snapshot) | Not independently audited in this refresh |
 
 </details>
 
@@ -206,6 +226,6 @@ Remaining research-level items:
 
 [← Back to README](../README.md) · [Live demo](DEMO.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Comparison for GHCP-MEM v1.20.0** · first-party claims refreshed November 2, 2026; other historical competitor cells require re-verification</sub>
+<sub>**Comparison for GHCP-MEM v1.20.0** · first-party claims refreshed November 3, 2026; other historical competitor cells require re-verification</sub>
 
 </div>

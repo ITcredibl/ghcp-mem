@@ -334,7 +334,7 @@ Terminal (from the repo root):
 npm test
 ```
 
-You should see **730 tests pass**, including encrypted MCP writes, malformed deletes, bounded retrieval, checkpoint integrity/expiry, metadata-only adapters, matched-run accounting, durable task journals, process races, interruption recovery, scoped resume, verifier policy and owner purge.
+You should see **732 tests pass**, including encrypted MCP writes, malformed deletes, bounded retrieval, checkpoint integrity/expiry, metadata-only adapters, matched-run accounting, durable task journals, process races, interruption recovery, scoped resume, verifier policy and owner purge.
 
 For the task-continuity demo, run `npm run test:tasks`. The scripted workflow starts a shared task under a Copilot-labelled principal, resumes under a Claude-labelled principal, rejects client-supplied privileges, requires an authorized verifier to complete, and checks the public MCP context excludes unrelated repository/branch history. Separate scenarios exercise process interruption and competing writers. These are deterministic protocol tests, not live model demonstrations. Launcher configuration and limitations are documented in the README's Durable Task Continuity section.
 
@@ -378,6 +378,6 @@ Plus the CI pipeline runs three additional gates: `npm run lint` → `npm test` 
 
 [← Back to README](../README.md) · [Competitive analysis](COMPARISON.md) · [Report an issue](https://github.com/ITcredibl/ghcp-mem/issues)
 
-<sub>**Demo script for GHCP-MEM v1.20.0** · 730 tests · zero native deps · zero ports · CI ubuntu × windows × node 20 · Prettier-gated</sub>
+<sub>**Demo script for GHCP-MEM v1.20.0** · 732 tests · zero native deps · zero ports · CI ubuntu × windows × node 20 · Prettier-gated</sub>
 
 </div>

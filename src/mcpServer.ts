@@ -83,7 +83,27 @@ import {
   serializeDb,
 } from './storageCrypto';
 
-const PROTOCOL_VERSION = '2024-11-05';
+/**
+ * MCP protocol revisions this server implements, newest first (v1.20.0 —
+ * previously pinned to 2024-11-05). Everything this server uses (initialize,
+ * tools, resources, prompts over stdio JSON-RPC) is stable core across all of
+ * these revisions; we never used sampling (deprecated in 2026-07-28).
+ * Negotiation per spec: echo the client's requested revision when supported,
+ * otherwise answer with our latest and let the client decide.
+ */
+const SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [
+  '2026-07-28',
+  '2025-11-25',
+  '2025-06-18',
+  '2025-03-26',
+  '2024-11-05',
+];
+
+export function negotiateProtocolVersion(requested: unknown): string {
+  return typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+    ? requested
+    : SUPPORTED_PROTOCOL_VERSIONS[0];
+}
 const SERVER_NAME = 'ghcp-mem';
 // MCP write tools (store/delete/correct/retract/supersede) are OFF by default
 // (v1.10.2). External clients (Cursor, Cline, Claude Desktop) that spawn the
@@ -814,8 +834,17 @@ async function saveDatabase(db: StoredDatabase): Promise<void> {
   dbCache = undefined;
 }
 
+/**
+ * Tool result with BOTH representations (MCP structured tool outputs,
+ * 2025-06-18+): `structuredContent` for clients that parse it, plus the
+ * serialized text block for back-compat. structuredContent must be an object,
+ * so bare arrays are wrapped as { results }.
+ */
 function textContent(obj: unknown): any {
-  return { content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }],
+    structuredContent: Array.isArray(obj) ? { results: obj } : obj,
+  };
 }
 
 function sessionDetail(session: StoredSession, scope?: string, commit?: string): unknown {
@@ -1532,7 +1561,7 @@ async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse | undefine
           jsonrpc: '2.0',
           id,
           result: {
-            protocolVersion: PROTOCOL_VERSION,
+            protocolVersion: negotiateProtocolVersion(req.params?.protocolVersion),
             serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
             capabilities: { tools: {}, resources: {}, prompts: {} },
           },

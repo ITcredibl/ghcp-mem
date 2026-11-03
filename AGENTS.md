@@ -14,6 +14,7 @@ npm run lint           # ESLint
 npm run typecheck      # type-check only
 npm run bundle:prod    # esbuild production bundle (CI gate)
 npm run verify         # full local gate chain (format, lint, types, tests, release consistency, eval, bench, bundle)
+npm run bench:longmem  # LongMemEval retrieval-layer adapter (needs a locally downloaded dataset; reports recall@k/MRR, NOT end-to-end QA accuracy)
 ```
 
 Press `F5` in VS Code to launch the Extension Development Host.

@@ -77,7 +77,7 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 **Why it's worth your trust:**
 
-- **730 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **732 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Documented, versioned engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -98,7 +98,7 @@ Build the executables with `npm run bundle:prod`. To persist a checkpoint explic
 
 ### Durable Task Continuity (v1.19.0)
 
-The MCP server now offers 27 tools: the existing memory surface, nine task tools, and the v1.20.0 runtime tools (`ghcpMem_compile`, `ghcpMem_knowledge_graph`, `ghcpMem_set_lifecycle`, `ghcpMem_record_outcome`), plus `memory://` resources and ready-made prompts (`resume-task`, `memory-review`, `architecture-recall`, `incident-context`). These APIs are separate from the portable `ghcp-mem-agent checkpoint` snapshots above. Tasks persist goals, plans, blockers, decisions, modified paths and acceptance criteria; expiring a checkpoint does not delete the task.
+The MCP server now offers 27 tools: the existing memory surface, nine task tools, and the v1.20.0 runtime tools (`ghcpMem_compile`, `ghcpMem_knowledge_graph`, `ghcpMem_set_lifecycle`, `ghcpMem_record_outcome`), plus `memory://` resources and ready-made prompts (`resume-task`, `memory-review`, `architecture-recall`, `incident-context`). It negotiates MCP protocol revisions `2024-11-05` through `2026-07-28` and returns structured tool outputs (`structuredContent`) alongside the text blocks. These APIs are separate from the portable `ghcp-mem-agent checkpoint` snapshots above. Tasks persist goals, plans, blockers, decisions, modified paths and acceptance criteria; expiring a checkpoint does not delete the task.
 
 ### Agent Context Runtime (v1.20.0)
 
@@ -113,6 +113,7 @@ Memory alone is not continuity. v1.20.0 adds the runtime layer around it — all
 - **Encrypted team sync (optional, git-backed)** — AES-256-GCM bundles under `.github/memory/sync/` that your team commits and pulls like any file; `user`/`task`/`agent`-scoped and retracted memories never leave the machine. No SaaS backend.
 - **Skills from experience** — `GHCP-MEM: Export Learned Skills` renders procedural lessons into `.github/skills/ghcp-mem.skills.md` with citations and confidence. GHCP-MEM generates skill definitions; it never executes them.
 - **Effectiveness report** — `GHCP-MEM: Show Memory Effectiveness Report` measures what the store can evidence (outcome coverage, accept/reject reinforcement, grounding, lifecycle hygiene) and states plainly that store-side signals do not prove live-model gains.
+- **LongMemEval retrieval harness** — `npm run bench:longmem -- --dataset <longmemeval.json>` evaluates GHCP-MEM's retrieval layer (recall@k / MRR over answer sessions) against a locally downloaded [LongMemEval](https://github.com/xiaowu0162/LongMemEval) dataset. Deliberately labeled: it is not an end-to-end QA accuracy score and must not be compared against published LongMemEval numbers.
 
 | Tool | Purpose |
 |---|---|

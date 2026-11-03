@@ -22,13 +22,16 @@ Agent Context Runtime release: the remaining items from the independent strategy
 - Optional encrypted team sync: AES-256-GCM bundles (scrypt passphrase, salt in the envelope) written to the committed `.github/memory/sync/` directory and imported additively with id/contentHash dedup. `user`/`task`/`agent`-scoped and retracted memories never leave the machine; no SaaS backend, git remains the transport.
 - Skill generation: procedural lessons render into `.github/skills/ghcp-mem.skills.md` with learned-from citations and confidence. Generated and git-ignored by default, listed in `GENERATED_MEMORY_FILES` (capture-excluded) and integrity-scanned; GHCP-MEM never executes skills.
 - Memory effectiveness report: outcome coverage, accept/reject reinforcement, evidence grounding and lifecycle distribution — with an explicit statement that store-side signals do not establish live-model gains.
+- MCP protocol currency: the stdio server now negotiates protocol revisions `2024-11-05` through `2026-07-28` (echoing a supported requested revision, answering with its latest otherwise) and returns structured tool outputs (`structuredContent`) alongside the serialized text blocks. Sampling was never used, so its 2026-07-28 deprecation does not affect this server.
+- LongMemEval retrieval adapter (`npm run bench:longmem`): ingests a locally downloaded LongMemEval dataset (not vendored) and reports retrieval-layer recall@k / MRR over answer sessions, explicitly labeled as not comparable to published end-to-end QA scores.
+- Comparison refresh (November 3, 2026): Copilot Memory surface/retention/voting facts re-verified against current docs; a new section positions GHCP-MEM against the matured "memory provider" category (Mem0, Zep, Letta) and local newcomers; the feature matrix gains the v1.20.0 governance rows.
 
 ### Changed
 - MCP reads filter agent-scoped memories by the caller's launcher identity; write tools operate on the unfiltered store so a scoped read can never clobber other rows on save.
 - `ghcpMem_store` accepts optional `scopeLevel`/`lifecycle` stamps; author identity comes exclusively from the launcher env, never tool arguments.
 
 ### Verification
-- 730 automated tests (75 new), including end-to-end spawned-server checks for resources, prompts, the compiler, graph traversal, lifecycle/outcome persistence, agent-scope privacy and fail-closed policy enforcement. No native dependencies, no open ports.
+- 732 automated tests (77 new), including end-to-end spawned-server checks for resources, prompts, the compiler, graph traversal, lifecycle/outcome persistence, agent-scope privacy and fail-closed policy enforcement. No native dependencies, no open ports.
 
 ---
 

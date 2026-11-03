@@ -19,6 +19,7 @@
 import { estimatedContextTokens } from './contextBudget';
 import { lifecycleWeight, isBranchValid } from './lifecycle';
 import { latestOutcomes, outcomeAdjustment } from './outcomes';
+import { originTrust } from './teamSync';
 import { Lesson, rankLessons } from './lessons';
 import { CompressedSession } from './types';
 
@@ -81,9 +82,17 @@ function renderSessionBlock(session: CompressedSession): string {
   return lines.join('\n');
 }
 
-function sessionPriority(session: CompressedSession, retrievalRank: number): number {
+/**
+ * Priority of one session inside the compiled block. Retrieval rank dominates
+ * on purpose: origin trust and lifecycle weight are tiebreakers at the margin,
+ * never license to outrank a clearly more relevant hit. Only a regressed
+ * outcome demotes as a class (see the sort below).
+ */
+export function sessionPriority(session: CompressedSession, retrievalRank: number): number {
   const base = 1 / (1 + retrievalRank);
-  return base * lifecycleWeight(session.lifecycle) + outcomeAdjustment(session);
+  return (
+    base * lifecycleWeight(session.lifecycle) * originTrust(session) + outcomeAdjustment(session)
+  );
 }
 
 /** Compile a bounded context block from pre-retrieved material. */

@@ -72,6 +72,7 @@ import { isLifecycleState, LIFECYCLE_STATES, transitionLifecycle } from './lifec
 import { filterByScope, normalizeScopeStamp, parseAuthor, SCOPE_LEVELS } from './memoryScope';
 import { OUTCOME_STATUSES, recordOutcome } from './outcomes';
 import { defaultPolicy, evaluateWrite, parsePolicy } from './orgPolicy';
+import { originTrust } from './teamSync';
 import { budgetResults } from './contextBudget';
 import { cosineSim, localEmbed } from './embeddings';
 import { createCheckpoint, verifyCheckpoint } from './agentCheckpoint';
@@ -358,7 +359,8 @@ function searchSessions(
       embeddingRank: eRank?.get(s.id),
       workspaceMatch: !!filters.workspaceId && s.workspaceId === filters.workspaceId,
       matchRatio: termCount > 0 ? matched / termCount : 0,
-      confidence: effectiveConfidence(s) ?? 0.5,
+      // Team-shared rows rank discounted until locally corroborated.
+      confidence: (effectiveConfidence(s) ?? 0.5) * originTrust(s),
       retrieved: s.usage?.retrieved ?? 0,
       accepted: s.usage?.accepted ?? 0,
       rejected: s.usage?.rejected ?? 0,
@@ -411,6 +413,7 @@ function summarizeForMcp(s: StoredSession): any {
     keyTopics: s.keyTopics.slice(0, 8),
     decisions: s.decisions.slice(0, 5),
     decisionGrounding: decisionGrounding(s).slice(0, 5),
+    ...(s.origin ? { origin: s.origin, originTrust: originTrust(s) } : {}),
     problemsSolved: s.problemsSolved.slice(0, 5),
     tags: s.userTags,
     azure: s.azureContext

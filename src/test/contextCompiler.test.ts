@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compileContext } from '../contextCompiler';
+import { compileContext, sessionPriority } from '../contextCompiler';
 import { recordOutcome } from '../outcomes';
 import { Lesson } from '../lessons';
 import { CompressedSession } from '../types';
@@ -104,6 +104,18 @@ test('contextCompiler: regressed outcomes sink a session below a clean one', () 
   });
   const order = compiled.plan.filter((item) => item.kind === 'session').map((item) => item.id);
   assert.deepEqual(order, ['good', 'bad']);
+});
+
+test('contextCompiler: origin trust discounts team memory at equal relevance, never above it', () => {
+  const team = mkSession({ id: 'team', summary: 'checkout retry notes A', origin: 'team' });
+  const local = mkSession({ id: 'local', summary: 'checkout retry notes B' });
+  // At EQUAL retrieval rank the uncorroborated team row loses…
+  assert.ok(sessionPriority(local, 0) > sessionPriority(team, 0));
+  // …and the discount is exactly the documented 0.75 origin factor.
+  assert.equal(sessionPriority(team, 0), sessionPriority(local, 0) * 0.75);
+  // But a clearly better retrieval hit still wins regardless of origin —
+  // relevance dominates, trust is the tiebreaker.
+  assert.ok(sessionPriority(team, 0) > sessionPriority(local, 1));
 });
 
 test('contextCompiler: lessons render and outcomes appear in session blocks', () => {

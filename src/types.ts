@@ -360,6 +360,14 @@ export interface CompressedSession {
   author?: string;
   /** Observed real-world results of this session's decisions (v1.20.0). */
   outcomes?: MemoryOutcome[];
+  /**
+   * Where this memory entered THIS machine's store (v1.21.0). Absent = locally
+   * captured/verified on this machine. 'team' = ingested from a git-backed
+   * sync bundle or clear chunk — validated by a teammate, not yet corroborated
+   * by local diagnostics, so ranking applies an origin trust discount until
+   * local signals (outcomes, acceptance) speak.
+   */
+  origin?: 'team';
 }
 
 export interface ContextDatabase {

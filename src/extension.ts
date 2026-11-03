@@ -58,7 +58,15 @@ import { canTransition, defaultLifecycleForBranch, LIFECYCLE_STATES } from './li
 import { authorFromHumanName } from './memoryScope';
 import { OUTCOME_STATUSES, recordOutcome } from './outcomes';
 import { renderSkillsFile, SKILLS_FILE } from './skillGen';
-import { bundleFileName, exportBundle, importBundle, SYNC_DIR } from './teamSync';
+import {
+  bundleFileName,
+  CLEAR_SYNC_DIR,
+  exportBundle,
+  exportClearChunks,
+  importBundle,
+  importClearChunks,
+  SYNC_DIR,
+} from './teamSync';
 import { evaluateMemoryEffectiveness, formatAgentEvalReport } from './agentEval';
 import { factCheckSweep, formatFactCheckReport } from './factCheck';
 import { parsePolicy, POLICY_FILE } from './orgPolicy';
@@ -1391,6 +1399,38 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('GHCP-MEM: open a workspace folder to export a bundle.');
         return;
       }
+      const SEALED = 'Sealed (encrypted bundle — repo readers see ciphertext)';
+      const CLEAR = 'Clear (per-memory JSON chunks — PR-reviewable PLAINTEXT in git)';
+      const mode = await vscode.window.showQuickPick([SEALED, CLEAR], {
+        placeHolder: 'Sync mode — sealed is the privacy default',
+      });
+      if (!mode) return;
+      const scope = await getRepoScope();
+      if (mode === CLEAR) {
+        const ANON = 'Anonymize authors (opaque per-author alias)';
+        const ATTR = 'Keep attributed authors';
+        const authorChoice = await vscode.window.showQuickPick([ATTR, ANON], {
+          placeHolder: 'Clear chunks are plaintext — choose author handling',
+        });
+        if (!authorChoice) return;
+        const chunks = exportClearChunks({
+          sessions: store.getAllSessions(),
+          scopeLabel: scope.label,
+          anonymizeAuthors: authorChoice === ANON,
+        });
+        const dir = vscode.Uri.joinPath(ws.uri, ...CLEAR_SYNC_DIR.split('/'));
+        await vscode.workspace.fs.createDirectory(dir);
+        for (const chunk of chunks) {
+          await vscode.workspace.fs.writeFile(
+            vscode.Uri.joinPath(dir, chunk.fileName),
+            Buffer.from(chunk.content, 'utf-8'),
+          );
+        }
+        vscode.window.showInformationMessage(
+          `GHCP-MEM: ${chunks.length} clear chunk(s) written to ${CLEAR_SYNC_DIR} (re-scrubbed, paths sanitized). They are PLAINTEXT — review the diff before committing. user/task/agent-scoped and retracted memories are never included.`,
+        );
+        return;
+      }
       const passphrase = await vscode.window.showInputBox({
         prompt:
           'Team sync passphrase (min 8 chars). Share it with your team out-of-band — it never leaves this machine.',
@@ -1399,7 +1439,6 @@ export async function activate(context: vscode.ExtensionContext) {
         validateInput: (v) => (v.length >= 8 ? undefined : 'At least 8 characters'),
       });
       if (!passphrase) return;
-      const scope = await getRepoScope();
       const bundle = exportBundle(
         { sessions: store.getAllSessions(), lessons: store.getLessons(), scopeLabel: scope.label },
         passphrase,
@@ -1415,19 +1454,59 @@ export async function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('ghcpMem.teamSyncImport', async () => {
       const ws = vscode.workspace.workspaceFolders?.[0];
-      const picked = await vscode.window.showOpenDialog({
-        canSelectMany: false,
-        filters: { 'GHCP-MEM sync bundle': ['ghcpmem'] },
-        defaultUri: ws ? vscode.Uri.joinPath(ws.uri, ...SYNC_DIR.split('/')) : undefined,
+      const SEALED = 'Sealed bundle (.ghcpmem, needs the passphrase)';
+      const CLEAR = `Clear chunks (${CLEAR_SYNC_DIR}/mem_*.json)`;
+      const mode = await vscode.window.showQuickPick([SEALED, CLEAR], {
+        placeHolder: 'What are you importing?',
       });
-      if (!picked?.[0]) return;
-      const passphrase = await vscode.window.showInputBox({
-        prompt: 'Passphrase for this sync bundle',
-        password: true,
-        ignoreFocusOut: true,
-      });
-      if (!passphrase) return;
+      if (!mode) return;
       try {
+        if (mode === CLEAR) {
+          if (!ws) {
+            vscode.window.showWarningMessage('GHCP-MEM: open a workspace folder to import.');
+            return;
+          }
+          const dir = vscode.Uri.joinPath(ws.uri, ...CLEAR_SYNC_DIR.split('/'));
+          let names: [string, vscode.FileType][] = [];
+          try {
+            names = await vscode.workspace.fs.readDirectory(dir);
+          } catch {
+            vscode.window.showInformationMessage(
+              `GHCP-MEM: no ${CLEAR_SYNC_DIR} directory in this workspace — pull your team's branch first.`,
+            );
+            return;
+          }
+          const raws: string[] = [];
+          for (const [name, type] of names) {
+            if (type === vscode.FileType.File && /^mem_[a-f0-9]+\.json$/.test(name)) {
+              raws.push(
+                Buffer.from(
+                  await vscode.workspace.fs.readFile(vscode.Uri.joinPath(dir, name)),
+                ).toString('utf-8'),
+              );
+            }
+          }
+          const result = importClearChunks(raws, { sessions: store.getAllSessions() });
+          for (const session of result.added) await store.addSession(session);
+          tree.refresh();
+          updateStatusBar();
+          vscode.window.showInformationMessage(
+            `GHCP-MEM: imported ${result.added.length} clear chunk(s) as team-origin memories (${result.skippedDuplicates} duplicate(s) skipped${result.invalid ? `, ${result.invalid} invalid file(s) ignored` : ''}). Team memories rank discounted until you /accept them or record an improved outcome.`,
+          );
+          return;
+        }
+        const picked = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          filters: { 'GHCP-MEM sync bundle': ['ghcpmem'] },
+          defaultUri: ws ? vscode.Uri.joinPath(ws.uri, ...SYNC_DIR.split('/')) : undefined,
+        });
+        if (!picked?.[0]) return;
+        const passphrase = await vscode.window.showInputBox({
+          prompt: 'Passphrase for this sync bundle',
+          password: true,
+          ignoreFocusOut: true,
+        });
+        if (!passphrase) return;
         const raw = Buffer.from(await vscode.workspace.fs.readFile(picked[0])).toString('utf-8');
         const result = importBundle(raw, passphrase, {
           sessions: store.getAllSessions(),
@@ -1439,7 +1518,7 @@ export async function activate(context: vscode.ExtensionContext) {
         tree.refresh();
         updateStatusBar();
         vscode.window.showInformationMessage(
-          `GHCP-MEM: imported ${result.added.length} session(s) and ${result.lessonsAdded.length} lesson(s) from "${result.scopeLabel}" (${result.skippedDuplicates} duplicate(s) skipped).`,
+          `GHCP-MEM: imported ${result.added.length} session(s) and ${result.lessonsAdded.length} lesson(s) from "${result.scopeLabel}" (${result.skippedDuplicates} duplicate(s) skipped). Team memories rank discounted until locally corroborated.`,
         );
       } catch (err) {
         vscode.window.showErrorMessage(

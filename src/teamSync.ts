@@ -1,19 +1,29 @@
 /**
- * Optional encrypted team sync (v1.20.0) — git-backed, local-first.
+ * Optional git-backed team sync (v1.20.0, clear chunks + origin trust v1.21.0).
  *
- * A sync bundle is an AES-256-GCM envelope (passphrase-derived key; the scrypt
- * salt travels in the envelope header) around shareable sessions + lessons.
- * Bundles are plain files the team commits to a repository of their choosing —
- * GHCP-MEM never opens a socket and never requires a SaaS backend; git is the
- * transport the team already trusts.
+ * Two modes, both local-first, both using git as the only transport:
  *
- * Shareability is conservative: `user`, `task` and `agent` scoped memories
- * never leave the machine, and retracted sessions are excluded. Import is
- * additive and idempotent (dedup by id and contentHash); it never overwrites
- * a local session.
+ *  - SEALED (default): one AES-256-GCM envelope per export (passphrase-derived
+ *    key; the scrypt salt travels in the envelope header). Repo readers
+ *    without the passphrase see ciphertext.
+ *  - CLEAR: one immutable JSON chunk per memory, named by content hash
+ *    (`mem_<hash>.json`), so team memory becomes PR-reviewable and branch
+ *    merges are pure file unions. Clear chunks pass an export-time redaction
+ *    gateway (secret scrub + absolute-path sanitization, defense-in-depth on
+ *    top of capture-time redaction) and can optionally anonymize authors.
+ *
+ * Shareability is conservative in both modes: `user`, `task` and `agent`
+ * scoped memories never leave the machine, and retracted sessions are
+ * excluded. Import is additive and idempotent (dedup by id and contentHash),
+ * never overwrites a local session, and stamps `origin: 'team'` so ranking
+ * can discount teammate-validated memory until local signals corroborate it.
+ * Hydration is an EXPLICIT command on purpose — silently ingesting files from
+ * a freshly pulled repository would hand memory-poisoning to anyone who can
+ * open a pull request.
  *
  * Pure module — no vscode imports; callers do the file I/O.
  */
+import { createHash } from 'crypto';
 import {
   deriveKeyFromPassphrase,
   deserializeDb,
@@ -21,6 +31,7 @@ import {
   isEncryptedEnvelope,
   serializeDb,
 } from './storageCrypto';
+import { redact } from './redactor';
 import { Lesson } from './lessons';
 import { CompressedSession } from './types';
 
@@ -116,7 +127,7 @@ export function importBundle(
       skippedDuplicates++;
       continue;
     }
-    added.push({ ...session, importedAt: Date.now() });
+    added.push({ ...session, importedAt: Date.now(), origin: 'team' });
   }
   const knownLessonIds = new Set((existing.lessons ?? []).map((lesson) => lesson.id));
   const lessonsAdded = (bundle.lessons ?? []).filter((lesson) => !knownLessonIds.has(lesson.id));
@@ -134,4 +145,155 @@ function extractSalt(raw: string): Buffer {
   if (typeof header.salt !== 'string' || !/^[a-f0-9]{16,128}$/i.test(header.salt))
     throw new Error('Sync bundle is missing its key-derivation salt');
   return Buffer.from(header.salt, 'hex');
+}
+
+// ── Clear mode: PR-reviewable, per-memory immutable chunks (v1.21.0) ────────
+
+/** Clear chunks live beside the sealed bundles, in their own subdirectory. */
+export const CLEAR_SYNC_DIR = `${SYNC_DIR}/clear`;
+const CHUNK_KIND = 'ghcp-mem-sync-chunk';
+
+export interface ClearChunk {
+  kind: typeof CHUNK_KIND;
+  version: 1;
+  exportedAt: number;
+  scopeLabel: string;
+  session: CompressedSession;
+}
+
+const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:\\|\/(?:Users|home|root|var|tmp|private)\/)[^\s"'`)\]},;]*/g;
+
+/**
+ * Export-time redaction gateway (defense-in-depth on top of capture-time
+ * redaction): re-scrub secrets and strip machine-identifying absolute paths
+ * from every text surface that will land in git as plaintext.
+ */
+export function scrubForClearExport(
+  session: CompressedSession,
+  options: { anonymizeAuthors?: boolean } = {},
+): CompressedSession {
+  const clean = (text: string): string =>
+    redact(text, {
+      redactSecrets: true,
+      honorPrivateTags: true,
+      detectHighEntropy: true,
+    }).text.replace(ABSOLUTE_PATH_RE, '<REDACTED_PATH>');
+  const scrubbed: CompressedSession = {
+    ...session,
+    summary: clean(session.summary),
+    keyFiles: session.keyFiles.map(clean),
+    keyTopics: session.keyTopics.map(clean),
+    decisions: session.decisions.map(clean),
+    problemsSolved: session.problemsSolved.map(clean),
+    userTags: session.userTags.map(clean),
+    retractedReason: session.retractedReason ? clean(session.retractedReason) : undefined,
+    // Raw embeddings are machine-local derivatives — never useful to teammates
+    // and needless bulk in a reviewed diff.
+    embedding: undefined,
+  };
+  if (options.anonymizeAuthors && scrubbed.author) {
+    // Deterministic opaque alias: teammates can still correlate one author's
+    // memories without learning who they are.
+    const alias = createHash('sha256').update(scrubbed.author).digest('hex').slice(0, 8);
+    scrubbed.author = `human:anon-${alias}`;
+    if (scrubbed.outcomes)
+      scrubbed.outcomes = scrubbed.outcomes.map((outcome) =>
+        outcome.reportedBy
+          ? {
+              ...outcome,
+              reportedBy: `human:anon-${createHash('sha256').update(outcome.reportedBy).digest('hex').slice(0, 8)}`,
+            }
+          : outcome,
+      );
+  }
+  return scrubbed;
+}
+
+export function chunkFileName(session: Pick<CompressedSession, 'id' | 'contentHash'>): string {
+  const hash =
+    session.contentHash ?? createHash('sha256').update(session.id).digest('hex').slice(0, 16);
+  return `mem_${hash.slice(0, 16)}.json`;
+}
+
+/**
+ * Render shareable sessions as individual clear chunks. Returns the files to
+ * write: merging branches that both exported is a non-destructive file union,
+ * and identical content always produces the identical file name.
+ */
+export function exportClearChunks(
+  input: {
+    sessions: readonly CompressedSession[];
+    scopeLabel: string;
+    anonymizeAuthors?: boolean;
+  },
+  now = Date.now(),
+): { fileName: string; content: string }[] {
+  return shareableSessions(input.sessions).map((session) => {
+    const scrubbed = scrubForClearExport(session, { anonymizeAuthors: input.anonymizeAuthors });
+    const chunk: ClearChunk = {
+      kind: CHUNK_KIND,
+      version: 1,
+      exportedAt: now,
+      scopeLabel: input.scopeLabel.slice(0, 200),
+      session: scrubbed,
+    };
+    return { fileName: chunkFileName(scrubbed), content: JSON.stringify(chunk, null, 2) + '\n' };
+  });
+}
+
+/** Parse and merge a set of clear chunks against the existing store. */
+export function importClearChunks(
+  rawChunks: readonly string[],
+  existing: { sessions: readonly CompressedSession[] },
+): { added: CompressedSession[]; skippedDuplicates: number; invalid: number } {
+  const knownIds = new Set(existing.sessions.map((session) => session.id));
+  const knownHashes = new Set(
+    existing.sessions.flatMap((session) => (session.contentHash ? [session.contentHash] : [])),
+  );
+  const added: CompressedSession[] = [];
+  let skippedDuplicates = 0;
+  let invalid = 0;
+  for (const raw of rawChunks) {
+    let chunk: ClearChunk;
+    try {
+      chunk = JSON.parse(raw) as ClearChunk;
+    } catch {
+      invalid++;
+      continue;
+    }
+    if (chunk.kind !== CHUNK_KIND || chunk.version !== 1 || !chunk.session?.id) {
+      invalid++;
+      continue;
+    }
+    const [session] = shareableSessions([chunk.session]);
+    if (!session) {
+      invalid++;
+      continue;
+    }
+    if (knownIds.has(session.id) || (session.contentHash && knownHashes.has(session.contentHash))) {
+      skippedDuplicates++;
+      continue;
+    }
+    knownIds.add(session.id);
+    if (session.contentHash) knownHashes.add(session.contentHash);
+    added.push({ ...session, importedAt: Date.now(), origin: 'team' });
+  }
+  return { added, skippedDuplicates, invalid };
+}
+
+// ── Origin trust (v1.21.0) ──────────────────────────────────────────────────
+
+/**
+ * Trust multiplier by where a memory entered this machine. Team-shared rows
+ * start discounted (a teammate validated them, this machine has not) and earn
+ * the discount back through LOCAL corroboration: an explicit /accept or a
+ * recorded improved outcome restores full weight.
+ */
+export function originTrust(
+  session: Pick<CompressedSession, 'origin' | 'usage' | 'outcomes'>,
+): number {
+  if (session.origin !== 'team') return 1;
+  const locallyAccepted = (session.usage?.accepted ?? 0) > 0;
+  const locallyImproved = (session.outcomes ?? []).some((outcome) => outcome.status === 'improved');
+  return locallyAccepted || locallyImproved ? 1 : 0.75;
 }

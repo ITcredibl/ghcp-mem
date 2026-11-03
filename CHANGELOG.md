@@ -6,6 +6,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.21.0] — 2026-11-03
+
+Team-sync maturity release: PR-reviewable clear mode and origin-based trust, closing the remaining gaps from the git-backed team-sync specification.
+
+### Added
+- Clear sync mode: alongside the sealed (AES-256-GCM) bundles, `Export Encrypted Team Sync Bundle…` can now write one immutable JSON chunk per memory (`.github/memory/sync/clear/mem_<contentHash>.json`). Team memory becomes reviewable in pull requests, and branch merges are pure file unions — no JSON merge conflicts by construction. The command states plainly that clear chunks are PLAINTEXT in git.
+- Export-time redaction gateway for clear chunks (defense-in-depth on top of capture-time redaction): full secret/PII re-scrub, absolute-path sanitization (`/Users/...`, `C:\...` → `<REDACTED_PATH>`), machine-local embeddings stripped, and an optional deterministic author anonymization (`human:anon-<hash8>`, applied to outcome reporters too) for teams with naming-privacy policies.
+- Origin-based trust: every synced memory is stamped `origin: 'team'` on import (both modes) and ranks with a 0.75 trust multiplier — in MCP fusion and in compiled context — until LOCAL corroboration (an explicit `/accept` or a recorded improved outcome) restores full weight. Relevance still dominates: origin trust is a tiebreaker at equal retrieval rank, never license to bury a clearly better hit. Search results surface `origin` and the live `originTrust` value.
+- Clear-chunk import in `Import Encrypted Team Sync Bundle…`: scans the clear directory, unions and dedups by id/contentHash, counts invalid files, and refuses non-shareable scopes. Hydration stays an EXPLICIT command by design — silently ingesting files from a freshly pulled repository would hand memory-poisoning to anyone who can open a pull request.
+
+### Verification
+- 744 automated tests (6 new: clear-chunk scrub/anonymization/round-trip/rejection, sealed-import origin stamping, origin-trust semantics incl. the relevance-dominates guarantee). Full verify chain green; both eval corpora remain at 1.000 on every configuration.
+
+---
+
 ## [1.20.1] — 2026-11-03
 
 Retrieval-trust release, responding to an independent engineering review of v1.20.0 (rated 7/10). Its two confirmed weaknesses — retrieval that returns confident nonsense instead of abstaining, and citation conflated with factual validation — are fixed; its reproduced metrics are now regression-gated.

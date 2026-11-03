@@ -6,6 +6,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.20.1] — 2026-11-03
+
+Retrieval-trust release, responding to an independent engineering review of v1.20.0 (rated 7/10). Its two confirmed weaknesses — retrieval that returns confident nonsense instead of abstaining, and citation conflated with factual validation — are fixed; its reproduced metrics are now regression-gated.
+
+### Fixed
+- Retrieval abstention: a query whose terms match nothing in the store now returns zero results with an explicit machine-readable `no_confident_match` receipt, instead of recency-ranked unrelated sessions (the review's "dinosaur fossils" probe is a committed regression test). Empty queries keep their browse-by-recency semantics.
+- Compound-token retrieval: hyphenated/underscored identifiers (`reciprocal-rank-fusion`, `snake_case`) now also index their parts, so natural-language queries reach them. This single fix took BOTH eval corpora to recall@5 = MRR = nDCG@5 = 1.000 on every configuration — including the two gold queries that previously returned nothing and the two where hybrid ranked the exact match second (the review's keyword-beats-hybrid finding). Eval floors are raised to 0.95 across all six configuration×corpus combinations so hybrid can never again silently rank below keyword.
+- Grounding honesty: every decision is now labeled `cited` or `uncited` in MCP search/get results, compiled context blocks and the decisions resource. Citation is documented — in the API and the README — as provenance (the captured event exists), never as proof the rationale is true; recorded outcomes and launcher-authorized verification remain the only truth signals. Explicit MCP writes produce `uncited` decisions by construction.
+
+### Added
+- Dense lexical rerank on the standalone MCP search path: keyword-positive candidates are reranked with the dependency-free local embedder (cached per session), folding an embedding signal into the fusion the headless server previously lacked. Explicitly NOT semantic paraphrase matching — that requires neural embeddings, which only the extension host can provide.
+- `scripts/check-vsix-parity.mjs`: compares the four runtime bundles inside a published `.vsix` against a fresh production build of the current tree by SHA-256 (review recommendation #5). Verified both directions: changed bundles flagged, unchanged bundles match the shipped v1.20.0 artifact bit-for-bit.
+
+### Verification
+- 738 automated tests (6 new, covering abstention, compound tokens, term-overlap guarantees, the `no_confident_match` receipt and grounding labels end-to-end through the spawned stdio server). Full verify chain green. Out of scope, per the review's remaining recommendations: matched-run outcome benchmarking against native memories and per-client live integration matrices both require external environments and remain honestly unclaimed.
+
+---
+
 ## [1.20.0] — 2026-11-02
 
 Agent Context Runtime release: the remaining items from the independent strategy review, built local-first and policy-gated.

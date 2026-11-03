@@ -62,7 +62,17 @@ function renderSessionBlock(session: CompressedSession): string {
   if (session.lifecycle) lines.push(`Lifecycle: ${session.lifecycle}`);
   if (session.keyFiles.length) lines.push(`Files: ${session.keyFiles.slice(0, 6).join(', ')}`);
   if (session.decisions.length)
-    lines.push(`Decisions: ${session.decisions.slice(0, 4).join(' | ')}`);
+    // [cited]/[uncited] mirrors mcpServer.decisionGrounding: provenance of the
+    // claim, never proof of its rationale.
+    lines.push(
+      `Decisions: ${session.decisions
+        .slice(0, 4)
+        .map(
+          (decision, index) =>
+            `${decision} [${session.decisionEvidence?.[index]?.length ? 'cited' : 'uncited'}]`,
+        )
+        .join(' | ')}`,
+    );
   for (const outcome of session.outcomes ?? []) {
     lines.push(
       `Outcome (${outcome.status}${outcome.decisionIndex !== undefined ? `, decision ${outcome.decisionIndex}` : ''}): ${outcome.observations.join('; ') || 'no observations recorded'}`,

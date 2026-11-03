@@ -5,8 +5,10 @@
 > **Every coding agent now has its own memory. None of them share it, none of
 > them govern it, and none of it is yours.** GHCP-MEM is the layer above the
 > vendors: a **local, auditable engineering memory** — seeded from your git
-> history in 30 seconds — that every agent reads over MCP, where every claim
-> shows its receipts and the engineer (not the model) decides what is
+> history in 30 seconds — that every agent reads over MCP, where every
+> decision is labeled **cited or uncited** (citation is provenance — the
+> captured event exists — never proof the rationale is true; recorded
+> outcomes speak to that) and the engineer, not the model, decides what is
 > retained, disclosed, and trusted.
 >
 > And memory is only half of it. v1.20 makes it a **runtime**: tasks
@@ -85,7 +87,7 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 **Why it's worth your trust:**
 
-- **732 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **738 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Documented, versioned engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -903,4 +905,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.20.0** · local-first engineering context and governed task continuity</sub>
+<sub>**v1.20.1** · local-first engineering context and governed task continuity</sub>

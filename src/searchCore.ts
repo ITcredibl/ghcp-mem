@@ -69,13 +69,21 @@ export function computeAvgDocLen(sessions: ScorableSession[]): number {
  * tokens (so 'js', 'is', 'to' don't bloat the index).
  */
 export function extractTerms(text: string): Set<string> {
-  return new Set(
-    (text ?? '')
-      .toLowerCase()
-      .replace(/[^a-z0-9\s_-]/g, ' ')
-      .split(/\s+/)
-      .filter((t) => t.length > 2),
-  );
+  const out = new Set<string>();
+  for (const raw of (text ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s_-]/g, ' ')
+    .split(/\s+/)) {
+    if (raw.length > 2) out.add(raw);
+    // Compound identifiers ("reciprocal-rank-fusion", "snake_case") also emit
+    // their parts. Without this, a hyphenated topic is one indivisible index
+    // token and the natural-language query "reciprocal rank fusion" can never
+    // reach it — the root cause of the v1.20.0 review's total-miss queries.
+    if (raw.includes('-') || raw.includes('_')) {
+      for (const part of raw.split(/[-_]+/)) if (part.length > 2) out.add(part);
+    }
+  }
+  return out;
 }
 
 /**

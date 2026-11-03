@@ -73,6 +73,7 @@ import { filterByScope, normalizeScopeStamp, parseAuthor, SCOPE_LEVELS } from '.
 import { OUTCOME_STATUSES, recordOutcome } from './outcomes';
 import { defaultPolicy, evaluateWrite, parsePolicy } from './orgPolicy';
 import { budgetResults } from './contextBudget';
+import { cosineSim, localEmbed } from './embeddings';
 import { createCheckpoint, verifyCheckpoint } from './agentCheckpoint';
 import { TASK_TOOLS, isTaskTool, handleTaskTool } from './taskTools';
 import { redact } from './redactor';
@@ -292,6 +293,13 @@ function searchSessions(
     k: keywordScoreFromStats(statsById.get(s.id)!, terms, false, avgDocLen),
   }));
 
+  // Abstention (v1.20.1): the caller asked a real question and NOTHING in the
+  // store matches any query term. Falling back to recency here invents
+  // plausible-looking but unrelated "memory" — the worst failure mode for an
+  // agent consumer (the v1.20.0 review's dinosaur-fossils probe). Return
+  // nothing; the tool layer reports no_confident_match explicitly.
+  if (terms.size > 0 && !kScored.some((e) => e.k > 0)) return [];
+
   // When the user supplied a query AND at least one candidate has a positive
   // keyword score, drop the zero-score candidates so unrelated sessions can't
   // outrank a clear match through tiny differences in RRF rank position.
@@ -299,6 +307,21 @@ function searchSessions(
   if (terms.size > 0 && kScored.some((e) => e.k > 0)) {
     const positive = new Set(kScored.filter((e) => e.k > 0).map((e) => e.s.id));
     scoped = candidates.filter((s) => positive.has(s.id));
+  }
+
+  // Dense rerank (v1.20.1): the headless server has no LM, but the
+  // dependency-free lexical embedder adds a word-distribution signal the pure
+  // BM25 ranks lack. Only keyword-positive candidates are embedded, and
+  // vectors are cached per (id, endTime), so per-query cost stays bounded.
+  // This is NOT semantic paraphrase matching — that needs neural embeddings,
+  // which only the extension host can provide.
+  let eRank: Map<string, number> | undefined;
+  if (terms.size > 0 && scoped.length > 1) {
+    const queryVec = localEmbed(query);
+    const sims = scoped
+      .map((s) => ({ id: s.id, sim: cosineSim(queryVec, mcpEmbeddingFor(s)) }))
+      .sort((a, b) => b.sim - a.sim);
+    eRank = new Map(sims.map((entry, index) => [entry.id, index]));
   }
   const scopedKScored = kScored.filter((e) => scoped.includes(e.s));
   const keywordRanked = [...scopedKScored].sort((a, b) => b.k - a.k);
@@ -332,7 +355,7 @@ function searchSessions(
       endTime: s.endTime,
       keywordRank: kRank.get(s.id) ?? FUSION_RANK_MISS,
       recencyRank: rRank.get(s.id) ?? FUSION_RANK_MISS,
-      embeddingRank: undefined,
+      embeddingRank: eRank?.get(s.id),
       workspaceMatch: !!filters.workspaceId && s.workspaceId === filters.workspaceId,
       matchRatio: termCount > 0 ? matched / termCount : 0,
       confidence: effectiveConfidence(s) ?? 0.5,
@@ -349,6 +372,34 @@ function searchSessions(
   return scored.slice(0, limit).map((r) => byId.get(r.id)!);
 }
 
+/** Per-session embedding cache for the dense rerank; keyed by (id, endTime). */
+const MCP_EMBED_CACHE = new Map<string, number[]>();
+function mcpEmbeddingFor(s: StoredSession): number[] {
+  const key = `${s.id}:${s.endTime}`;
+  let vec = MCP_EMBED_CACHE.get(key);
+  if (!vec) {
+    if (MCP_EMBED_CACHE.size > 20_000) MCP_EMBED_CACHE.clear();
+    vec = localEmbed(`${s.summary} ${s.keyTopics.join(' ')} ${s.decisions.join(' ')}`);
+    MCP_EMBED_CACHE.set(key, vec);
+  }
+  return vec;
+}
+
+/**
+ * Grounding status per decision (v1.20.1): 'cited' means the decision carries
+ * at least one captured-event citation; 'uncited' means it arrived without
+ * evidence (explicit MCP writes, imports, seeds). Citation establishes
+ * PROVENANCE — the event exists — never that the event proves the rationale;
+ * only recorded outcomes and launcher-authorized verification speak to truth.
+ */
+export function decisionGrounding(s: StoredSession): ('cited' | 'uncited')[] {
+  return s.decisions.map((_, index) =>
+    Array.isArray(s.decisionEvidence?.[index]) && s.decisionEvidence[index].length > 0
+      ? 'cited'
+      : 'uncited',
+  );
+}
+
 function summarizeForMcp(s: StoredSession): any {
   return {
     id: s.id,
@@ -359,6 +410,7 @@ function summarizeForMcp(s: StoredSession): any {
     keyFiles: s.keyFiles.slice(0, 10),
     keyTopics: s.keyTopics.slice(0, 8),
     decisions: s.decisions.slice(0, 5),
+    decisionGrounding: decisionGrounding(s).slice(0, 5),
     problemsSolved: s.problemsSolved.slice(0, 5),
     tags: s.userTags,
     azure: s.azureContext
@@ -968,6 +1020,15 @@ async function handleCall(name: string, args: any): Promise<any> {
         },
         limit,
       );
+      // Explicit abstention (v1.20.1): a real query with zero matches gets a
+      // machine-readable "no confident match", never recency-ranked filler.
+      if (hits.length === 0 && String(args?.query ?? '').trim()) {
+        return textContent({
+          ...budgetResults([], args?.maxTokens ?? 1200),
+          no_confident_match: true,
+          note: 'No stored memory matches any term of this query. Do not treat other sessions as relevant; rephrase with project terms, or answer from the code instead.',
+        });
+      }
       const results = hits.map((session) =>
         args?.detail === 'index'
           ? {
@@ -1446,7 +1507,7 @@ async function readResource(uri: string): Promise<string> {
             .filter((o) => o.decisionIndex === index)
             .sort((a, b) => b.observedAt - a.observedAt)[0];
           lines.push(
-            `- ${decision} _(session ${session.id.slice(0, 8)}${session.lifecycle ? `, ${session.lifecycle}` : ''}${outcome ? `, outcome: ${outcome.status}` : ''})_`,
+            `- ${decision} _(session ${session.id.slice(0, 8)}, ${decisionGrounding(session)[index]}${session.lifecycle ? `, ${session.lifecycle}` : ''}${outcome ? `, outcome: ${outcome.status}` : ''})_`,
           );
         }
       }

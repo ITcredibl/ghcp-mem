@@ -127,9 +127,9 @@ export function importBundle(
       skippedDuplicates++;
       continue;
     }
-    // Defensive re-strip (covers bundles produced before v1.21.1): a
-    // teammate's usage counters must never read as LOCAL corroboration here.
-    added.push({ ...stripMachineLocalFields(session), importedAt: Date.now(), origin: 'team' });
+    // Defensive re-strip + receiver stamp (covers bundles produced before
+    // v1.21.1): a teammate's feedback must never read as LOCAL corroboration.
+    added.push(stampTeamImport(session));
   }
   const knownLessonIds = new Set((existing.lessons ?? []).map((lesson) => lesson.id));
   const lessonsAdded = (bundle.lessons ?? []).filter((lesson) => !knownLessonIds.has(lesson.id));
@@ -211,7 +211,28 @@ function deepScrub(value: unknown, parentKey?: string): unknown {
 export function stripMachineLocalFields(session: CompressedSession): CompressedSession {
   const copy: Record<string, unknown> = { ...session };
   for (const field of SYNC_DROPPED_FIELDS) delete copy[field];
+  // The receiver-owned `imported` flag never travels either direction.
+  if (session.outcomes)
+    copy.outcomes = session.outcomes.map(({ imported: _imported, ...outcome }) => outcome);
   return copy as unknown as CompressedSession;
+}
+
+/**
+ * Receiver-side stamp applied to every synced session: lineage fields set by
+ * THIS machine, and every carried outcome marked `imported` so it can never
+ * masquerade as local corroboration regardless of its (sender-controlled)
+ * timestamp.
+ */
+function stampTeamImport(session: CompressedSession): CompressedSession {
+  const stripped = stripMachineLocalFields(session);
+  return {
+    ...stripped,
+    importedAt: Date.now(),
+    origin: 'team',
+    ...(stripped.outcomes
+      ? { outcomes: stripped.outcomes.map((outcome) => ({ ...outcome, imported: true as const })) }
+      : {}),
+  };
 }
 
 /**
@@ -309,7 +330,7 @@ export function importClearChunks(
     }
     knownIds.add(session.id);
     if (session.contentHash) knownHashes.add(session.contentHash);
-    added.push({ ...stripMachineLocalFields(session), importedAt: Date.now(), origin: 'team' });
+    added.push(stampTeamImport(session));
   }
   return { added, skippedDuplicates, invalid };
 }
@@ -319,21 +340,20 @@ export function importClearChunks(
 /**
  * Trust multiplier by where a memory entered this machine. Team-shared rows
  * start discounted (a teammate validated them, this machine has not) and earn
- * the discount back ONLY through LOCAL corroboration: an explicit /accept
- * (usage counters are stripped at export AND import, so any acceptance is
- * local by construction) or an improved outcome recorded on this machine
- * AFTER the import (imported outcomes carry pre-import timestamps and never
- * count — the v1.21.0 review showed remote feedback laundering into local
- * trust).
+ * the discount back ONLY through RECEIVER-OWNED corroboration: an explicit
+ * /accept (usage counters are stripped at export AND import, so any
+ * acceptance is local by construction) or an improved outcome recorded on
+ * this machine (every outcome that arrives via sync is stamped `imported` by
+ * the receiver and never counts — a timestamp chosen by the sender cannot
+ * establish local origin, as the v1.21.1 review's future-dated probe showed).
  */
 export function originTrust(
-  session: Pick<CompressedSession, 'origin' | 'usage' | 'outcomes' | 'importedAt'>,
+  session: Pick<CompressedSession, 'origin' | 'usage' | 'outcomes'>,
 ): number {
   if (session.origin !== 'team') return 1;
-  const importedAt = session.importedAt ?? Number.MAX_SAFE_INTEGER;
   const locallyAccepted = (session.usage?.accepted ?? 0) > 0;
   const locallyImproved = (session.outcomes ?? []).some(
-    (outcome) => outcome.status === 'improved' && outcome.observedAt >= importedAt,
+    (outcome) => outcome.status === 'improved' && !outcome.imported,
   );
   return locallyAccepted || locallyImproved ? 1 : 0.75;
 }

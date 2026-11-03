@@ -137,16 +137,17 @@ test('teamSync: clear export can anonymize authors deterministically', () => {
     outcomes: [{ status: 'improved', observedAt: 1, observations: [], reportedBy: 'human:seyi' }],
     contentHash: '1234567890abcdef',
   });
-  const [anonA] = exportClearChunks({
-    sessions: [session],
-    scopeLabel: 'r',
-    anonymizeAuthors: true,
-  });
-  const [anonB] = exportClearChunks({
-    sessions: [session],
-    scopeLabel: 'r',
-    anonymizeAuthors: true,
-  });
+  // Fixed clock: the chunk embeds exportedAt, and the independent v1.21.1
+  // review caught this very assertion flaking across a millisecond boundary.
+  const T = 1700000000000;
+  const [anonA] = exportClearChunks(
+    { sessions: [session], scopeLabel: 'r', anonymizeAuthors: true },
+    T,
+  );
+  const [anonB] = exportClearChunks(
+    { sessions: [session], scopeLabel: 'r', anonymizeAuthors: true },
+    T,
+  );
   const parsed = JSON.parse(anonA.content);
   assert.match(parsed.session.author, /^human:anon-[a-f0-9]{8}$/);
   assert.ok(!anonA.content.includes('human:seyi'));
@@ -215,19 +216,48 @@ test('teamSync: origin trust discounts team rows until LOCALLY corroborated', ()
       }),
     ),
     1,
-    'an improved outcome recorded AFTER import restores full trust',
+    'an improved outcome recorded locally restores full trust',
   );
   assert.equal(
     originTrust(
       mkSession({
         origin: 'team',
         importedAt: 100,
-        outcomes: [{ status: 'improved', observedAt: 50, observations: [] }],
+        outcomes: [{ status: 'improved', observedAt: 50, observations: [], imported: true }],
       }),
     ),
     0.75,
-    'an IMPORTED improved outcome must never count as local corroboration',
+    'a receiver-stamped IMPORTED outcome must never count as local corroboration',
   );
+});
+
+test('teamSync: sender-controlled timestamps cannot buy trust (v1.21.1 review probe)', () => {
+  // A teammate exports a memory whose improved outcome is dated in the FUTURE.
+  const futureDated = mkSession({
+    id: 'time-traveler',
+    contentHash: 'deadbeef00000002',
+    outcomes: [
+      { status: 'improved', observedAt: Date.now() + 86_400_000, observations: ['trust me'] },
+    ],
+  });
+  for (const imported of [
+    importClearChunks(
+      exportClearChunks({ sessions: [futureDated], scopeLabel: 'r' }).map((c) => c.content),
+      { sessions: [] },
+    ).added[0],
+    importBundle(
+      exportBundle({ sessions: [futureDated], scopeLabel: 'r' }, 'correct horse battery'),
+      'correct horse battery',
+      { sessions: [] },
+    ).added[0],
+  ]) {
+    assert.equal(imported.outcomes?.[0].imported, true, 'receiver must stamp carried outcomes');
+    assert.equal(
+      originTrust(imported),
+      0.75,
+      'a future-dated imported outcome must stay discounted',
+    );
+  }
 });
 
 test('teamSync: imported feedback cannot launder into local trust (review finding 2)', () => {

@@ -68,7 +68,7 @@ npm run watch          # incremental build in watch mode
 ## 3. Running tests
 
 ```bash
-npm test                  # full test suite (747 tests)
+npm test                  # full test suite (750 tests)
 npm run test:tasks        # focused task continuity and recovery checks
 npm run lint              # ESLint
 npx tsc --noEmit          # type-check without emitting

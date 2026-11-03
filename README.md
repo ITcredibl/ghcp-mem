@@ -87,7 +87,7 @@ We paid the Context Tax every morning too. We know the exact feeling of typing t
 
 **Why it's worth your trust:**
 
-- **747 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
+- **750 tests, zero native dependencies, zero open ports** — `npm install` doesn't compile anything. Source is formatted with Prettier (CI-enforced via `format:check`) so reviewers see real code, not bundle output. Auditable in an afternoon.
 - **Documented, versioned engineering phases**, each with grounded design rationale in the [CHANGELOG](https://github.com/ITcredibl/ghcp-mem/blob/main/CHANGELOG.md). No marketing claims that don't have code behind them.
 - **An evidence-citation gate in the compressor** — the LM cannot emit a decision without pointing at the captured event that produced it. Hallucinated rationale never reaches storage.
 - **An nDCG@K regression gate** runs in CI — if a ranker change regresses retrieval, the build fails.
@@ -124,7 +124,7 @@ Memory alone is not continuity. v1.20.0 adds the runtime layer around it — all
 - **Skills from experience** — `GHCP-MEM: Export Learned Skills` renders procedural lessons into `.github/skills/ghcp-mem.skills.md` with citations and confidence. GHCP-MEM generates skill definitions; it never executes them.
 - **Effectiveness report** — `GHCP-MEM: Show Memory Effectiveness Report` measures what the store can evidence (outcome coverage, accept/reject reinforcement, grounding, lifecycle hygiene) and states plainly that store-side signals do not prove live-model gains.
 - **LongMemEval retrieval harness** — `npm run bench:longmem -- --dataset <longmemeval.json>` evaluates GHCP-MEM's retrieval layer (recall@k / MRR over answer sessions) against a locally downloaded [LongMemEval](https://github.com/xiaowu0162/LongMemEval) dataset. Deliberately labeled: it is not an end-to-end QA accuracy score and must not be compared against published LongMemEval numbers.
-- **Calibrated abstention + an honest paraphrase gap** — the MCP search abstains (machine-readable `no_confident_match`) rather than return incidental-overlap filler, requiring significant-term coverage, not just any shared word. And because lexical retrieval is genuinely weak on paraphrases, a held-out paraphrase benchmark (`npm run eval:paraphrase`) gates CI at its *measured* low score — the gap is published in `scripts/eval-baseline.json`, not hidden behind the keyword corpus's perfect numbers.
+- **Calibrated abstention + an honest paraphrase gap** — the MCP search abstains (machine-readable `no_confident_match`) rather than return incidental-overlap filler, requiring significant-term coverage, not just any shared word. And because lexical retrieval is genuinely weak on paraphrases, a held-out paraphrase benchmark (`npm run eval:paraphrase`) runs in CI: under calibration the system *abstains* on most paraphrases rather than serve lexical-luck hits, so the benchmark currently measures 0 — published in `scripts/eval-baseline.json` as the semantic gap, where any future nonzero score is real capability, not noise.
 
 | Tool | Purpose |
 |---|---|
@@ -906,4 +906,4 @@ MIT — see [LICENSE](https://github.com/ITcredibl/ghcp-mem/blob/main/LICENSE).
 
 [Report a bug](https://github.com/ITcredibl/ghcp-mem/issues) · [Request a feature](https://github.com/ITcredibl/ghcp-mem/issues) · [Live demo](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/DEMO.md) · [Compare memory tools](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/COMPARISON.md) · [Uninstall guide](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/UNINSTALL.md) · [Configuration reference](https://github.com/ITcredibl/ghcp-mem/blob/main/docs/CONFIGURATION.md) · [Contributing](https://github.com/ITcredibl/ghcp-mem/blob/main/CONTRIBUTING.md) · [Security policy](https://github.com/ITcredibl/ghcp-mem/blob/main/SECURITY.md)
 
-<sub>**v1.21.1** · local-first engineering context and governed task continuity</sub>
+<sub>**v1.21.2** · local-first engineering context and governed task continuity</sub>

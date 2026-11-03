@@ -211,6 +211,13 @@ export interface MemoryOutcome {
   observations: string[];
   /** Attributed reporter in `kind:name` form (see ./memoryScope). */
   reportedBy?: string;
+  /**
+   * RECEIVER-owned flag (v1.21.2): stamped by THIS machine at sync import,
+   * stripped at export. Imported outcomes stay useful as historical evidence
+   * but never count as local corroboration — a timestamp supplied by another
+   * machine cannot establish local origin (independent review, v1.21.1).
+   */
+  imported?: true;
 }
 
 export interface CompressedSession {

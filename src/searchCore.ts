@@ -138,6 +138,22 @@ export const QUERY_STOPWORDS: ReadonlySet<string> = new Set([
   'his',
 ]);
 
+/** Query terms that remain after stopword removal — the ones coverage counts. */
+export function significantQueryTerms(terms: ReadonlySet<string>): Set<string> {
+  return new Set([...terms].filter((t) => !QUERY_STOPWORDS.has(t)));
+}
+
+/**
+ * Shared relevance calibration (v1.21.2): the minimum number of significant
+ * query terms the BEST candidate must match for the result set to be served
+ * at all. One implementation for the extension store AND the stdio MCP server
+ * so the two retrieval paths cannot drift apart again (parity-tested).
+ */
+export function requiredSignificantMatches(significantCount: number): number {
+  if (significantCount === 0) return 0;
+  return significantCount >= 3 ? Math.ceil(significantCount / 3) : 1;
+}
+
 export function extractTerms(text: string): Set<string> {
   const out = new Set<string>();
   for (const raw of (text ?? '')

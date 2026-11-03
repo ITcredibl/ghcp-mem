@@ -32,7 +32,8 @@ import type { CompressedSession, ContextDatabase } from './types';
 // ContextStore so the stdio path and the in-VS-Code @mem path rank identically.
 import {
   extractTerms,
-  QUERY_STOPWORDS,
+  significantQueryTerms,
+  requiredSignificantMatches,
   computeAvgDocLen,
   computeTermStats,
   keywordScoreFromStats,
@@ -311,13 +312,13 @@ function searchSessions(
     scoped = candidates.filter((s) => positive.has(s.id));
   }
 
-  // Calibrated relevance (v1.21.1): matching ONLY stopword-grade words
-  // ("what", "the", "with") is incidental overlap, not relevance — the
-  // v1.21.0 review's "Azure dinosaur fossil database" probe matched a real
-  // memory through one shared word. Require every result to match at least
-  // one SIGNIFICANT term, and for 3+ significant-term queries require the
-  // best candidate to cover at least a third of them — otherwise abstain.
-  const significant = new Set([...terms].filter((t) => !QUERY_STOPWORDS.has(t)));
+  // Calibrated relevance (v1.21.1, shared thresholds since v1.21.2 — see
+  // searchCore.requiredSignificantMatches, parity-tested against the
+  // extension store): matching ONLY stopword-grade words ("what", "the") is
+  // incidental overlap, not relevance. Require every result to match at least
+  // one SIGNIFICANT term, and require the best candidate to meet the shared
+  // coverage floor — otherwise abstain.
+  const significant = significantQueryTerms(terms);
   const sigMatched = (s: StoredSession): number => {
     const stats = statsById.get(s.id)!;
     let matchedCount = 0;
@@ -326,8 +327,8 @@ function searchSessions(
   };
   if (significant.size > 0) {
     scoped = scoped.filter((s) => sigMatched(s) > 0);
-    const needed = significant.size >= 3 ? Math.ceil(significant.size / 3) : 1;
-    if (!scoped.some((s) => sigMatched(s) >= needed)) return [];
+    if (!scoped.some((s) => sigMatched(s) >= requiredSignificantMatches(significant.size)))
+      return [];
   }
 
   // Dense rerank (v1.20.1): the headless server has no LM, but the
@@ -1052,6 +1053,20 @@ async function handleCall(name: string, args: any): Promise<any> {
           note: 'No stored memory matches any term of this query. Do not treat other sessions as relevant; rephrase with project terms, or answer from the code instead.',
         });
       }
+      // Per-result relevance receipts (v1.21.2): coverage of SIGNIFICANT query
+      // terms, so a consumer can see "this matched 1 of 3 meaningful words"
+      // instead of trusting rank order. Lexical coverage cannot separate every
+      // boundary case (the published paraphrase gap) — when even the best hit
+      // covers under half the significant terms, the whole response says so.
+      const sigTerms = significantQueryTerms(extractTerms(String(args?.query ?? '')));
+      const coverage = (session: StoredSession): number => {
+        if (sigTerms.size === 0) return 1;
+        const stats = computeTermStats(session);
+        let matched = 0;
+        for (const t of sigTerms) if (stats.wtf.has(t)) matched++;
+        return matched / sigTerms.size;
+      };
+      const coverages = new Map(hits.map((session) => [session.id, coverage(session)]));
       const results = hits.map((session) =>
         args?.detail === 'index'
           ? {
@@ -1060,10 +1075,21 @@ async function handleCall(name: string, args: any): Promise<any> {
               type: session.observationType,
               summary: session.summary.slice(0, 220),
               keyFiles: session.keyFiles.slice(0, 3),
+              termCoverage: coverages.get(session.id),
             }
-          : summarizeForMcp(session),
+          : { ...summarizeForMcp(session), termCoverage: coverages.get(session.id) },
       );
-      return textContent(budgetResults(results, args?.maxTokens ?? 1200));
+      const bestCoverage = Math.max(0, ...coverages.values());
+      const weak = sigTerms.size > 0 && hits.length > 0 && bestCoverage < 0.5;
+      return textContent({
+        ...budgetResults(results, args?.maxTokens ?? 1200),
+        ...(weak
+          ? {
+              low_confidence: true,
+              note: `Best result matches only ${Math.round(bestCoverage * 100)}% of the significant query terms — treat as a lead, not an answer, and verify against the code.`,
+            }
+          : {}),
+      });
     }
     case 'ghcpMem_recent': {
       const limit = clamp(args?.limit, 5, 25);

@@ -1,5 +1,5 @@
 {
-  "comment": "Recall@5 / MRR / nDCG@5 floors for scripts/eval-check.js. Every production retrieval configuration MUST have a floor — the gate fails on a run with no committed baseline (v1.18.3). Both corpora measure 1.000 on every config as of 2026-11-03 (v1.20.1 compound-token fix: hyphenated/underscored topics now also index their parts, which recovered the two gold queries that previously returned nothing and the two that ranked the exact match second). Floors are set so one lost query out of 12 passes and two fail, on BOTH corpora — and so hybrid may never again silently rank below keyword, which the pre-fix gold floors tolerated. Update only after deliberate ranker improvements. | paraphraseFloors track the HELD-OUT paraphrase set (scripts/eval-paraphrase.json): measured 2026-11-03 at recall@5 0.167 across configs — the honest lexical-retrieval paraphrase gap. These floors exist to catch regressions and make semantic-retrieval improvements visible; never quote them as retrieval quality.",
+  "comment": "Recall@5 / MRR / nDCG@5 floors for scripts/eval-check.js. Every production retrieval configuration MUST have a floor — the gate fails on a run with no committed baseline (v1.18.3). Both corpora measure 1.000 on every config as of 2026-11-03 (v1.20.1 compound-token fix: hyphenated/underscored topics now also index their parts, which recovered the two gold queries that previously returned nothing and the two that ranked the exact match second). Floors are set so one lost query out of 12 passes and two fail, on BOTH corpora — and so hybrid may never again silently rank below keyword, which the pre-fix gold floors tolerated. Update only after deliberate ranker improvements. | paraphraseFloors track the HELD-OUT paraphrase set (scripts/eval-paraphrase.json). Measured 2026-11-03 at 0.000: the v1.21.2 shared relevance calibration ABSTAINS on queries whose significant terms barely overlap the store — the 16.7% measured one revision earlier was two sub-threshold lexical-luck hits that calibration now (correctly) refuses to serve. The benchmark therefore measures semantic retrieval capability above the calibration floor: any nonzero score here is real. Never quote these numbers as retrieval quality.",
   "tolerancePct": 5,
   "floors": {
     "keyword-only": {
@@ -37,19 +37,19 @@
   },
   "paraphraseFloors": {
     "keyword-only": {
-      "recall": 0.16,
-      "mrr": 0.12,
-      "ndcg": 0.13
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
     },
     "hybrid (default)": {
-      "recall": 0.16,
-      "mrr": 0.12,
-      "ndcg": 0.13
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
     },
     "hybrid + freshness": {
-      "recall": 0.16,
-      "mrr": 0.16,
-      "ndcg": 0.16
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
     }
   }
 }

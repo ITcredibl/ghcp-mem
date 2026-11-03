@@ -6,6 +6,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.21.2] — 2026-11-03
+
+Responds to the independent v1.21.1 review (held at 7.5/10): all three findings fixed, including its flaky-test catch.
+
+### Fixed
+- Sender-controlled timestamps can no longer buy trust: every outcome arriving via sync is stamped `imported` by the RECEIVER (stripped at export in both directions), and origin trust counts only unstamped — i.e. locally recorded — improved outcomes. The review's future-dated-outcome probe is a committed regression test through both the sealed and clear pipelines; the previous `observedAt >= importedAt` rule is gone.
+- Retrieval-path parity: the significant-term calibration (coverage floor + abstention) now lives once in `searchCore` and is applied identically by the extension `ContextStore` and the stdio MCP server — the review showed the extension path serving the out-of-domain probe the MCP path abstained on. A parity test runs the probe corpus through BOTH implementations and asserts they agree on serve-vs-abstain and the top hit.
+- The anonymization determinism test flaked across a millisecond boundary (independently generated `exportedAt` timestamps); it now pins the clock, as the review's failing-run diagnosis indicated.
+
+### Changed
+- Boundary overlap is labeled, not bluffed: search results carry a per-result `termCoverage` receipt, and when even the best hit covers under half the significant query terms the response adds `low_confidence: true` with explicit "treat as a lead, not an answer" guidance. Lexical coverage cannot distinguish "Azure dinosaur fossils" from a legitimate rare-term query — that boundary is the published semantic gap, so the contract is honest confidence reporting rather than a threshold pretending to be semantics.
+- Paraphrase baseline re-measured at 0.000 under the shared calibration: the previously reported 16.7% was two sub-threshold lexical-luck hits that calibration now correctly refuses to serve. The held-out benchmark therefore now measures semantic capability ABOVE the calibration floor — any future nonzero score is real, and the committed floors document this reasoning in place.
+
+### Verification
+- 750 automated tests (3 new: future-dated-trust probes, extension/MCP parity, low-confidence receipts end-to-end). Keyword gold and synthetic corpora remain at 1.000 on every configuration.
+
+---
+
 ## [1.21.1] — 2026-11-03
 
 Trust-boundary hardening, responding to the independent v1.21.0 review (7.5/10). Both new team-sync findings are fixed and regression-tested; relevance calibration and an honest paraphrase benchmark land alongside.

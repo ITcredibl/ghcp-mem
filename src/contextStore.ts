@@ -13,6 +13,8 @@ import {
   FusionInput,
   FusionWeights,
   FUSION_RANK_MISS,
+  significantQueryTerms,
+  requiredSignificantMatches,
 } from './searchCore';
 import { validateSessions } from './validator';
 import { getRepoScopeSync } from './repoScope';
@@ -1070,6 +1072,25 @@ export class ContextStore implements vscode.Disposable {
         (s) =>
           s.repoScope === filters.repoScope || (!s.repoScope && !!wsId && s.workspaceId === wsId),
       );
+    }
+
+    // Calibrated relevance (v1.21.2): the same significant-term coverage rule
+    // as the stdio MCP server (shared thresholds in searchCore, parity-tested)
+    // — the v1.21.1 review showed this path happily returning an unrelated
+    // memory for an out-of-domain query the MCP path abstained on.
+    const significant = significantQueryTerms(baseTerms);
+    if (significant.size > 0) {
+      const sigMatchedCount = (s: CompressedSession): number => {
+        const stats = this.statsFor(s);
+        let matched = 0;
+        for (const t of significant) if (stats.wtf.has(t)) matched++;
+        return matched;
+      };
+      candidates = candidates.filter((s) => sigMatchedCount(s) > 0);
+      if (
+        !candidates.some((s) => sigMatchedCount(s) >= requiredSignificantMatches(significant.size))
+      )
+        return [];
     }
 
     // --- Rank 1: keyword score (BM25 with field weights) ---

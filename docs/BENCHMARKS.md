@@ -53,3 +53,23 @@ supported provider pack for existing installs.
 
 Reproduce: `node scripts/setup-semantic.mjs --provider <key>` then
 `node scripts/tune-semantic.mjs scripts/eval-corpus-v2.json scripts/eval-dev.json`.
+
+## Scale benchmark (v1.24.0, PERF-001/002 — Apple M2 Pro, node 26, correctness assertions active)
+
+| Configuration | warm p50 | warm p95 | warm p99 | budget (p95) |
+|---|---:|---:|---:|---:|
+| Lexical, 1k memories | 1.3 ms | 1.4 ms | 1.5 ms | ≤ 50 ms ✓ (CI-gated) |
+| Lexical, 10k | 7.8 ms | 8.3 ms | 8.6 ms | — |
+| Lexical, 50k | 46 ms | 51 ms | 55 ms | — |
+| Hybrid + real inference (bge-small), 1k | 19 ms | 22 ms | 23 ms | — |
+| Hybrid + real inference, 10k | 35 ms | 40 ms | 45 ms | ≤ 150 ms ✓ |
+| Hybrid + real inference, 50k | 128 ms | 158 ms | 191 ms | ≤ 300 ms ✓ |
+| Context compilation (no retrieval) | 0.2 ms | 0.3 ms | 0.5 ms | ≤ 100 ms ✓ |
+
+Every run asserts corpus size pre/post, expected ids for selective queries, and
+abstention on negatives; a failed assertion voids the numbers. Hybrid runs at
+FULL index coverage (50k one-time embedding ≈ 20 min at ~24 ms/memory; the
+per-call incremental budget and `semantic_coverage` disclosure govern partial
+coverage in production). Peak RSS at 50k hybrid: 1.55 GB (in-memory vectors
+dominate). Reproduce: `node scripts/bench-search.js --full` and
+`node scripts/bench-search.js --semantic --sizes 50000`.

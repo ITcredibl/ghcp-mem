@@ -68,6 +68,76 @@ export function computeAvgDocLen(sessions: ScorableSession[]): number {
  * non-[a-z0-9_-] punctuation to spaces, split on whitespace, drop ≤2-char
  * tokens (so 'js', 'is', 'to' don't bloat the index).
  */
+/**
+ * Query words that carry no retrieval signal on their own (interrogatives,
+ * auxiliaries, articles, common prepositions and pronouns). Used by relevance
+ * calibration to measure SIGNIFICANT term coverage — a result matching only
+ * these is incidental overlap, not relevance. Indexing is unaffected.
+ */
+export const QUERY_STOPWORDS: ReadonlySet<string> = new Set([
+  'what',
+  'where',
+  'when',
+  'which',
+  'who',
+  'whom',
+  'whose',
+  'how',
+  'why',
+  'should',
+  'would',
+  'could',
+  'can',
+  'will',
+  'shall',
+  'may',
+  'might',
+  'must',
+  'does',
+  'did',
+  'are',
+  'was',
+  'were',
+  'been',
+  'being',
+  'have',
+  'having',
+  'had',
+  'has',
+  'the',
+  'this',
+  'that',
+  'these',
+  'those',
+  'there',
+  'here',
+  'with',
+  'without',
+  'from',
+  'into',
+  'onto',
+  'about',
+  'over',
+  'under',
+  'between',
+  'and',
+  'but',
+  'not',
+  'nor',
+  'for',
+  'our',
+  'your',
+  'their',
+  'its',
+  'you',
+  'they',
+  'them',
+  'she',
+  'him',
+  'her',
+  'his',
+]);
+
 export function extractTerms(text: string): Set<string> {
   const out = new Set<string>();
   for (const raw of (text ?? '')

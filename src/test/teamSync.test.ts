@@ -192,27 +192,89 @@ test('teamSync: clear import unions, dedups, rejects junk, stamps team origin', 
   assert.equal(result.invalid, 3, 'junk, wrong-kind and agent-scoped chunks are all rejected');
 });
 
-test('teamSync: origin trust discounts team rows until locally corroborated', () => {
+test('teamSync: origin trust discounts team rows until LOCALLY corroborated', () => {
   assert.equal(originTrust(mkSession({})), 1, 'local rows are full trust');
-  assert.equal(originTrust(mkSession({ origin: 'team' })), 0.75);
+  assert.equal(originTrust(mkSession({ origin: 'team', importedAt: 100 })), 0.75);
   assert.equal(
     originTrust(
       mkSession({
         origin: 'team',
+        importedAt: 100,
         usage: { retrieved: 1, lastRetrievedAt: 0, accepted: 1, rejected: 0 },
       }),
     ),
     1,
-    'an explicit local /accept restores full trust',
+    'an explicit local /accept restores full trust (usage is local by construction)',
   );
   assert.equal(
     originTrust(
       mkSession({
         origin: 'team',
-        outcomes: [{ status: 'improved', observedAt: 1, observations: [] }],
+        importedAt: 100,
+        outcomes: [{ status: 'improved', observedAt: 200, observations: [] }],
       }),
     ),
     1,
-    'a locally recorded improved outcome restores full trust',
+    'an improved outcome recorded AFTER import restores full trust',
   );
+  assert.equal(
+    originTrust(
+      mkSession({
+        origin: 'team',
+        importedAt: 100,
+        outcomes: [{ status: 'improved', observedAt: 50, observations: [] }],
+      }),
+    ),
+    0.75,
+    'an IMPORTED improved outcome must never count as local corroboration',
+  );
+});
+
+test('teamSync: imported feedback cannot launder into local trust (review finding 2)', () => {
+  const laundered = mkSession({
+    id: 'laundered',
+    contentHash: 'feedface00000001',
+    usage: { retrieved: 9, lastRetrievedAt: 0, accepted: 3, rejected: 0 },
+    outcomes: [{ status: 'improved', observedAt: 1, observations: [] }],
+  });
+  // Clear-chunk path.
+  const [chunk] = exportClearChunks({ sessions: [laundered], scopeLabel: 'r' });
+  assert.ok(!chunk.content.includes('"accepted"'), 'usage counters must not be exported');
+  const clearResult = importClearChunks([chunk.content], { sessions: [] });
+  assert.equal(clearResult.added[0].usage, undefined);
+  assert.equal(originTrust(clearResult.added[0]), 0.75, 'fresh team import stays discounted');
+  // Sealed path.
+  const bundle = exportBundle({ sessions: [laundered], scopeLabel: 'r' }, 'correct horse battery');
+  const sealedResult = importBundle(bundle, 'correct horse battery', { sessions: [] });
+  assert.equal(sealedResult.added[0].usage, undefined);
+  assert.equal(originTrust(sealedResult.added[0]), 0.75);
+});
+
+test('teamSync: deep scrub covers nested fields (review finding 1)', () => {
+  const leaky = mkSession({
+    id: '3f2b4a6c-9d1e-4f5a-8b7c-0a1b2c3d4e5f',
+    contentHash: 'cafebabe12345678',
+    decisions: ['use postgres'],
+    decisionEvidence: [
+      [{ kind: 'file_edit' as const, filePath: '/Users/alice/secret-project/src/db.ts' }],
+    ],
+    outcomes: [
+      {
+        status: 'improved' as const,
+        observedAt: 1,
+        observations: ['works with password=hunter2SuperSecret!'],
+      },
+    ],
+    keyFileHashes: { '/Users/alice/secret-project/src/db.ts': 'ab12cd34ef567890' },
+  });
+  const [chunk] = exportClearChunks({ sessions: [leaky], scopeLabel: 'r' });
+  assert.ok(!chunk.content.includes('hunter2SuperSecret'), 'nested outcome observation leaked');
+  assert.ok(!chunk.content.includes('/Users/alice'), 'nested evidence path leaked');
+  const parsed = JSON.parse(chunk.content);
+  assert.equal(
+    parsed.session.id,
+    '3f2b4a6c-9d1e-4f5a-8b7c-0a1b2c3d4e5f',
+    'identifier fields must survive scrubbing untouched',
+  );
+  assert.equal(parsed.session.contentHash, 'cafebabe12345678');
 });

@@ -83,6 +83,19 @@ test('retrieval: every returned result matched at least one query term', () => {
   assert.ok(!hits.some((s) => s.id === 'invoices'));
 });
 
+test('retrieval: incidental single-word overlap abstains (review v1.21.0 probe)', () => {
+  const db = { version: 2, lastUpdated: 0, sessions: PROBE_SESSIONS };
+  // "Azure" appears in real memories, but one shared word out of four
+  // significant terms is incidental overlap — abstain, never bluff.
+  assert.deepEqual(searchSessions(db, 'What is the Azure dinosaur fossil database?', {}, 5), []);
+  // Stopwords don't count toward coverage, so a short natural question whose
+  // meaningful words DO match still resolves.
+  const hits = searchSessions(db, 'Where should we keep uploaded pictures?', {}, 5);
+  assert.equal(hits[0]?.id, 'blob');
+  // Matching only stopword-grade words never returns anything.
+  assert.deepEqual(searchSessions(db, 'what should they have been', {}, 5), []);
+});
+
 test('MCP search tool abstains with an explicit no_confident_match receipt', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ghcp-mem-abstain-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

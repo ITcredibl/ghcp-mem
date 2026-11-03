@@ -32,6 +32,7 @@ import type { CompressedSession, ContextDatabase } from './types';
 // ContextStore so the stdio path and the in-VS-Code @mem path rank identically.
 import {
   extractTerms,
+  QUERY_STOPWORDS,
   computeAvgDocLen,
   computeTermStats,
   keywordScoreFromStats,
@@ -308,6 +309,25 @@ function searchSessions(
   if (terms.size > 0 && kScored.some((e) => e.k > 0)) {
     const positive = new Set(kScored.filter((e) => e.k > 0).map((e) => e.s.id));
     scoped = candidates.filter((s) => positive.has(s.id));
+  }
+
+  // Calibrated relevance (v1.21.1): matching ONLY stopword-grade words
+  // ("what", "the", "with") is incidental overlap, not relevance — the
+  // v1.21.0 review's "Azure dinosaur fossil database" probe matched a real
+  // memory through one shared word. Require every result to match at least
+  // one SIGNIFICANT term, and for 3+ significant-term queries require the
+  // best candidate to cover at least a third of them — otherwise abstain.
+  const significant = new Set([...terms].filter((t) => !QUERY_STOPWORDS.has(t)));
+  const sigMatched = (s: StoredSession): number => {
+    const stats = statsById.get(s.id)!;
+    let matchedCount = 0;
+    for (const t of significant) if (stats.wtf.has(t)) matchedCount++;
+    return matchedCount;
+  };
+  if (significant.size > 0) {
+    scoped = scoped.filter((s) => sigMatched(s) > 0);
+    const needed = significant.size >= 3 ? Math.ceil(significant.size / 3) : 1;
+    if (!scoped.some((s) => sigMatched(s) >= needed)) return [];
   }
 
   // Dense rerank (v1.20.1): the headless server has no LM, but the

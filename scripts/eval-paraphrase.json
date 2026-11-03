@@ -1,0 +1,17 @@
+{
+  "_comment": "HELD-OUT paraphrase evaluation (v1.21.1, from the independent v1.21.0 review's recommendation). Each query asks about one eval-corpus session in different words, deliberately avoiding the session's topic/summary keywords where natural language allows. A lexical retrieval stack is EXPECTED to score far below the keyword gold set here — the committed paraphraseFloors record measured reality so semantic regressions (or improvements) are visible, not to advertise competence. Do not quote these floors as retrieval quality; quote them as the honest paraphrase gap.",
+  "queries": [
+    { "q": "how do we merge several ranked result lists into one ordering", "relevant": ["eval-0000"] },
+    { "q": "scrubbing cloud account access secrets before saving", "relevant": ["eval-0001"] },
+    { "q": "masking login credentials found in captured text", "relevant": ["eval-0002"] },
+    { "q": "letting other AI clients query us over standard input", "relevant": ["eval-0003"] },
+    { "q": "favourite sessions shown before everything else in the sidebar", "relevant": ["eval-0004"] },
+    { "q": "guided first launch experience for new installs", "relevant": ["eval-0005"] },
+    { "q": "matching the official assistant's forgetting window", "relevant": ["eval-0006"] },
+    { "q": "refreshing the cached project identity when settings change on disk", "relevant": ["eval-0007"] },
+    { "q": "writing session notes so version control shows clean changes", "relevant": ["eval-0008"] },
+    { "q": "fast lookup table from words to matching records", "relevant": ["eval-0009"] },
+    { "q": "measuring how alike two vectors are for ranking", "relevant": ["eval-0010"] },
+    { "q": "overall wellbeing metric for the stored knowledge base", "relevant": ["eval-0011"] }
+  ]
+}

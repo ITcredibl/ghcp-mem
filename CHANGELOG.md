@@ -6,6 +6,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.21.1] — 2026-11-03
+
+Trust-boundary hardening, responding to the independent v1.21.0 review (7.5/10). Both new team-sync findings are fixed and regression-tested; relevance calibration and an honest paraphrase benchmark land alongside.
+
+### Fixed
+- Clear-export scrubbing is now a recursive deep scrub over EVERY string surface — object keys included — with an explicit drop-list, instead of a per-field list. The review's reproductions (a password in `outcomes[].observations`, an absolute path in `decisionEvidence[].filePath`) are committed regression tests; identifier fields (ids, content hashes, supersession links) are exempt so lineage survives. Future session fields can no longer silently reopen the gap.
+- Imported feedback can no longer launder into local trust: `usage` counters, `origin` and `importedAt` are stripped at export (both modes) AND defensively at import (covers pre-1.21.1 bundles), and an `improved` outcome only restores full origin trust when it was recorded on this machine AFTER the import (`observedAt >= importedAt`). A fresh team import is 0.75 trust, full stop.
+- Calibrated relevance on the standalone MCP search path: results must match at least one SIGNIFICANT query term (a committed stopword list excludes interrogatives/auxiliaries/articles from coverage), and queries with 3+ significant terms abstain unless the best candidate covers at least a third of them. The review's "Azure dinosaur fossil database" incidental-overlap probe now abstains; "where should we keep uploaded pictures" still resolves correctly because stopwords no longer dilute coverage.
+
+### Added
+- Held-out paraphrase benchmark (`npm run eval:paraphrase`, in the verify chain): twelve reworded queries against the eval corpus that avoid its keywords. Measured honestly at **recall@5 = 16.7%** across all configurations — the real lexical-retrieval paraphrase gap, committed as `paraphraseFloors` so regressions and future semantic improvements are visible. These numbers are published as the gap, never as quality.
+
+### Verification
+- 747 automated tests (3 new). Keyword gold and synthetic corpora remain at 1.000 on every configuration; the paraphrase floors gate at measured reality. Still unclaimed, per the review: matched coding-task comparisons against native memories and live cross-client handoff matrices require external environments.
+
+---
+
 ## [1.21.0] — 2026-11-03
 
 Team-sync maturity release: PR-reviewable clear mode and origin-based trust, closing the remaining gaps from the git-backed team-sync specification.

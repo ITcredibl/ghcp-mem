@@ -149,11 +149,14 @@ const CORPUS = [
   // Synthetic self-queries and the hand-curated gold corpus measure on
   // different scales (gold is deliberately harder), so each mode carries its
   // own committed floor map.
-  const floorMap = goldPath ? baseline.goldFloors : baseline.floors;
+  // Optional --floors-key <name> selects a named floor map (e.g. the held-out
+  // paraphrase set measures on a very different scale from the keyword gold set).
+  const floorsKeyIdx = process.argv.indexOf('--floors-key');
+  const floorsKey =
+    floorsKeyIdx !== -1 ? process.argv[floorsKeyIdx + 1] : goldPath ? 'goldFloors' : 'floors';
+  const floorMap = baseline[floorsKey];
   if (!floorMap) {
-    console.error(
-      `FAIL: scripts/eval-baseline.json has no "${goldPath ? 'goldFloors' : 'floors'}" map for this eval mode`,
-    );
+    console.error(`FAIL: scripts/eval-baseline.json has no "${floorsKey}" map for this eval mode`);
     process.exit(1);
   }
 

@@ -78,7 +78,7 @@ export function exportBundle(
 ): string {
   if (typeof passphrase !== 'string' || passphrase.length < 8)
     throw new Error('Team sync requires a passphrase of at least 8 characters');
-  const sessions = shareableSessions(input.sessions);
+  const sessions = shareableSessions(input.sessions).map(stripMachineLocalFields);
   if (sessions.length > MAX_BUNDLE_SESSIONS)
     throw new Error(`A bundle holds at most ${MAX_BUNDLE_SESSIONS} sessions`);
   const bundle: SyncBundle = {
@@ -127,7 +127,9 @@ export function importBundle(
       skippedDuplicates++;
       continue;
     }
-    added.push({ ...session, importedAt: Date.now(), origin: 'team' });
+    // Defensive re-strip (covers bundles produced before v1.21.1): a
+    // teammate's usage counters must never read as LOCAL corroboration here.
+    added.push({ ...stripMachineLocalFields(session), importedAt: Date.now(), origin: 'team' });
   }
   const knownLessonIds = new Set((existing.lessons ?? []).map((lesson) => lesson.id));
   const lessonsAdded = (bundle.lessons ?? []).filter((lesson) => !knownLessonIds.has(lesson.id));
@@ -164,33 +166,64 @@ export interface ClearChunk {
 const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:\\|\/(?:Users|home|root|var|tmp|private)\/)[^\s"'`)\]},;]*/g;
 
 /**
+ * Fields that never leave the machine in ANY sync mode: machine-local
+ * derivatives (embedding), this machine's feedback counters (usage — the
+ * receiver's trust boundary depends on acceptance being LOCAL), and
+ * import-lineage stamps the receiver must set itself.
+ */
+const SYNC_DROPPED_FIELDS = ['embedding', 'usage', 'origin', 'importedAt'] as const;
+
+/** Identifier fields exempt from scrubbing — opaque ids/hashes, never prose. */
+const SCRUB_EXEMPT_KEYS = new Set([
+  'id',
+  'contentHash',
+  'supersedes',
+  'supersededBy',
+  'correctionOf',
+]);
+
+function cleanText(text: string): string {
+  return redact(text, {
+    redactSecrets: true,
+    honorPrivateTags: true,
+    detectHighEntropy: true,
+  }).text.replace(ABSOLUTE_PATH_RE, '<REDACTED_PATH>');
+}
+
+/**
+ * Recursively scrub EVERY string in the value — object keys included
+ * (keyFileHashes keys are file paths) — so nested fields added in future
+ * versions can never silently reopen the plaintext-export gap the v1.21.0
+ * review found in `outcomes[].observations` and `decisionEvidence[].filePath`.
+ */
+function deepScrub(value: unknown, parentKey?: string): unknown {
+  if (typeof value === 'string')
+    return parentKey !== undefined && SCRUB_EXEMPT_KEYS.has(parentKey) ? value : cleanText(value);
+  if (Array.isArray(value)) return value.map((entry) => deepScrub(entry, parentKey));
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [cleanText(key), deepScrub(entry, key)]),
+    );
+  return value;
+}
+
+/** Remove the fields that must never travel, in either sync mode. */
+export function stripMachineLocalFields(session: CompressedSession): CompressedSession {
+  const copy: Record<string, unknown> = { ...session };
+  for (const field of SYNC_DROPPED_FIELDS) delete copy[field];
+  return copy as unknown as CompressedSession;
+}
+
+/**
  * Export-time redaction gateway (defense-in-depth on top of capture-time
- * redaction): re-scrub secrets and strip machine-identifying absolute paths
- * from every text surface that will land in git as plaintext.
+ * redaction) for plaintext chunks: drop machine-local fields, then deep-scrub
+ * every string surface that will land in git as plaintext.
  */
 export function scrubForClearExport(
   session: CompressedSession,
   options: { anonymizeAuthors?: boolean } = {},
 ): CompressedSession {
-  const clean = (text: string): string =>
-    redact(text, {
-      redactSecrets: true,
-      honorPrivateTags: true,
-      detectHighEntropy: true,
-    }).text.replace(ABSOLUTE_PATH_RE, '<REDACTED_PATH>');
-  const scrubbed: CompressedSession = {
-    ...session,
-    summary: clean(session.summary),
-    keyFiles: session.keyFiles.map(clean),
-    keyTopics: session.keyTopics.map(clean),
-    decisions: session.decisions.map(clean),
-    problemsSolved: session.problemsSolved.map(clean),
-    userTags: session.userTags.map(clean),
-    retractedReason: session.retractedReason ? clean(session.retractedReason) : undefined,
-    // Raw embeddings are machine-local derivatives — never useful to teammates
-    // and needless bulk in a reviewed diff.
-    embedding: undefined,
-  };
+  const scrubbed = deepScrub(stripMachineLocalFields(session)) as CompressedSession;
   if (options.anonymizeAuthors && scrubbed.author) {
     // Deterministic opaque alias: teammates can still correlate one author's
     // memories without learning who they are.
@@ -276,7 +309,7 @@ export function importClearChunks(
     }
     knownIds.add(session.id);
     if (session.contentHash) knownHashes.add(session.contentHash);
-    added.push({ ...session, importedAt: Date.now(), origin: 'team' });
+    added.push({ ...stripMachineLocalFields(session), importedAt: Date.now(), origin: 'team' });
   }
   return { added, skippedDuplicates, invalid };
 }
@@ -286,14 +319,21 @@ export function importClearChunks(
 /**
  * Trust multiplier by where a memory entered this machine. Team-shared rows
  * start discounted (a teammate validated them, this machine has not) and earn
- * the discount back through LOCAL corroboration: an explicit /accept or a
- * recorded improved outcome restores full weight.
+ * the discount back ONLY through LOCAL corroboration: an explicit /accept
+ * (usage counters are stripped at export AND import, so any acceptance is
+ * local by construction) or an improved outcome recorded on this machine
+ * AFTER the import (imported outcomes carry pre-import timestamps and never
+ * count — the v1.21.0 review showed remote feedback laundering into local
+ * trust).
  */
 export function originTrust(
-  session: Pick<CompressedSession, 'origin' | 'usage' | 'outcomes'>,
+  session: Pick<CompressedSession, 'origin' | 'usage' | 'outcomes' | 'importedAt'>,
 ): number {
   if (session.origin !== 'team') return 1;
+  const importedAt = session.importedAt ?? Number.MAX_SAFE_INTEGER;
   const locallyAccepted = (session.usage?.accepted ?? 0) > 0;
-  const locallyImproved = (session.outcomes ?? []).some((outcome) => outcome.status === 'improved');
+  const locallyImproved = (session.outcomes ?? []).some(
+    (outcome) => outcome.status === 'improved' && outcome.observedAt >= importedAt,
+  );
   return locallyAccepted || locallyImproved ? 1 : 0.75;
 }

@@ -30,23 +30,9 @@ import { randomUUID } from 'crypto';
 import type { CompressedSession, ContextDatabase } from './types';
 // Shared keyword scorer + rank fusion — single source of truth shared with
 // ContextStore so the stdio path and the in-VS-Code @mem path rank identically.
-import {
-  extractTerms,
-  significantQueryTerms,
-  requiredSignificantMatches,
-  computeAvgDocLen,
-  computeTermStats,
-  keywordScoreFromStats,
-  SessionTermStats,
-  fuseRanks,
-  FusionInput,
-  FusionWeights,
-  FUSION_RANK_MISS,
-} from './searchCore';
+import { computeTermStats, SessionTermStats } from './searchCore';
 // Intent classification + decayed confidence — reused so MCP fusion carries the
 // same intent reweighting and confidence signal as the chat participant.
-import { classifyIntent, intentWeights } from './queryIntent';
-import { effectiveConfidence } from './decay';
 // Phase 7: reuse pure helpers from the chat-side modules so MCP retrieval
 // stays at full parity with the chat participant.
 import { buildEntityRecord } from './entity';
@@ -74,9 +60,10 @@ import { isLifecycleState, LIFECYCLE_STATES, transitionLifecycle } from './lifec
 import { filterByScope, normalizeScopeStamp, parseAuthor, SCOPE_LEVELS } from './memoryScope';
 import { OUTCOME_STATUSES, recordOutcome } from './outcomes';
 import { defaultPolicy, evaluateWrite, parsePolicy } from './orgPolicy';
-import { originTrust } from './teamSync';
+import { ensureTrustMigrated, originTrust } from './teamSync';
+import { retrieve, RetrievalOutcome } from './retrieval';
 import { budgetResults } from './contextBudget';
-import { cosineSim, localEmbed } from './embeddings';
+import { localEmbed } from './embeddings';
 import { createCheckpoint, verifyCheckpoint } from './agentCheckpoint';
 import { TASK_TOOLS, isTaskTool, handleTaskTool } from './taskTools';
 import { redact } from './redactor';
@@ -151,19 +138,25 @@ export function redactPersistedStrings<T extends Record<string, unknown>>(
   }
   return { redacted: out as T, count };
 }
-// Read the package version at module load so we never drift from package.json.
-// Falls back to 'unknown' if the bundled package.json can't be located
-// (e.g. when this file is imported from out-test/ during the test compile).
+// Version: a compile-time constant in bundled builds (esbuild `define`) so the
+// bundle embeds only the version string, never the whole package.json — full
+// embedding made bundle bytes depend on runtime-irrelevant manifest fields
+// (REL-001). tsc-compiled test builds fall through to reading package.json.
+declare const __GHCP_MEM_VERSION__: string | undefined;
 let SERVER_VERSION = 'unknown';
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  SERVER_VERSION = require('../package.json').version ?? 'unknown';
-} catch {
+if (typeof __GHCP_MEM_VERSION__ === 'string') {
+  SERVER_VERSION = __GHCP_MEM_VERSION__;
+} else {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    SERVER_VERSION = require('../../package.json').version ?? 'unknown';
+    SERVER_VERSION = require('../package.json').version ?? 'unknown';
   } catch {
-    /* keep 'unknown' */
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      SERVER_VERSION = require('../../package.json').version ?? 'unknown';
+    } catch {
+      /* keep 'unknown' */
+    }
   }
 }
 
@@ -228,11 +221,13 @@ async function loadDatabase(): Promise<StoredDatabase> {
         }
         return { version: 2, sessions: [], lastUpdated: 0 };
       }
+      ensureTrustMigrated(parsedEnc); // TRUST-001: in-memory for legacy files; persisted with the next write
       dbCache = { path: p, mtimeMs: stat.mtimeMs, db: parsedEnc };
       return parsedEnc;
     }
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.sessions)) {
+      ensureTrustMigrated(parsed); // TRUST-001: in-memory for legacy files; persisted with the next write
       dbCache = { path: p, mtimeMs: stat.mtimeMs, db: parsed };
       return parsed;
     }
@@ -254,7 +249,7 @@ async function loadDatabase(): Promise<StoredDatabase> {
  * LM to embed the query) and near-duplicate collapse / query expansion remain
  * chat-side only — tracked as MCP follow-ups.
  */
-function searchSessions(
+export function searchSessionsDetailed(
   db: StoredDatabase,
   query: string,
   filters: {
@@ -265,7 +260,7 @@ function searchSessions(
     workspaceName?: string;
   } = {},
   limit = 5,
-): StoredSession[] {
+): RetrievalOutcome {
   let candidates = [...db.sessions];
   // Retracted sessions are kept on disk for audit but never surfaced — mirror
   // the in-process search which filters them out before ranking.
@@ -284,115 +279,35 @@ function searchSessions(
     candidates = candidates.filter((s) => s.workspaceName?.toLowerCase().includes(needle));
   }
 
-  const terms = extractTerms(query ?? '');
-  const termCount = terms.size;
-  const avgDocLen = computeAvgDocLen(candidates);
-  // Tokenise each candidate once and reuse the stats for both the BM25 score
-  // and the per-session match-ratio signal.
-  const statsById = new Map<string, SessionTermStats>();
-  for (const s of candidates) statsById.set(s.id, computeTermStats(s));
-  const kScored = candidates.map((s) => ({
-    s,
-    k: keywordScoreFromStats(statsById.get(s.id)!, terms, false, avgDocLen),
-  }));
-
-  // Abstention (v1.20.1): the caller asked a real question and NOTHING in the
-  // store matches any query term. Falling back to recency here invents
-  // plausible-looking but unrelated "memory" — the worst failure mode for an
-  // agent consumer (the v1.20.0 review's dinosaur-fossils probe). Return
-  // nothing; the tool layer reports no_confident_match explicitly.
-  if (terms.size > 0 && !kScored.some((e) => e.k > 0)) return [];
-
-  // When the user supplied a query AND at least one candidate has a positive
-  // keyword score, drop the zero-score candidates so unrelated sessions can't
-  // outrank a clear match through tiny differences in RRF rank position.
-  let scoped = candidates;
-  if (terms.size > 0 && kScored.some((e) => e.k > 0)) {
-    const positive = new Set(kScored.filter((e) => e.k > 0).map((e) => e.s.id));
-    scoped = candidates.filter((s) => positive.has(s.id));
-  }
-
-  // Calibrated relevance (v1.21.1, shared thresholds since v1.21.2 — see
-  // searchCore.requiredSignificantMatches, parity-tested against the
-  // extension store): matching ONLY stopword-grade words ("what", "the") is
-  // incidental overlap, not relevance. Require every result to match at least
-  // one SIGNIFICANT term, and require the best candidate to meet the shared
-  // coverage floor — otherwise abstain.
-  const significant = significantQueryTerms(terms);
-  const sigMatched = (s: StoredSession): number => {
-    const stats = statsById.get(s.id)!;
-    let matchedCount = 0;
-    for (const t of significant) if (stats.wtf.has(t)) matchedCount++;
-    return matchedCount;
-  };
-  if (significant.size > 0) {
-    scoped = scoped.filter((s) => sigMatched(s) > 0);
-    if (!scoped.some((s) => sigMatched(s) >= requiredSignificantMatches(significant.size)))
-      return [];
-  }
-
-  // Dense rerank (v1.20.1): the headless server has no LM, but the
-  // dependency-free lexical embedder adds a word-distribution signal the pure
-  // BM25 ranks lack. Only keyword-positive candidates are embedded, and
-  // vectors are cached per (id, endTime), so per-query cost stays bounded.
-  // This is NOT semantic paraphrase matching — that needs neural embeddings,
-  // which only the extension host can provide.
-  let eRank: Map<string, number> | undefined;
-  if (terms.size > 0 && scoped.length > 1) {
-    const queryVec = localEmbed(query);
-    const sims = scoped
-      .map((s) => ({ id: s.id, sim: cosineSim(queryVec, mcpEmbeddingFor(s)) }))
-      .sort((a, b) => b.sim - a.sim);
-    eRank = new Map(sims.map((entry, index) => [entry.id, index]));
-  }
-  const scopedKScored = kScored.filter((e) => scoped.includes(e.s));
-  const keywordRanked = [...scopedKScored].sort((a, b) => b.k - a.k);
-  const kRank = new Map<string, number>();
-  keywordRanked.forEach((e, i) => kRank.set(e.s.id, i));
-  const recencyRanked = [...scoped].sort((a, b) => b.endTime - a.endTime);
-  const rRank = new Map<string, number>();
-  recencyRanked.forEach((s, i) => rRank.set(s.id, i));
-
-  // Fold intent reweighting into the shared fusion weights. Learned adaptive
-  // weights live only in the extension host, so the headless server uses the
-  // neutral 1.0 multipliers for confidence/reinforcement/feedback.
-  const iw = intentWeights(classifyIntent(query ?? ''));
-  const fusionWeights: FusionWeights = {
-    keyword: iw.keywordWeight,
-    recencyMultiplier: iw.recencyMultiplier,
-    confidence: 1,
-    reinforcement: 1,
-    feedback: 1,
-    decisionBoost: iw.decisionBoost,
-    problemBoost: iw.problemBoost,
-  };
-
-  const byId = new Map(scoped.map((s) => [s.id, s]));
-  const fusionInputs: FusionInput[] = scoped.map((s) => {
-    const stats = statsById.get(s.id)!;
-    let matched = 0;
-    for (const t of terms) if (stats.wtf.has(t)) matched++;
-    return {
-      id: s.id,
-      endTime: s.endTime,
-      keywordRank: kRank.get(s.id) ?? FUSION_RANK_MISS,
-      recencyRank: rRank.get(s.id) ?? FUSION_RANK_MISS,
-      embeddingRank: eRank?.get(s.id),
-      workspaceMatch: !!filters.workspaceId && s.workspaceId === filters.workspaceId,
-      matchRatio: termCount > 0 ? matched / termCount : 0,
-      // Team-shared rows rank discounted until locally corroborated.
-      confidence: (effectiveConfidence(s) ?? 0.5) * originTrust(s),
-      retrieved: s.usage?.retrieved ?? 0,
-      accepted: s.usage?.accepted ?? 0,
-      rejected: s.usage?.rejected ?? 0,
-      superseded: !!s.supersededBy,
-      hasDecisions: s.decisions.length > 0,
-      hasProblems: s.problemsSolved.length > 0,
-    };
+  // Unified pipeline (v1.22.0, RET-003): identical scoring, calibration,
+  // fusion, duplicate collapse and relevance labeling as the extension store
+  // (see src/retrieval.ts); this function contributes only the pre-filters
+  // above and the headless adapters below (local lexical embedder, no
+  // workspace boost, no learned weights — declared capability differences).
+  const statsCache = new Map<string, SessionTermStats>();
+  return retrieve(candidates, query ?? '', limit, {
+    statsFor: (s) => {
+      let stats = statsCache.get(s.id);
+      if (!stats) {
+        stats = computeTermStats(s);
+        statsCache.set(s.id, stats);
+      }
+      return stats;
+    },
+    embedQuery: (q) => localEmbed(q),
+    embeddingFor: (s) => mcpEmbeddingFor(s),
+    embeddingProviderVersion: 'local-lexical/1',
   });
+}
 
-  const scored = fuseRanks(fusionInputs, fusionWeights, { now: Date.now() });
-  return scored.slice(0, limit).map((r) => byId.get(r.id)!);
+/** Back-compat wrapper: sessions only. Prefer searchSessionsDetailed. */
+export function searchSessions(
+  db: StoredDatabase,
+  query: string,
+  filters: Parameters<typeof searchSessionsDetailed>[2] = {},
+  limit = 5,
+): StoredSession[] {
+  return searchSessionsDetailed(db, query, filters, limit).items.map((item) => item.session);
 }
 
 /** Per-session embedding cache for the dense rerank; keyed by (id, endTime). */
@@ -1032,7 +947,7 @@ async function handleCall(name: string, args: any): Promise<any> {
   switch (name) {
     case 'ghcpMem_search': {
       const limit = clamp(args?.limit, 5, 25);
-      const hits = searchSessions(
+      const outcome = searchSessionsDetailed(
         db,
         String(args?.query ?? ''),
         {
@@ -1044,49 +959,41 @@ async function handleCall(name: string, args: any): Promise<any> {
         },
         limit,
       );
-      // Explicit abstention (v1.20.1): a real query with zero matches gets a
-      // machine-readable "no confident match", never recency-ranked filler.
-      if (hits.length === 0 && String(args?.query ?? '').trim()) {
+      // Machine-readable relevance states (RET-002): match / weak_match per
+      // result, no_match as explicit abstention — never recency filler.
+      if (outcome.state === 'no_match' && String(args?.query ?? '').trim()) {
         return textContent({
           ...budgetResults([], args?.maxTokens ?? 1200),
+          relevance_state: 'no_match',
           no_confident_match: true,
           note: 'No stored memory matches any term of this query. Do not treat other sessions as relevant; rephrase with project terms, or answer from the code instead.',
         });
       }
-      // Per-result relevance receipts (v1.21.2): coverage of SIGNIFICANT query
-      // terms, so a consumer can see "this matched 1 of 3 meaningful words"
-      // instead of trusting rank order. Lexical coverage cannot separate every
-      // boundary case (the published paraphrase gap) — when even the best hit
-      // covers under half the significant terms, the whole response says so.
-      const sigTerms = significantQueryTerms(extractTerms(String(args?.query ?? '')));
-      const coverage = (session: StoredSession): number => {
-        if (sigTerms.size === 0) return 1;
-        const stats = computeTermStats(session);
-        let matched = 0;
-        for (const t of sigTerms) if (stats.wtf.has(t)) matched++;
-        return matched / sigTerms.size;
-      };
-      const coverages = new Map(hits.map((session) => [session.id, coverage(session)]));
-      const results = hits.map((session) =>
+      const results = outcome.items.map((item) =>
         args?.detail === 'index'
           ? {
-              id: session.id,
-              date: new Date(session.endTime).toISOString(),
-              type: session.observationType,
-              summary: session.summary.slice(0, 220),
-              keyFiles: session.keyFiles.slice(0, 3),
-              termCoverage: coverages.get(session.id),
+              id: item.session.id,
+              date: new Date(item.session.endTime).toISOString(),
+              type: item.session.observationType,
+              summary: item.session.summary.slice(0, 220),
+              keyFiles: item.session.keyFiles.slice(0, 3),
+              termCoverage: item.termCoverage,
+              relevance: item.relevance,
             }
-          : { ...summarizeForMcp(session), termCoverage: coverages.get(session.id) },
+          : {
+              ...summarizeForMcp(item.session),
+              termCoverage: item.termCoverage,
+              relevance: item.relevance,
+            },
       );
-      const bestCoverage = Math.max(0, ...coverages.values());
-      const weak = sigTerms.size > 0 && hits.length > 0 && bestCoverage < 0.5;
+      const weak = outcome.state === 'weak_match';
       return textContent({
         ...budgetResults(results, args?.maxTokens ?? 1200),
+        relevance_state: outcome.state,
         ...(weak
           ? {
               low_confidence: true,
-              note: `Best result matches only ${Math.round(bestCoverage * 100)}% of the significant query terms — treat as a lead, not an answer, and verify against the code.`,
+              note: `Best result matches only ${Math.round(Math.max(0, ...outcome.items.map((i) => i.termCoverage)) * 100)}% of the significant query terms — treat as a lead, not an answer, and verify against the code.`,
             }
           : {}),
       });
@@ -1787,4 +1694,4 @@ if (require.main === module) {
   main();
 }
 
-export { TOOLS, searchSessions, loadDatabase, storePath };
+export { TOOLS, loadDatabase, storePath };

@@ -23,18 +23,36 @@ import { extractTerms, keywordScore, computeAvgDocLen } from './searchCore';
 
 export interface EvalQuery {
   q: string;
-  /** Session ids that *should* appear in the top-K. */
+  /**
+   * Session ids that *should* appear in the top-K. An EMPTY list marks a
+   * NEGATIVE query (v1.22.0, EVAL-001): nothing in the corpus answers it, and
+   * the correct behavior is abstention — any returned result counts as a
+   * false positive.
+   */
   relevant: string[];
+  /** Optional label ("paraphrase", "negative", "stale", …) for reporting. */
+  kind?: string;
 }
 
 export interface EvalRunStats {
   label: string;
   k: number;
+  /** Recall/MRR/nDCG averaged over POSITIVE queries only. */
   recall: number;
   mrr: number;
   /** Phase 3: normalised Discounted Cumulative Gain at k. */
   ndcg: number;
-  perQuery: Array<{ q: string; hits: number; rank: number | null }>;
+  /** EVAL-001: relevant-returned / total-returned, over positive queries that returned anything. */
+  precision: number;
+  /** Fraction of ALL queries answered with zero results. */
+  abstentionRate: number;
+  /** Fraction of NEGATIVE queries that returned anything (lower is better). */
+  falsePositiveRate: number;
+  positives: number;
+  negatives: number;
+  perQuery: Array<{ q: string; kind?: string; hits: number; rank: number | null }>;
+  /** Per-query failures so a regression names its queries, not just a number. */
+  failures: Array<{ q: string; kind?: string; reason: string }>;
 }
 
 export interface EvalReport {
@@ -141,27 +159,80 @@ async function evalRun(
   let totalRecall = 0;
   let totalMrr = 0;
   let totalNdcg = 0;
+  let totalPrecision = 0;
+  let answeredPositives = 0;
+  let abstained = 0;
+  let positives = 0;
+  let negatives = 0;
+  let falsePositives = 0;
   const perQuery: EvalRunStats['perQuery'] = [];
+  const failures: EvalRunStats['failures'] = [];
   for (const q of queries) {
     const top = await Promise.resolve(run(q.q));
     const relevantSet = new Set(q.relevant);
+    if (top.length === 0) abstained++;
+    if (relevantSet.size === 0) {
+      // Negative query: abstention is the right answer.
+      negatives++;
+      if (top.length > 0) {
+        falsePositives++;
+        failures.push({
+          q: q.q,
+          kind: q.kind,
+          reason: `false positive: returned ${top.length} result(s), expected abstention`,
+        });
+      }
+      perQuery.push({ q: q.q, kind: q.kind, hits: 0, rank: null });
+      continue;
+    }
+    positives++;
     const r = recallAtK(top, relevantSet, K);
     const { mrr, rank } = reciprocalRank(top, relevantSet);
     const n = ndcgAtK(top, relevantSet, K);
     totalRecall += r;
     totalMrr += mrr;
     totalNdcg += n;
-    perQuery.push({ q: q.q, hits: r * Math.min(relevantSet.size, K), rank });
+    if (top.length > 0) {
+      answeredPositives++;
+      const returned = top.slice(0, K);
+      totalPrecision += returned.filter((s) => relevantSet.has(s.id)).length / returned.length;
+    }
+    if (rank === null)
+      failures.push({
+        q: q.q,
+        kind: q.kind,
+        reason: top.length === 0 ? 'abstained on a relevant query' : 'relevant result not in top-K',
+      });
+    perQuery.push({ q: q.q, kind: q.kind, hits: r * Math.min(relevantSet.size, K), rank });
   }
-  const n = Math.max(queries.length, 1);
+  const posN = Math.max(positives, 1);
   return {
     label,
     k: K,
-    recall: totalRecall / n,
-    mrr: totalMrr / n,
-    ndcg: totalNdcg / n,
+    recall: totalRecall / posN,
+    mrr: totalMrr / posN,
+    ndcg: totalNdcg / posN,
+    precision: answeredPositives > 0 ? totalPrecision / answeredPositives : 0,
+    abstentionRate: queries.length > 0 ? abstained / queries.length : 0,
+    falsePositiveRate: negatives > 0 ? falsePositives / negatives : 0,
+    positives,
+    negatives,
     perQuery,
+    failures,
   };
+}
+
+/**
+ * Evaluate an arbitrary retrieval runner against a gold query set (EVAL-001).
+ * Lets the gate score the PRODUCTION stdio pipeline with the same math as the
+ * extension-store configurations.
+ */
+export async function runGoldEvalAgainst(
+  label: string,
+  queries: EvalQuery[],
+  run: (q: string) => Promise<CompressedSession[]> | CompressedSession[],
+): Promise<EvalRunStats> {
+  return evalRun(label, queries, run);
 }
 
 /**

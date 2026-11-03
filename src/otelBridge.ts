@@ -44,17 +44,28 @@ export type OtlpSender = (
 
 const SERVICE_NAME = 'ghcp-mem';
 
+/** Compile-time version constant in bundled builds (see esbuild.js `define`). */
+declare const __GHCP_MEM_VERSION__: string | undefined;
+
 /** Resolve the extension version for the OTLP scope, tolerating bundling. */
 function resolveVersion(): string {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require('../package.json').version ?? 'unknown';
-  } catch {
+  // Bundled builds embed only the version string, never the whole
+  // package.json (REL-001 — manifest churn must not change bundle bytes).
+  // The if/else shape matters: esbuild constant-folds the condition and
+  // prunes the else branch, so the require() never reaches the bundle.
+  if (typeof __GHCP_MEM_VERSION__ === 'string') {
+    return __GHCP_MEM_VERSION__;
+  } else {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      return require('../../package.json').version ?? 'unknown';
+      return require('../package.json').version ?? 'unknown';
     } catch {
-      return 'unknown';
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        return require('../../package.json').version ?? 'unknown';
+      } catch {
+        return 'unknown';
+      }
     }
   }
 }

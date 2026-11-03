@@ -8,6 +8,7 @@ import {
   importBundle,
   importClearChunks,
   originTrust,
+  ensureTrustMigrated,
   shareableSessions,
 } from '../teamSync';
 import { CompressedSession } from '../types';
@@ -229,6 +230,71 @@ test('teamSync: origin trust discounts team rows until LOCALLY corroborated', ()
     0.75,
     'a receiver-stamped IMPORTED outcome must never count as local corroboration',
   );
+});
+
+test('TRUST-001: legacy v1.21.0/v1.21.1 stores migrate conservatively, exactly once', () => {
+  // v1.21.0-era row: sender usage retained, outcome unflagged — reads as
+  // locally corroborated under the v1.21.2 rules unless migrated.
+  const db = {
+    sessions: [
+      mkSession({
+        id: 'legacy-team',
+        origin: 'team',
+        importedAt: 1000,
+        usage: { retrieved: 5, lastRetrievedAt: 0, accepted: 2, rejected: 0 },
+        outcomes: [{ status: 'improved', observedAt: 500, observations: [] }],
+      }),
+      mkSession({
+        id: 'local-row',
+        usage: { retrieved: 3, lastRetrievedAt: 0, accepted: 1, rejected: 0 },
+        outcomes: [{ status: 'improved', observedAt: 500, observations: [] }],
+      }),
+    ],
+  };
+  assert.equal(originTrust(db.sessions[0]), 1, 'precondition: the legacy hole exists');
+  const changed = ensureTrustMigrated(db);
+  assert.ok(changed >= 2);
+  assert.equal(originTrust(db.sessions[0]), 0.75, 'migrated team row is discounted');
+  assert.equal(db.sessions[0].usage, undefined, 'ambiguous sender usage removed');
+  assert.equal(db.sessions[0].outcomes?.[0].imported, true, 'ambiguous outcome stamped imported');
+  // Local rows are untouched — migration only concerns team-origin memories.
+  assert.equal(originTrust(db.sessions[1]), 1);
+  assert.equal(db.sessions[1].usage?.accepted, 1);
+  assert.equal(db.sessions[1].outcomes?.[0].imported, undefined);
+
+  // Post-migration LOCAL corroboration must survive later loads: the marker
+  // makes the migration one-shot.
+  db.sessions[0].usage = { retrieved: 1, lastRetrievedAt: 0, accepted: 1, rejected: 0 };
+  db.sessions[0].outcomes!.push({ status: 'improved', observedAt: 2000, observations: [] });
+  assert.equal(ensureTrustMigrated(db), 0, 'marker prevents a second migration');
+  assert.equal(originTrust(db.sessions[0]), 1, 'local /accept after migration earns full trust');
+});
+
+test('TRUST-001: re-export → re-import never converts remote evidence into local', () => {
+  // A migrated team row with one genuinely LOCAL outcome gets re-shared.
+  const db = {
+    sessions: [
+      mkSession({
+        id: 'reshared',
+        contentHash: 'abcdef0123456789',
+        origin: 'team',
+        importedAt: 1000,
+        outcomes: [
+          { status: 'improved', observedAt: 500, observations: [], imported: true },
+          { status: 'improved', observedAt: 2000, observations: [] },
+        ],
+      }),
+    ],
+    trustMigrationV: 1,
+  };
+  assert.equal(originTrust(db.sessions[0]), 1, 'locally corroborated before re-share');
+  const [chunk] = exportClearChunks({ sessions: db.sessions, scopeLabel: 'r' });
+  const reimported = importClearChunks([chunk.content], { sessions: [] }).added[0];
+  assert.ok(
+    reimported.outcomes?.every((o) => o.imported === true),
+    'every outcome is remote on the receiving machine',
+  );
+  assert.equal(originTrust(reimported), 0.75, 'the receiver must corroborate for itself');
 });
 
 test('teamSync: sender-controlled timestamps cannot buy trust (v1.21.1 review probe)', () => {

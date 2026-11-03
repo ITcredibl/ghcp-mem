@@ -188,12 +188,18 @@ test('MCP compile budgets context and reports branch-validity omissions', (t) =>
   const dir = mkdtempSync(join(tmpdir(), 'ghcp-mem-compile-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const sessions = [
-    mkSession({ id: 'mainline', summary: 'checkout retry fixed', lifecycle: 'merged' }),
+    mkSession({
+      id: 'mainline',
+      summary: 'checkout retry fixed',
+      lifecycle: 'merged',
+      keyTopics: ['checkout', 'retry'],
+    }),
     mkSession({
       id: 'spec',
       summary: 'checkout experiment',
       lifecycle: 'experimental',
       branchName: 'feat/other',
+      keyTopics: ['checkout', 'experiment'],
     }),
   ];
   const responses = serve(
@@ -294,10 +300,11 @@ test('MCP agent-scoped memories are private to their author identity', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ghcp-mem-scope-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const sessions = [
-    mkSession({ id: 'shared', summary: 'auth notes shared' }),
+    mkSession({ id: 'shared', summary: 'auth notes shared', keyTopics: ['auth', 'shared'] }),
     mkSession({
       id: 'private',
       summary: 'auth notes private scratch',
+      keyTopics: ['auth', 'scratch'],
       scopeLevel: 'agent',
       author: 'claude:reviewer',
     }),

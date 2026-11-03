@@ -335,6 +335,52 @@ export function importClearChunks(
   return { added, skippedDuplicates, invalid };
 }
 
+// ── Legacy trust migration (v1.22.0, TRUST-001) ─────────────────────────────
+
+export const TRUST_MIGRATION_V = 1;
+
+/**
+ * One-shot upgrade for stores written before receiver-owned trust (v1.21.2).
+ * Conservative by design: on every team-origin session, usage counters are
+ * removed (they may be the sender's — a local /accept re-earns full trust in
+ * one click) and every unflagged outcome is stamped `imported` (pre-migration
+ * data cannot distinguish a locally recorded outcome from a sender's, and
+ * sender-controlled fields must never establish local trust). Audit history
+ * is preserved — nothing is deleted except the ambiguous counters.
+ *
+ * MUST run at most once per store (see ContextDatabase.trustMigrationV):
+ * after migration, unflagged outcomes on team rows are exactly how legitimate
+ * LOCAL outcomes look, so a re-run would destroy real local corroboration.
+ */
+export function migrateTeamTrust(sessions: CompressedSession[]): number {
+  let changed = 0;
+  for (const session of sessions) {
+    if (session.origin !== 'team') continue;
+    if (session.usage) {
+      delete session.usage;
+      changed++;
+    }
+    for (const outcome of session.outcomes ?? []) {
+      if (!outcome.imported) {
+        outcome.imported = true;
+        changed++;
+      }
+    }
+  }
+  return changed;
+}
+
+/** Apply the one-shot migration to a parsed database when its marker is absent. */
+export function ensureTrustMigrated(db: {
+  sessions: CompressedSession[];
+  trustMigrationV?: number;
+}): number {
+  if (db.trustMigrationV === TRUST_MIGRATION_V) return 0;
+  const changed = migrateTeamTrust(db.sessions);
+  db.trustMigrationV = TRUST_MIGRATION_V;
+  return changed;
+}
+
 // ── Origin trust (v1.21.0) ──────────────────────────────────────────────────
 
 /**

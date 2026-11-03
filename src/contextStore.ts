@@ -1,27 +1,18 @@
 import * as vscode from 'vscode';
 import { CompressedSession, ContextDatabase, ObservationType, getConfig } from './types';
-import { cosineSim, EmbeddingFn } from './embeddings';
+import { EmbeddingFn } from './embeddings';
 import { redact } from './redactor';
 import { serializeDb, deserializeDb, EncryptionMode } from './storageCrypto';
 import {
   extractTerms as sharedExtractTerms,
   keywordScore as sharedKeywordScore,
   computeTermStats,
-  keywordScoreFromStats,
   SessionTermStats,
-  fuseRanks,
-  FusionInput,
-  FusionWeights,
-  FUSION_RANK_MISS,
-  significantQueryTerms,
-  requiredSignificantMatches,
 } from './searchCore';
 import { validateSessions } from './validator';
 import { getRepoScopeSync } from './repoScope';
 import { aggregateTokenSavings } from './savings';
-import { classifyIntent, intentWeights } from './queryIntent';
 import { expandQuery } from './queryExpansion';
-import { effectiveConfidence } from './decay';
 import { walkSupersedesChain } from './entity';
 import {
   Snippet,
@@ -33,6 +24,8 @@ import {
 import { ConflictWarning, detectConflicts } from './conflicts';
 import { isBranchValid } from './lifecycle';
 import { evaluateWrite, OrgMemoryPolicy } from './orgPolicy';
+import { ensureTrustMigrated } from './teamSync';
+import { retrieve } from './retrieval';
 import {
   AdaptiveWeightsState,
   FeedbackSample,
@@ -53,17 +46,6 @@ const ADAPTIVE_KEY = 'ghcpMem.adaptiveWeights';
 const DB_VERSION = 2;
 const MAX_BACKUPS = 5;
 const BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
-
-/** Jaccard similarity on two string arrays (case-insensitive, deduped). */
-function jaccard(a: string[], b: string[]): number {
-  if (!a.length && !b.length) return 0;
-  const sa = new Set(a.map((s) => s.toLowerCase()));
-  const sb = new Set(b.map((s) => s.toLowerCase()));
-  let inter = 0;
-  for (const v of sa) if (sb.has(v)) inter++;
-  const union = sa.size + sb.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
 
 export interface SearchFilters {
   type?: ObservationType;
@@ -172,6 +154,14 @@ export class ContextStore implements vscode.Disposable {
     private readonly encryption?: { key: Buffer; mode: EncryptionMode; salt?: Buffer },
   ) {
     this.db = this.load();
+    // TRUST-001 (v1.22.0): one-shot upgrade of pre-receiver-owned-trust data.
+    // The marker persists with the next write, so re-runs can never destroy
+    // genuinely local post-migration feedback.
+    const migrated = ensureTrustMigrated(this.db);
+    if (migrated > 0)
+      console.log(
+        `[GHCP-MEM] trust migration: conservatively re-stamped ${migrated} field(s) on team-origin memories; use /accept to re-establish local trust.`,
+      );
     // Chunk index rebuild to avoid blocking the extension host on large stores.
     this.rebuildIndexAsync().then(() => {
       // Run retention once at startup (not on every addSession).
@@ -1000,8 +990,6 @@ export class ContextStore implements vscode.Disposable {
     queryEmbedding?: number[],
   ): CompressedSession[] {
     const baseTerms = this.extractTerms(query);
-    const intent = classifyIntent(query ?? '');
-    const weights = intentWeights(intent);
 
     // Query expansion: extend the term set with co-occurring terms drawn
     // from the inverted index. Tagged so we don't trigger the match-ratio
@@ -1010,7 +998,6 @@ export class ContextStore implements vscode.Disposable {
     const expansionTerms = new Set<string>(
       expandQuery(baseTerms, this.index, this.db.sessions.length),
     );
-    const terms = new Set<string>([...baseTerms, ...expansionTerms]);
 
     const wsId = vscode.workspace.workspaceFolders?.[0]?.uri.toString();
 
@@ -1074,115 +1061,28 @@ export class ContextStore implements vscode.Disposable {
       );
     }
 
-    // Calibrated relevance (v1.21.2): the same significant-term coverage rule
-    // as the stdio MCP server (shared thresholds in searchCore, parity-tested)
-    // — the v1.21.1 review showed this path happily returning an unrelated
-    // memory for an out-of-domain query the MCP path abstained on.
-    const significant = significantQueryTerms(baseTerms);
-    if (significant.size > 0) {
-      const sigMatchedCount = (s: CompressedSession): number => {
-        const stats = this.statsFor(s);
-        let matched = 0;
-        for (const t of significant) if (stats.wtf.has(t)) matched++;
-        return matched;
-      };
-      candidates = candidates.filter((s) => sigMatchedCount(s) > 0);
-      if (
-        !candidates.some((s) => sigMatchedCount(s) >= requiredSignificantMatches(significant.size))
-      )
-        return [];
-    }
-
-    // --- Rank 1: keyword score (BM25 with field weights) ---
-    // Uses the memoised per-session term stats so we don't re-tokenise every
-    // candidate's fields on every query. Numerically identical to the
-    // un-memoised path (computeAvgDocLen + keywordScore).
-    const avgDocLen = candidates.length
-      ? candidates.reduce((sum, s) => sum + this.statsFor(s).docLenWeighted, 0) / candidates.length
-      : 50;
-    const keywordScores = candidates.map((s) => ({
-      s,
-      score: keywordScoreFromStats(
-        this.statsFor(s),
-        terms,
-        !!wsId && s.workspaceId === wsId,
-        avgDocLen,
-      ),
-    }));
-    const keywordRanked = [...keywordScores].sort((a, b) => b.score - a.score);
-    const keywordRankById = new Map<string, number>();
-    keywordRanked.forEach((e, i) => keywordRankById.set(e.s.id, i));
-
-    // --- Rank 2: recency (endTime desc) ---
-    const recencyRanked = [...candidates].sort((a, b) => b.endTime - a.endTime);
-    const recencyRankById = new Map<string, number>();
-    recencyRanked.forEach((s, i) => recencyRankById.set(s.id, i));
-
-    // --- Rank 3 (optional): embedding cosine similarity ---
-    let embRankById: Map<string, number> | undefined;
-    if (queryEmbedding && candidates.some((s) => s.embedding)) {
-      const embRanked = [...candidates]
-        .map((s) => ({ s, sim: cosineSim(queryEmbedding, s.embedding) }))
-        .sort((a, b) => b.sim - a.sim);
-      embRankById = new Map();
-      embRanked.forEach((e, i) => embRankById!.set(e.s.id, i));
-    }
-
-    const termCount = baseTerms.size;
-    const now = Date.now();
-
-    // Phase 5: pull learned weight multipliers. When learning hasn't yet
-    // collected enough samples this returns 1.0 across the board and
-    // ranking matches the static behaviour.
-    const learned = this.adaptiveState.weights ?? defaultWeights();
-    // Fold intent weights + learned adaptation into the shared fusion weights
-    // so the in-process path and the MCP path score through ONE formula.
-    const fusionWeights: FusionWeights = {
-      keyword: weights.keywordWeight * learned.keyword,
-      recencyMultiplier: weights.recencyMultiplier * learned.recency,
-      confidence: learned.confidence,
-      reinforcement: learned.reinforcement,
-      feedback: learned.feedback,
-      decisionBoost: weights.decisionBoost,
-      problemBoost: weights.problemBoost,
-    };
-
-    const byId = new Map(candidates.map((s) => [s.id, s]));
-    const fusionInputs: FusionInput[] = candidates.map((s) => ({
-      id: s.id,
-      endTime: s.endTime,
-      keywordRank: keywordRankById.get(s.id) ?? FUSION_RANK_MISS,
-      recencyRank: recencyRankById.get(s.id) ?? FUSION_RANK_MISS,
-      embeddingRank: embRankById ? (embRankById.get(s.id) ?? FUSION_RANK_MISS) : undefined,
-      workspaceMatch: !!wsId && s.workspaceId === wsId,
-      matchRatio: termCount > 0 ? (termMatchCount.get(s.id) ?? 0) / termCount : 0,
-      confidence: effectiveConfidence(s) ?? 0.5,
-      retrieved: s.usage?.retrieved ?? 0,
-      accepted: s.usage?.accepted ?? 0,
-      rejected: s.usage?.rejected ?? 0,
-      superseded: !!s.supersededBy,
-      hasDecisions: s.decisions.length > 0,
-      hasProblems: s.problemsSolved.length > 0,
-    }));
-
-    const scored = fuseRanks(fusionInputs, fusionWeights, { now });
+    // Unified pipeline (v1.22.0, RET-003): calibration, fusion, duplicate
+    // collapse and relevance labeling are shared with the stdio MCP server —
+    // this method only contributes candidate pre-filtering (index + expansion
+    // + scope filters above) and the extension-specific adapters below.
+    const expansionOnly = new Set([...expansionMatched].filter((id) => !termMatchCount.has(id)));
+    const outcome = retrieve(candidates, query ?? '', limit, {
+      statsFor: (s) => this.statsFor(s),
+      workspaceId: wsId,
+      ...(queryEmbedding
+        ? {
+            embedQuery: () => queryEmbedding,
+            embeddingFor: (s) => s.embedding,
+            embeddingProviderVersion: 'extension-embedder/1',
+          }
+        : {}),
+      learnedWeights: this.adaptiveState.weights ?? defaultWeights(),
+      expansionOnly,
+    });
     // Snapshot the per-signal values so a later accept/reject can feed them
     // back into the adaptive learner.
-    for (const r of scored) this.lastRetrievalSignals.set(r.id, r.signals);
-    const fused = scored.map((r) => ({ s: byId.get(r.id)!, score: r.score }));
-
-    // Near-duplicate collapse: drop entries whose keyTopics Jaccard ≥ 0.9 with
-    // an earlier (higher-ranked) kept entry. Keeps the top-ranked representative.
-    const COLLAPSE_THRESHOLD = 0.9;
-    const kept: typeof fused = [];
-    for (const entry of fused) {
-      const isDup = kept.some(
-        (k) => jaccard(entry.s.keyTopics, k.s.keyTopics) >= COLLAPSE_THRESHOLD,
-      );
-      if (!isDup) kept.push(entry);
-      if (kept.length >= limit) break;
-    }
-    const result = kept.map((x) => x.s);
+    for (const [id, sig] of outcome.signals) this.lastRetrievalSignals.set(id, sig);
+    const result = outcome.items.map((item) => item.session);
     // Phase 2 reinforcement: bump retrieved counters with throttled persist.
     // Only fires when the query had at least one term — empty-query "browse"
     // calls (timeline/recent) shouldn't pollute the reinforcement signal.

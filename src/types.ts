@@ -381,6 +381,14 @@ export interface ContextDatabase {
   version: number;
   sessions: CompressedSession[];
   lastUpdated: number;
+  /**
+   * One-shot trust-model migration marker (v1.22.0, TRUST-001). When absent,
+   * the store predates receiver-owned trust: team-origin rows may carry a
+   * sender's usage counters and unflagged outcomes that would read as local
+   * corroboration. Migration conservatively re-stamps them ONCE; the marker
+   * prevents re-runs from destroying genuinely local post-migration feedback.
+   */
+  trustMigrationV?: number;
   /** Optional free-form observations seeded from CI/CD pipelines. */
   observations?: Array<{
     id: string;

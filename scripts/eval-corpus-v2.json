@@ -1,0 +1,609 @@
+{
+ "version": "v2.0",
+ "note": "EVAL-001 expanded corpus: 4 repositories, supersession pairs (pay-005\u2192pay-006, web-005\u2192infra-003), a policy contradiction (infra-006 vs infra-001 canary experiments), and an ambiguous entity (Mercury: pay-008 + ml-005).",
+ "sessions": [
+  {
+   "id": "pay-001",
+   "repoScope": "payments-api",
+   "repoScopeLabel": "payments-api",
+   "workspaceId": "payments-api",
+   "workspaceName": "payments-api",
+   "summary": "Use Service Bus sessions for strictly ordered invoice processing",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/billing/queue.ts"
+   ],
+   "keyTopics": [
+    "servicebus",
+    "invoice",
+    "fifo",
+    "ordering"
+   ],
+   "decisions": [
+    "Service Bus sessions give per-invoice FIFO"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "pay-002",
+   "repoScope": "payments-api",
+   "repoScopeLabel": "payments-api",
+   "workspaceId": "payments-api",
+   "workspaceName": "payments-api",
+   "summary": "Validate Stripe webhook signatures before processing events",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/billing/webhooks.ts"
+   ],
+   "keyTopics": [
+    "stripe",
+    "webhook",
+    "signature",
+    "validation"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "pay-003",
+   "repoScope": "payments-api",
+   "repoScopeLabel": "payments-api",
+   "workspaceId": "payments-api",
+   "workspaceName": "payments-api",
+   "summary": "Idempotency keys on charge retries prevent double billing",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/billing/charges.ts"
+   ],
+   "keyTopics": [
+    "idempotency",
+    "charge",
+    "retry",
+    "billing"
+   ],
+   "decisions": [
+    "every charge call carries an idempotency key"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "pay-004",
+   "repoScope": "payments-api",
+   "repoScopeLabel": "payments-api",
+   "workspaceId": "payments-api",
+   "workspaceName": "payments-api",
+   "summary": "PostgreSQL double-entry ledger schema for account balances",
+   "observationType": "feature",
+   "keyFiles": [
+    "db/ledger.sql"
+   ],
+   "keyTopics": [
+    "postgresql",
+    "ledger",
+    "schema",
+    "accounting"
+   ],
+   "decisions": [
+    "double-entry rows, never balance mutation"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "pay-005",
+   "repoScope": "payments-api",
+   "repoScopeLabel": "payments-api",
+   "workspaceId": "payments-api",
+   "workspaceName": "payments-api",
+   "summary": "Redis cache for the product catalog read path",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/catalog/cache.ts"
+   ],
+   "keyTopics": [
+    "redis",
+    "cache",
+    "catalog"
+   ],
+   "decisions": [
+    "cache catalog reads in Redis"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0,
+   "supersededBy": "pay-006"
+  },
+  {
+   "id": "pay-006",
+   "repoScope": "payments-api",
+   "repoScopeLabel": "payments-api",
+   "workspaceId": "payments-api",
+   "workspaceName": "payments-api",
+   "summary": "Replaced the Redis catalog cache with an in-process LRU cache",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/catalog/lru.ts"
+   ],
+   "keyTopics": [
+    "lru",
+    "cache",
+    "catalog",
+    "memory"
+   ],
+   "decisions": [
+    "in-process LRU replaces Redis for catalog"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0,
+   "supersedes": "pay-005"
+  },
+  {
+   "id": "pay-007",
+   "repoScope": "payments-api",
+   "repoScopeLabel": "payments-api",
+   "workspaceId": "payments-api",
+   "workspaceName": "payments-api",
+   "summary": "Exponential backoff with jitter for failed invoice retries",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/billing/retry.ts"
+   ],
+   "keyTopics": [
+    "backoff",
+    "retry",
+    "invoice",
+    "jitter"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "pay-008",
+   "repoScope": "payments-api",
+   "repoScopeLabel": "payments-api",
+   "workspaceId": "payments-api",
+   "workspaceName": "payments-api",
+   "summary": "Mercury reconciler matches settlement reports to ledger entries nightly",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/recon/mercury.ts"
+   ],
+   "keyTopics": [
+    "mercury",
+    "reconciliation",
+    "settlement",
+    "ledger"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "web-001",
+   "repoScope": "web-app",
+   "repoScopeLabel": "web-app",
+   "workspaceId": "web-app",
+   "workspaceName": "web-app",
+   "summary": "Store uploaded user images in Azure Blob Storage with short-lived SAS tokens",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/media/store.ts"
+   ],
+   "keyTopics": [
+    "blob",
+    "storage",
+    "upload",
+    "images",
+    "sas"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "web-002",
+   "repoScope": "web-app",
+   "repoScopeLabel": "web-app",
+   "workspaceId": "web-app",
+   "workspaceName": "web-app",
+   "summary": "Entra ID JWT validation middleware guards every API route",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/auth/middleware.ts"
+   ],
+   "keyTopics": [
+    "entra",
+    "jwt",
+    "authentication",
+    "middleware"
+   ],
+   "decisions": [
+    "validate audience and issuer, no wildcard"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "web-003",
+   "repoScope": "web-app",
+   "repoScopeLabel": "web-app",
+   "workspaceId": "web-app",
+   "workspaceName": "web-app",
+   "summary": "Content-Security-Policy headers rolled out in report-only then enforce",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/server/csp.ts"
+   ],
+   "keyTopics": [
+    "csp",
+    "headers",
+    "security",
+    "rollout"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "web-004",
+   "repoScope": "web-app",
+   "repoScopeLabel": "web-app",
+   "workspaceId": "web-app",
+   "workspaceName": "web-app",
+   "summary": "React Query is the standard for all client data fetching",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/app/queries.ts"
+   ],
+   "keyTopics": [
+    "react",
+    "query",
+    "fetching",
+    "convention"
+   ],
+   "decisions": [
+    "React Query replaces hand-rolled fetch hooks"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "web-005",
+   "repoScope": "web-app",
+   "repoScopeLabel": "web-app",
+   "workspaceId": "web-app",
+   "workspaceName": "web-app",
+   "summary": "Deploys run through GitHub Actions workflows",
+   "observationType": "feature",
+   "keyFiles": [
+    ".github/workflows/deploy.yml"
+   ],
+   "keyTopics": [
+    "github",
+    "actions",
+    "deploy",
+    "workflow"
+   ],
+   "decisions": [
+    "GitHub Actions owns deploys"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0,
+   "supersededBy": "infra-003"
+  },
+  {
+   "id": "web-006",
+   "repoScope": "web-app",
+   "repoScopeLabel": "web-app",
+   "workspaceId": "web-app",
+   "workspaceName": "web-app",
+   "summary": "Thumbnail resizing pipeline generates three sizes on image upload",
+   "observationType": "feature",
+   "keyFiles": [
+    "src/media/thumbs.ts"
+   ],
+   "keyTopics": [
+    "thumbnail",
+    "resize",
+    "pipeline",
+    "images"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "infra-001",
+   "repoScope": "infra",
+   "repoScopeLabel": "infra",
+   "workspaceId": "infra",
+   "workspaceName": "infra",
+   "summary": "API deploys to Azure Container Apps with managed identity",
+   "observationType": "feature",
+   "keyFiles": [
+    "infra/main.bicep"
+   ],
+   "keyTopics": [
+    "containerapps",
+    "deploy",
+    "identity",
+    "azure"
+   ],
+   "decisions": [
+    "Container Apps with managed identity, no connection strings"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "infra-002",
+   "repoScope": "infra",
+   "repoScopeLabel": "infra",
+   "workspaceId": "infra",
+   "workspaceName": "infra",
+   "summary": "Bicep modules split per subsystem with shared parameter files",
+   "observationType": "feature",
+   "keyFiles": [
+    "infra/modules/README.md"
+   ],
+   "keyTopics": [
+    "bicep",
+    "modules",
+    "parameters",
+    "infrastructure"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "infra-003",
+   "repoScope": "infra",
+   "repoScopeLabel": "infra",
+   "workspaceId": "infra",
+   "workspaceName": "infra",
+   "summary": "Deploys moved from GitHub Actions to Azure DevOps pipelines",
+   "observationType": "feature",
+   "keyFiles": [
+    "azure-pipelines.yml"
+   ],
+   "keyTopics": [
+    "azuredevops",
+    "pipelines",
+    "deploy",
+    "migration"
+   ],
+   "decisions": [
+    "Azure DevOps replaces GitHub Actions for deploys"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0,
+   "supersedes": "web-005"
+  },
+  {
+   "id": "infra-004",
+   "repoScope": "infra",
+   "repoScopeLabel": "infra",
+   "workspaceId": "infra",
+   "workspaceName": "infra",
+   "summary": "Key Vault secrets rotate automatically every ninety days",
+   "observationType": "feature",
+   "keyFiles": [
+    "infra/keyvault.bicep"
+   ],
+   "keyTopics": [
+    "keyvault",
+    "secrets",
+    "rotation",
+    "policy"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "infra-005",
+   "repoScope": "infra",
+   "repoScopeLabel": "infra",
+   "workspaceId": "infra",
+   "workspaceName": "infra",
+   "summary": "Log Analytics retention reduced to thirty days to cut cost",
+   "observationType": "feature",
+   "keyFiles": [
+    "infra/logging.bicep"
+   ],
+   "keyTopics": [
+    "loganalytics",
+    "retention",
+    "cost",
+    "observability"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "infra-006",
+   "repoScope": "infra",
+   "repoScopeLabel": "infra",
+   "workspaceId": "infra",
+   "workspaceName": "infra",
+   "summary": "All services must deploy blue-green, no in-place updates",
+   "observationType": "feature",
+   "keyFiles": [
+    "docs/deploy-policy.md"
+   ],
+   "keyTopics": [
+    "bluegreen",
+    "deploy",
+    "release",
+    "policy"
+   ],
+   "decisions": [
+    "blue-green everywhere, conflicts tracked against canary experiments"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "ml-001",
+   "repoScope": "ml-service",
+   "repoScopeLabel": "ml-service",
+   "workspaceId": "ml-service",
+   "workspaceName": "ml-service",
+   "summary": "ONNX runtime wasm build serves inference without native dependencies",
+   "observationType": "feature",
+   "keyFiles": [
+    "ml/onnx.ts"
+   ],
+   "keyTopics": [
+    "onnx",
+    "wasm",
+    "inference",
+    "runtime"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "ml-002",
+   "repoScope": "ml-service",
+   "repoScopeLabel": "ml-service",
+   "workspaceId": "ml-service",
+   "workspaceName": "ml-service",
+   "summary": "Feature store uses partitioned parquet files keyed by entity and day",
+   "observationType": "feature",
+   "keyFiles": [
+    "ml/features.md"
+   ],
+   "keyTopics": [
+    "parquet",
+    "feature",
+    "store",
+    "partition"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "ml-003",
+   "repoScope": "ml-service",
+   "repoScopeLabel": "ml-service",
+   "workspaceId": "ml-service",
+   "workspaceName": "ml-service",
+   "summary": "Chose a 384-dimension MiniLM embedding model for semantic search",
+   "observationType": "feature",
+   "keyFiles": [
+    "ml/embeddings.md"
+   ],
+   "keyTopics": [
+    "minilm",
+    "embedding",
+    "dimensions",
+    "semantic"
+   ],
+   "decisions": [
+    "384-dim MiniLM balances quality and size"
+   ],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "ml-004",
+   "repoScope": "ml-service",
+   "repoScopeLabel": "ml-service",
+   "workspaceId": "ml-service",
+   "workspaceName": "ml-service",
+   "summary": "GPU quota exhaustion falls back to CPU batch scoring overnight",
+   "observationType": "feature",
+   "keyFiles": [
+    "ml/scoring.ts"
+   ],
+   "keyTopics": [
+    "gpu",
+    "quota",
+    "fallback",
+    "batch"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  },
+  {
+   "id": "ml-005",
+   "repoScope": "ml-service",
+   "repoScopeLabel": "ml-service",
+   "workspaceId": "ml-service",
+   "workspaceName": "ml-service",
+   "summary": "Mercury batch scorer recomputes recommendation embeddings nightly",
+   "observationType": "feature",
+   "keyFiles": [
+    "ml/mercury.ts"
+   ],
+   "keyTopics": [
+    "mercury",
+    "batch",
+    "scorer",
+    "recommendations"
+   ],
+   "decisions": [],
+   "problemsSolved": [],
+   "userTags": [],
+   "rawEventCount": 5,
+   "redactionCount": 0
+  }
+ ]
+}

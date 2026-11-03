@@ -35,8 +35,15 @@ const baseOpts = {
   sourcemap: isProd ? false : 'inline',
   minify: isProd,
   logLevel: 'info',
-  // `require('../package.json')` in mcpServer.ts becomes an inlined object.
   loader: { '.json': 'json' },
+  // REL-001: version lookups compile to this constant instead of inlining the
+  // whole package.json. Embedding the full manifest made bundle bytes depend
+  // on fields irrelevant to runtime (the v1.21.2 release-asset hash skew came
+  // from a transient `scripts.vscode:prepublish` difference); now identical
+  // source at the same version builds identical bundles.
+  define: {
+    __GHCP_MEM_VERSION__: JSON.stringify(require('./package.json').version ?? 'unknown'),
+  },
 };
 
 const entries = [

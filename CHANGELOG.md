@@ -6,6 +6,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.22.0] — 2026-11-03
+
+Executes the formal technical-improvement requirements against the v1.21.2 baseline. Requirement IDs below refer to that document.
+
+### Added
+- **One retrieval pipeline, two callers (RET-003).** New `src/retrieval.ts` is now the single implementation of keyword scoring, calibration/abstention, intent-weighted fusion, near-duplicate collapse and relevance labeling. The extension `ContextStore` and the stdio MCP server both delegate to it, injecting only what is genuinely theirs (candidate pre-filtering, embedding provider, learned weights) through typed adapters. Parity is no longer a pair of code paths kept in step by tests — it is the same function. Demonstrated on the held-out benchmark: the MCP pipeline and the extension default produce **identical metrics across all 200 queries**.
+- **Held-out evaluation set (EVAL-001).** A 25-session, 4-repo corpus (`scripts/eval-corpus-v2.json`) with supersession chains, a contradiction pair and a cross-repo ambiguity, plus 200 held-out queries (`scripts/eval-heldout.json`: vocabulary, paraphrase, negative, stale, ambiguous and multi-hop classes, marked do-not-tune). Gated in CI via `npm run eval:heldout` (now in the verify chain) with floors committed at measured reality: calibrated hybrid and MCP pipeline at recall@5 0.657 / MRR 0.650 / precision 0.606 / abstention 0.405 / **false-positive rate 3.8%** — within the ≤5% requirement, enforced as a `maxFalsePositiveRate` ceiling. The uncalibrated keyword baseline measures higher recall (0.849) at a 19.2% false-positive rate and is kept, gated at its own honest numbers, as the published contrast: calibration trades recall for trustworthy abstention.
+- **Trust migration for pre-1.21.1 stores (TRUST-001).** One-shot `ensureTrustMigrated` (marker: `trustMigrationV`) runs at every load point — extension store and MCP server — deleting legacy imported `usage` counters and stamping unflagged team outcomes `imported: true`, so pre-hardening rows can no longer launder into full local trust. Locally earned acceptances survive; re-export/re-import keeps remote rows remote. Covered by migration-idempotence and round-trip tests.
+- **Richer eval metrics (EVAL-001).** `evalRun` now reports precision, abstention rate and false-positive rate alongside recall/MRR/nDCG, with per-query failure listings and negative-query (empty-relevant) semantics; every eval printout carries a provenance line (git commit, embedding provider, k).
+- **Published-release verification (REL-001).** `npm run check:artifact` (`scripts/verify-release-artifact.mjs`) downloads the GitHub Release vsix for a tag, verifies it against its published sha256, asserts the version inside the artifact matches the tag, and proves byte-for-byte runtime-bundle parity with the checked-out source; the Marketplace listing version is reported informationally. First run immediately caught a real defect: v1.21.2's release assets were skewed by tag-workflow re-runs (the vsix asset came from a different CI run than its checksum/manifest).
+- **Search benchmark upgraded (PERF-001).** `scripts/bench-search.js` now runs a deterministic seeded workload over repeated trials, reports cold and warm passes separately with the host environment recorded, supports 1k/10k/50k scaling runs (`--full`) and optional JSON output. Measured on Apple M2 Pro: warm p99 **0.09 ms at 1k** sessions (CI budget: <50 ms, now gated at p99) and **2.65 ms at 50k** — sub-linear scaling (34× latency for 50× corpus).
+
+### Changed
+- **Reproducible bundles (REL-001).** Version lookups compile to an esbuild `define` constant instead of inlining the whole `package.json`, so bundle bytes no longer depend on runtime-irrelevant manifest fields — identical source at the same version now builds identical bundles everywhere. (The v1.21.2 local/CI bundle-hash difference was exactly this: a transient `scripts.vscode:prepublish` string difference during packaging.)
+
+### Unclaimed — explicitly out of scope in this release
+- **RET-001 (semantic retrieval):** only the infrastructure ships — pluggable embedding adapters with provider versioning (`embeddingProviderVersion`), so cached vectors from different providers are never compared. There is **no neural embedding provider** in this release; paraphrase recall remains at its measured lexical floor (0.000 above calibration) and the ≥70% paraphrase target is not claimed.
+- **EVAL-002 (matched-task comparisons vs native agent memories) and INT-001 (live cross-client integration matrix):** both require external environments (paired agent runs, multiple MCP clients) and remain unclaimed, as in every release since v1.21.1. No comparative-quality numbers are published.
+
+### Verification
+- 752 automated tests. Synthetic and gold eval corpora remain at 1.000 on every configuration; paraphrase floors unchanged at their documented 0.000 calibration floor; held-out floors newly gated as above.
+
+---
+
 ## [1.21.2] — 2026-11-03
 
 Responds to the independent v1.21.1 review (held at 7.5/10): all three findings fixed, including its flaky-test catch.

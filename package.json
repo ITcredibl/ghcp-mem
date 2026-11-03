@@ -2,7 +2,7 @@
   "name": "ghcp-mem",
   "displayName": "GHCP-MEM",
   "description": "Local-first engineering memory and governed task continuity for AI coding agents. Resume work across agents with scoped context, evidence-linked checkpoints, redaction and auditable history. VS Code integration and stdio MCP; no cloud memory backend.",
-  "version": "1.21.2",
+  "version": "1.22.0",
   "publisher": "itcredibl",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -1200,11 +1200,13 @@
     "render:diagrams": "node scripts/render-diagrams.mjs",
     "check:release": "node scripts/check-release-consistency.mjs",
     "check:release:strict": "node scripts/check-release-consistency.mjs --strict",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:release && npm run eval:check && npm run eval:gold && npm run eval:paraphrase && npm run bench && npm run bundle:prod",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:release && npm run eval:check && npm run eval:gold && npm run eval:paraphrase && npm run eval:heldout && npm run bench && npm run bundle:prod",
     "hooks:install": "node scripts/install-hooks.mjs",
     "bump:version": "node scripts/bump-version.mjs",
     "package": "npm run vscode:prepublish && vsce package --out ghcp-mem.vsix",
-    "publish": "vsce publish"
+    "publish": "vsce publish",
+    "eval:heldout": "tsc -p ./tsconfig.test.json && node scripts/setup-test-env.js && node scripts/eval-check.js --corpus scripts/eval-corpus-v2.json --gold scripts/eval-heldout.json --floors-key heldoutFloors --pipeline mcp",
+    "check:artifact": "node scripts/verify-release-artifact.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

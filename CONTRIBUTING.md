@@ -68,7 +68,7 @@ npm run watch          # incremental build in watch mode
 ## 3. Running tests
 
 ```bash
-npm test                  # full test suite (750 tests)
+npm test                  # full test suite (752 tests)
 npm run test:tasks        # focused task continuity and recovery checks
 npm run lint              # ESLint
 npx tsc --noEmit          # type-check without emitting
@@ -92,7 +92,7 @@ Every PR runs the following pipeline on `ubuntu-latest`, `windows-latest`, and N
 npm run lint
 npm test
 node scripts/eval-check.js     # recall@5 + MRR must not drop > 5%
-node scripts/bench-search.js   # search must stay < 50ms p99
+node scripts/bench-search.js   # search must stay < 50ms warm p99 at 1k sessions
 node scripts/smoke.js          # extension activates without errors
 npm run bundle:prod            # esbuild production bundle
 vsce package                   # .vsix must build without warnings
@@ -100,10 +100,18 @@ vsce package                   # .vsix must build without warnings
 
 PRs that break any gate will not be merged.
 
+Eval gates run four corpora: synthetic (`eval:check`), curated gold
+(`eval:gold`), held-out paraphrase (`eval:paraphrase`), and the 200-query
+held-out set over the v2 corpus (`eval:heldout`, which also proves
+extension ↔ MCP retrieval parity and enforces the false-positive-rate
+ceiling). After a release, `npm run check:artifact` verifies the published
+GitHub Release vsix: checksum, version-in-artifact, and byte-for-byte
+runtime-bundle parity against the tagged source.
+
 ### Run every gate locally before pushing
 
 ```
-npm run verify        # format:check + lint + typecheck + test + check:release + eval:check + bench + bundle:prod
+npm run verify        # format:check + lint + typecheck + test + check:release + all four eval gates + bench + bundle:prod
 ```
 
 `npm run verify` runs the full gate set in one shot, so you reproduce CI before

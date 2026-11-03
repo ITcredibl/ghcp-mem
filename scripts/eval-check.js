@@ -105,11 +105,48 @@ const CORPUS = [
   },
 ];
 
+// Optional --corpus <path>: seed from an external corpus file (EVAL-001)
+// instead of the built-in 12-session CORPUS. Sessions may carry repoScope,
+// supersession links etc.; timestamps are assigned deterministically.
+const corpusFlagIdx = process.argv.indexOf('--corpus');
+const corpusPath = corpusFlagIdx !== -1 ? process.argv[corpusFlagIdx + 1] : undefined;
+// Optional --pipeline mcp: evaluate the PRODUCTION stdio pipeline
+// (searchSessionsDetailed with its local lexical embedder) directly, in
+// addition to the extension-store configurations.
+const evalMcpPipeline =
+  process.argv.includes('--pipeline') &&
+  process.argv[process.argv.indexOf('--pipeline') + 1] === 'mcp';
+
 (async () => {
   const mem = new InMemoryMemento();
   const store = new ContextStore(mem);
 
-  for (let i = 0; i < CORPUS.length; i++) {
+  let externalSessions;
+  if (corpusPath) {
+    const corpus = JSON.parse(fs.readFileSync(path.resolve(corpusPath), 'utf8'));
+    externalSessions = corpus.sessions.map((c, i) => ({
+      startTime: Date.now() - (corpus.sessions.length - i) * 60_000,
+      endTime: Date.now() - (corpus.sessions.length - i) * 60_000 + 1000,
+      problemsSolved: [],
+      userTags: [],
+      rawEventCount: 5,
+      redactionCount: 0,
+      ...c,
+      contentHash: computeContentHash({
+        summary: c.summary,
+        keyFiles: c.keyFiles ?? [],
+        keyTopics: c.keyTopics ?? [],
+        decisions: c.decisions ?? [],
+        problemsSolved: [],
+      }),
+    }));
+    for (const sess of externalSessions) store.db.sessions.push(sess);
+    console.log(
+      `  corpus: ${corpusPath} (${corpus.version ?? 'unversioned'}, ${externalSessions.length} sessions)`,
+    );
+  }
+
+  for (let i = 0; !corpusPath && i < CORPUS.length; i++) {
     const c = CORPUS[i];
     const session = {
       id: `eval-${i.toString().padStart(4, '0')}`,
@@ -141,6 +178,34 @@ const CORPUS = [
   const report = goldPath
     ? await runGoldEval(store, JSON.parse(fs.readFileSync(path.resolve(goldPath), 'utf8')).queries)
     : await runEvalSuite(store);
+  if (evalMcpPipeline && goldPath) {
+    // Evaluate the production stdio pipeline directly over the same sessions.
+    const { searchSessionsDetailed } = require(
+      path.resolve(__dirname, '..', 'out-test', 'src', 'mcpServer.js'),
+    );
+    const db = { version: 2, lastUpdated: 0, sessions: store.getAllSessions() };
+    const queries = JSON.parse(fs.readFileSync(path.resolve(goldPath), 'utf8')).queries;
+    const { runGoldEvalAgainst } = require(
+      path.resolve(__dirname, '..', 'out-test', 'src', 'eval.js'),
+    );
+    report.runs.push(
+      await runGoldEvalAgainst('mcp pipeline (local-lexical/1)', queries, (q) =>
+        searchSessionsDetailed(db, q, {}, 20).items.map((item) => item.session),
+      ),
+    );
+  }
+  // EVAL-001 provenance: pin what produced these numbers.
+  try {
+    const { execFileSync } = require('node:child_process');
+    const commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim();
+    console.log(
+      `  provenance: commit=${commit} · embeddings=local-lexical/1 (headless) · k=${report.k}`,
+    );
+  } catch {
+    /* outside a git checkout */
+  }
   if (!report.runs.length) {
     console.error('FAIL: eval produced no runs');
     process.exit(1);
@@ -182,10 +247,28 @@ const CORPUS = [
     const ndcgOk = floor.ndcg === undefined || run.ndcg >= ndcgMin;
     const ok = recallOk && mrrOk && ndcgOk;
     const tag = ok ? 'OK  ' : 'FAIL';
+    const extras =
+      run.precision !== undefined
+        ? ` · precision=${run.precision.toFixed(3)} · abstain=${run.abstentionRate.toFixed(3)}${run.negatives > 0 ? ` · falsePos=${run.falsePositiveRate.toFixed(3)} (${run.negatives} neg)` : ''}`
+        : '';
     console.log(
-      `  [${tag}] ${run.label}: recall@${run.k}=${run.recall.toFixed(3)} (floor ${recallMin.toFixed(3)}) · MRR=${run.mrr.toFixed(3)} (floor ${mrrMin.toFixed(3)}) · nDCG@${run.k}=${run.ndcg.toFixed(3)}${floor.ndcg !== undefined ? ` (floor ${ndcgMin.toFixed(3)})` : ''}`,
+      `  [${tag}] ${run.label}: recall@${run.k}=${run.recall.toFixed(3)} (floor ${recallMin.toFixed(3)}) · MRR=${run.mrr.toFixed(3)} (floor ${mrrMin.toFixed(3)}) · nDCG@${run.k}=${run.ndcg.toFixed(3)}${floor.ndcg !== undefined ? ` (floor ${ndcgMin.toFixed(3)})` : ''}${extras}`,
     );
-    if (!ok) failed = true;
+    const fpOk =
+      floor.maxFalsePositiveRate === undefined ||
+      run.falsePositiveRate <= floor.maxFalsePositiveRate;
+    if (!fpOk) {
+      console.error(
+        `         falsePositiveRate ${run.falsePositiveRate.toFixed(3)} exceeds ceiling ${floor.maxFalsePositiveRate}`,
+      );
+    }
+    if ((!ok || !fpOk) && run.failures?.length) {
+      for (const f of run.failures.slice(0, 8))
+        console.error(`         ✗ [${f.kind ?? '?'}] "${f.q}" — ${f.reason}`);
+      if (run.failures.length > 8)
+        console.error(`         … ${run.failures.length - 8} more failing queries`);
+    }
+    if (!ok || !fpOk) failed = true;
   }
   if (failed) {
     console.error(

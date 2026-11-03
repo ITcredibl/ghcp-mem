@@ -298,7 +298,7 @@ It surfaces memory through:
 | **Supports enterprise policy injection** | Optional remote policy URL appends centrally managed redaction rules on startup |
 | **Idle-triggered compression** | Auto-flush sessions when editor is inactive (configurable 0–300s timeout) |
 | **Enterprise compliance modes** | User-defined regex redaction rules for FinTech (PCI-DSS), Healthcare (HIPAA), or custom compliance, plus `customSensitiveEntities` for organisation/project codenames |
-| **One-shot compliance posture** | `/compliance` chat command (and `ghcpMem_compliance` MCP tool) renders an audit-friendly snapshot: grounding coverage, trust distribution, conflict counts, redaction stats |
+| **One-shot compliance posture** | `/compliance` chat command renders an audit-friendly snapshot: grounding coverage, trust distribution, conflict counts, redaction stats |
 | **Understands Azure workflows** | Azure subsystem tagging, live `az` snapshotting, Azure-specific redaction |
 
 ---
